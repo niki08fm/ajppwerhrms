@@ -1,4 +1,3 @@
-export * from './types.js';
 export * from './policies.js';
 export * from './day.js';
 export * from './month.js';
