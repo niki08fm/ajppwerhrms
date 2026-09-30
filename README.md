@@ -122,7 +122,7 @@ docs/OPERATIONS.md          production setup, backups and a restore rehearsal, r
 | Check | Result |
 | --- | --- |
 | Engine acceptance tests (spec §20.1–24, 32–33 and more) | 87 passing |
-| API integration tests (spec §20.25–31, DB guarantees, auth, PII, tablet, structures, pay group moves) | 31 passing |
+| API integration tests (spec §20.25–31, DB guarantees, auth, PII, tablet, structures, pay group moves, salary breakups) | 34 passing |
 | Playwright flows (dashboard; a month through all five steps, run, reports, lock, paid; register correction and revert; people search and profile) | 4 passing |
 | Performance budgets (spec §15) at 200 employees and 568,125 punches | all passing — e.g. people list 16 ms (budget 400), month register 509 ms (1,500), 199-payslip run 2.5 s (30 s), register export 101 ms (3 s) |
 

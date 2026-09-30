@@ -14,13 +14,14 @@ import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { Input, Select } from '@/components/ui/form';
 import { Dialog, Switch } from '@/components/ui/overlay';
 import type { Preview } from '../SalaryPreview';
+import { SalaryBreakup } from '../SalaryBreakup';
 import type { Employee } from '../types';
 import { PayslipPreview } from './PayslipPreview';
 
 interface PayData {
   salary: { mode: 'CTC' | 'GROSS'; amount: number; monthly_gross: number; valid_from: string };
   preview: Preview & { structure: Preview['structure'] & { monthly: (Preview['structure']['monthly'][number] & { calc_type: CalcType })[] } };
-  rates: { pf: { ceiling: number; employee_pct: number; employer_pct: number; eps_pct: number }; esi: { ceiling: number } };
+  rates: { pf: { ceiling: number; employee_pct: number; employer_pct: number; eps_pct: number }; esi: { ceiling: number; employee_pct: number; employer_pct: number } };
 }
 
 function ruleText(c: { calc_type: CalcType; calc_value: number; max_amount?: number | null }) {
@@ -107,45 +108,14 @@ export function PayTab({ e }: { e: Employee }) {
           </CardBody>
         </Card>
         <Card>
-          <CardHeader title="Monthly earnings" description="At full pay, before loss of pay." />
-          <CardBody>
+          <CardHeader title="Salary breakup" description="At full pay, before loss of pay: earnings to gross, company contributions to CTC, deductions to net pay." />
+          <CardBody className="flex flex-col gap-3">
             <ProportionBar parts={p.structure.monthly.map((c) => ({ label: c.name, value: c.amount, colour: c.colour }))} />
-            <table className="mt-3 w-full text-[13px]">
-              <thead className="text-left text-[12px] text-muted-foreground">
-                <tr>
-                  <th className="py-1">Component</th>
-                  <th>Rule</th>
-                  <th className="text-right">Amount</th>
-                </tr>
-              </thead>
-              <tbody>
-                {p.structure.monthly.map((c) => (
-                  <tr key={c.name} className="border-t">
-                    <td className="py-1.5">{c.name}</td>
-                    <td className="text-muted-foreground">{ruleText(c as { calc_type: CalcType; calc_value: number; max_amount?: number | null })}</td>
-                    <td className="text-right">
-                      <Money value={c.amount} />
-                    </td>
-                  </tr>
-                ))}
-                <tr className="border-t font-medium">
-                  <td className="py-1.5">Monthly gross</td>
-                  <td />
-                  <td className="text-right">
-                    <Money value={p.gross} />
-                  </td>
-                </tr>
-                {p.structure.yearly.map((c) => (
-                  <tr key={c.name} className="border-t text-muted-foreground">
-                    <td className="py-1.5">{c.name}</td>
-                    <td>Yearly, paid in month {c.pay_month}</td>
-                    <td className="text-right">
-                      <Money value={c.amount} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <SalaryBreakup
+              p={p}
+              rates={{ pf: rates.pf, esi: { employee_pct: rates.esi.employee_pct, employer_pct: rates.esi.employer_pct, ceiling: rates.esi.ceiling } }}
+              rules={Object.fromEntries(p.structure.monthly.map((c) => [c.name, ruleText(c as { calc_type: CalcType; calc_value: number; max_amount?: number | null })]))}
+            />
           </CardBody>
         </Card>
         <div className="grid gap-4 md:grid-cols-2">

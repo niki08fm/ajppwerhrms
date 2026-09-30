@@ -264,3 +264,43 @@ describe('A structure has no date: attaching it to a pay group decides who is pa
     await prisma.payrollPeriod.delete({ where: { period_ym: '2026-11' } });
   });
 });
+
+describe('Structure preview reads as a salary breakup: earnings → gross, company contributions → CTC, deductions → net', () => {
+  const comp = (seq: number, name: string, calc_type: string, calc_value: number) => ({ seq, name, calc_type, calc_value, max_amount: null, frequency: 'MONTHLY', pay_month: null, is_taxable: true, counts_as_wages: name === 'Basic', colour: 'chart-1' });
+  // Basic 50% of gross (PF wage), HRA 40% of basic, conveyance ₹1,600, the Special Allowance takes the rest.
+  const components = [comp(1, 'Basic', 'PCT_GROSS', 50), comp(2, 'HRA', 'PCT_BASIC', 40), comp(3, 'Conveyance', 'FIXED', R(1600))];
+  const at = (sample: object) => f.agent.post('/api/v1/structures/validate').send({ components, sample: { pt_state: 'Telangana', ...sample } });
+
+  it('CTC ₹4,00,000: with PF off the whole CTC is gross; with PF on the company share comes out of it', async () => {
+    const off = (await at({ mode: 'CTC', amount: R(400000), pf_enabled: false, esi_enabled: true })).body.data.breakup;
+    expect(off.gross).toBe(R(33333));
+    expect(off.ctc.employer_pf).toBe(0);
+    expect(off.take_home).toBe(R(33333 - 200));
+    const on = (await at({ mode: 'CTC', amount: R(400000), pf_enabled: true, esi_enabled: true })).body.data.breakup;
+    expect(on.gross).toBe(R(31302));
+    expect(on.pf.employee).toBe(R(1878));
+    expect(on.ctc.employer_pf).toBe(R(1878 + 153));
+    expect(on.ctc.monthly_cost).toBe(R(33333));
+    expect(on.take_home).toBe(R(31302 - 1878 - 200));
+  });
+
+  it('gross ₹4,00,000 a year: gross stays; with PF on the company share is paid on top', async () => {
+    const monthly = Math.round(R(400000 / 12)); // ₹33,333.33
+    const on = (await at({ mode: 'GROSS', amount: monthly, pf_enabled: true, esi_enabled: true })).body.data.breakup;
+    expect(on.gross).toBe(monthly);
+    expect(on.pf.employee).toBe(R(2000));
+    expect(on.ctc.employer_pf).toBe(R(2158));
+    expect(on.take_home).toBe(monthly - R(2000) - R(200));
+  });
+
+  it('ESI applies only at ₹21,000 gross or less, and switching it off removes both shares', async () => {
+    const esi = (await at({ mode: 'GROSS', amount: R(18000), pf_enabled: true, esi_enabled: true })).body.data.breakup;
+    expect(esi.esi).toMatchObject({ applicable: true, employee: R(135), employer: R(585) });
+    expect(esi.take_home).toBe(R(18000 - 1080 - 135 - 150));
+    const none = (await at({ mode: 'GROSS', amount: R(18000), pf_enabled: true, esi_enabled: false })).body.data.breakup;
+    expect(none.esi.employee).toBe(0);
+    expect(none.take_home).toBe(R(18000 - 1080 - 150));
+    const above = (await at({ mode: 'CTC', amount: R(400000), pf_enabled: true, esi_enabled: true })).body.data.breakup;
+    expect(above.esi.applicable).toBe(false);
+  });
+});

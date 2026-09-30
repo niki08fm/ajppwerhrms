@@ -3,11 +3,12 @@ import { api } from '@/lib/api';
 import { useDebounced } from '@/lib/hooks';
 import { Money, ProportionBar } from '@/components/bits';
 import { ErrorState, Notice, SkeletonBlock } from '@/components/states';
+import { SalaryBreakup } from './SalaryBreakup';
 
 export interface Preview {
   gross: number;
-  structure: { monthly: { name: string; amount: number; calc_type: string; calc_value: number; colour?: string }[]; yearly: { name: string; amount: number; pay_month: number | null }[]; basic: number; hra: number; pf_base: number; over_budget: boolean };
-  ctc: { gross: number; employer_pf: number; employer_esi: number; esi_applies: boolean; yearly_total: number; monthly_cost: number; annual_ctc: number };
+  structure: { monthly: { name: string; amount: number; calc_type: string; calc_value: number; max_amount?: number | null; colour?: string }[]; yearly: { name: string; amount: number; pay_month: number | null }[]; basic: number; hra: number; pf_base: number; over_budget: boolean };
+  ctc: { gross: number; employer_pf: number; employer_esi: number; esi_applies: boolean; yearly_total: number; monthly_cost: number; annual_ctc: number; ctc_basis: number };
   solution: { gross: number; ambiguous: boolean; alternative: { gross: number } | null; approximate: boolean } | null;
   pf: { pf_wage: number; employee: number; vpf: number; employer_total: number; employer_epf: number; eps: number; edli: number; admin: number };
   esi: { applicable: boolean; employee: number; employer: number };
@@ -43,7 +44,7 @@ export function useSalaryPreview(args: PreviewArgs, enabled = true) {
   });
 }
 
-/** As the amount is typed: component breakdown, employer contributions, annual CTC, take-home. */
+/** As the amount is typed: earnings to gross, company contributions to CTC, deductions to net pay. */
 export function SalaryPreviewPanel({ args, chosen, onChoose, compact }: { args: PreviewArgs; chosen?: number; onChoose?: (g: number) => void; compact?: boolean }) {
   const q = useSalaryPreview({ ...args, chosen_gross: chosen });
   if (!args.amount) return <p className="text-[13px] text-muted-foreground">Type an amount to see the breakdown.</p>;
@@ -79,7 +80,7 @@ export function SalaryPreviewPanel({ args, chosen, onChoose, compact }: { args: 
           </div>
         </div>
         <div>
-          <div className="text-[12px] text-muted-foreground">Employer cost / month</div>
+          <div className="text-[12px] text-muted-foreground">Cost to company / month</div>
           <div className="font-display text-lg font-semibold">
             <Money value={p.ctc.monthly_cost} />
           </div>
@@ -91,7 +92,7 @@ export function SalaryPreviewPanel({ args, chosen, onChoose, compact }: { args: 
           </div>
         </div>
         <div>
-          <div className="text-[12px] text-muted-foreground">Approx. take-home</div>
+          <div className="text-[12px] text-muted-foreground">Net pay / month</div>
           <div className="font-display text-lg font-semibold text-success">
             <Money value={p.take_home} />
           </div>
@@ -100,44 +101,7 @@ export function SalaryPreviewPanel({ args, chosen, onChoose, compact }: { args: 
       {!compact && (
         <>
           <ProportionBar parts={p.structure.monthly.map((c) => ({ label: c.name, value: c.amount, colour: c.colour }))} />
-          <table className="w-full text-[13px]">
-            <tbody>
-              {p.structure.monthly.map((c) => (
-                <tr key={c.name} className="border-b last:border-0">
-                  <td className="py-1">{c.name}</td>
-                  <td className="py-1 text-right">
-                    <Money value={c.amount} />
-                  </td>
-                </tr>
-              ))}
-              {p.structure.yearly.map((c) => (
-                <tr key={c.name} className="border-b text-muted-foreground">
-                  <td className="py-1">{c.name} (yearly, part of CTC)</td>
-                  <td className="py-1 text-right">
-                    <Money value={c.amount} />
-                  </td>
-                </tr>
-              ))}
-              <tr className="text-muted-foreground">
-                <td className="py-1">Employer PF + EDLI + admin</td>
-                <td className="py-1 text-right">
-                  <Money value={p.ctc.employer_pf} />
-                </td>
-              </tr>
-              <tr className="text-muted-foreground">
-                <td className="py-1">Employer ESI {p.ctc.esi_applies ? '' : '(not applicable above ₹21,000)'}</td>
-                <td className="py-1 text-right">
-                  <Money value={p.ctc.employer_esi} />
-                </td>
-              </tr>
-              <tr className="text-muted-foreground">
-                <td className="py-1">Employee PF, ESI, PT and TDS</td>
-                <td className="py-1 text-right">
-                  <Money value={-p.employee_statutory} />
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <SalaryBreakup p={p} />
         </>
       )}
     </div>

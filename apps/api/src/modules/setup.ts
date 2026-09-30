@@ -18,18 +18,20 @@ import {
   ptSlabsReplaceSchema,
   shiftSchema,
   statutoryRatesCreateSchema,
+  SEED_TAX_REGIMES,
   STATUTORY_MINIMUM_RATES,
   structureCreateSchema,
   ymOf,
   type PolicyKind,
+  type TaxRegime,
 } from '@ajpwer/shared';
-import { calendarDivisor, computeEsi, computePf, ctcForGross, expandStructure, findOverlaps, validateStructure, workingDaysInMonth, type ComponentDef } from '../engines';
+import { calendarDivisor, expandStructure, salaryPreview, findOverlaps, validateStructure, workingDaysInMonth, type ComponentDef } from '../engines';
 import { audit, auditReq, who } from '../lib/audit';
 import { requirePerm } from '../lib/auth';
 import { fromDbDate, n, toDbDate } from '../lib/db-dates';
 import { ah, AppError, notFound } from '../lib/errors';
 import { prisma } from '../lib/prisma';
-import { holidaysBetween, ratesOn, toAttachedPolicy, toComponentDefs } from '../services/rules';
+import { holidaysBetween, ptSlabs, ratesOn, regimesOn, toAttachedPolicy, toComponentDefs } from '../services/rules';
 import { insertSalary } from '../services/salary';
 import { firstOpenMonth, planStructureMove } from '../services/structure-move';
 import { randomUUID } from 'node:crypto';
@@ -153,32 +155,54 @@ setupRouter.all(['/policies/:id', '/policies/:key/versions/:v'], (req, _res, nex
 
 // ─── Salary structures ───────────────────────────────────────────────────────
 
-/**
- * A structure at a sample gross, for the builder and the list: someone on PF
- * (restricted to the ceiling), with ESI where the gross allows it. "% of CTC"
- * components run on the CTC that gross works out to.
- */
-async function sampleAt(components: ComponentDef[], gross: number) {
-  const rates = await ratesOn(prisma, today()).catch(() => ({ ...STATUTORY_MINIMUM_RATES }));
-  const pfChoice = { pf_enabled: true, pf_restrict_to_ceiling: true, vpf_pct: 0 };
-  const ctc = ctcForGross(gross, { components, pf: pfChoice, esi_enabled: true, rates: { pf: rates.pf, esi: rates.esi } });
-  const expanded = expandStructure(components, gross, ctc.ctc_basis);
-  // PF and ESI are not components: they are worked out from the rates, the PF-wage components and gross.
-  const pf = computePf(expanded.pf_base, pfChoice, rates.pf);
-  const esi = computeEsi(ctc.esi_applies, gross, rates.esi);
-  return {
-    annual_ctc: ctc.annual_ctc,
-    ctc_basis: ctc.ctc_basis,
-    expanded,
-    statutory: {
-      rates: { pf: rates.pf, esi: rates.esi },
-      pf,
-      esi: { applies: ctc.esi_applies, employee: esi.employee, employer: esi.employer },
-      employer_pf_cost: ctc.employer_pf,
-      monthly_cost: ctc.monthly_cost,
-    },
-  };
+interface Sample {
+  mode: 'GROSS' | 'CTC';
+  /** Monthly for GROSS, annual for CTC */
+  amount: number;
+  pf_enabled: boolean;
+  esi_enabled: boolean;
+  pt_state?: string;
 }
+
+/** The PT state most people are in: the sensible default for a sample. */
+async function commonPtState(): Promise<string> {
+  const rows = await prisma.employeeStatutory.groupBy({ by: ['pt_state'], _count: { pt_state: true }, orderBy: { _count: { pt_state: 'desc' } }, take: 1 }).catch(() => []);
+  return rows[0]?.pt_state ?? 'Telangana';
+}
+
+/**
+ * A structure at a sample salary, laid out the way a salary breakup reads:
+ * earnings to gross, company contributions to CTC, deductions to net pay. PF,
+ * ESI, PT and TDS are worked out from the rates, not typed in (new regime, no
+ * declarations). "% of CTC" components run on the agreed CTC, or on the CTC a
+ * gross works out to.
+ */
+async function sampleAt(components: ComponentDef[], sample: Sample) {
+  const date = today();
+  const [rates, slabs, regimes, ptState] = await Promise.all([
+    ratesOn(prisma, date).catch(() => ({ ...STATUTORY_MINIMUM_RATES })),
+    ptSlabs(prisma),
+    regimesOn(prisma, date).catch(() => null),
+    sample.pt_state ? Promise.resolve(sample.pt_state) : commonPtState(),
+  ]);
+  const regime = regimes?.NEW ?? (SEED_TAX_REGIMES.find((r) => r.code === 'NEW') as TaxRegime);
+  const breakup = salaryPreview({
+    mode: sample.mode,
+    amount: sample.amount,
+    components,
+    pf: { pf_enabled: sample.pf_enabled, pf_restrict_to_ceiling: true, vpf_pct: 0 },
+    esi_enabled: sample.esi_enabled,
+    pt: { pt_applicable: true, pt_state: ptState, gender: 'MALE' },
+    rates: { pf: rates.pf, esi: rates.esi },
+    pt_slabs: slabs,
+    regime,
+    declarations: { decl_80c: 0, decl_80d: 0, decl_rent_monthly: 0, decl_metro: false },
+    month: Number(date.slice(5, 7)),
+  });
+  return { breakup, rates: { pf: rates.pf, esi: rates.esi }, pt_state: ptState, ctc_basis: breakup.ctc.ctc_basis };
+}
+
+const AT_SAMPLE_GROSS: Sample = { mode: 'GROSS', amount: SAMPLE_GROSS, pf_enabled: true, esi_enabled: true };
 
 async function structureView(id: string) {
   const s = await prisma.salaryStructure.findUniqueOrThrow({
@@ -190,8 +214,8 @@ async function structureView(id: string) {
   const used = (await prisma.employeeSalary.count({ where: { structure_id: id } })) > 0;
   const d = toDbDate(today());
   const people = await prisma.employeeSalary.count({ where: { structure_id: id, deleted_at: null, valid_from: { lte: d }, OR: [{ valid_to: null }, { valid_to: { gte: d } }] } });
-  const at = await sampleAt(components, SAMPLE_GROSS);
-  const sample = at.expanded;
+  const at = await sampleAt(components, AT_SAMPLE_GROSS);
+  const sample = at.breakup.structure;
   return {
     id: s.id,
     name: s.name,
@@ -202,7 +226,7 @@ async function structureView(id: string) {
     /** People paid on this structure today */
     people,
     immutable: used || referenced > 0,
-    sample: { gross: SAMPLE_GROSS, annual_ctc: at.annual_ctc, monthly: sample.monthly.map((c) => ({ name: c.name, amount: c.amount })), yearly: sample.yearly.map((c) => ({ name: c.name, amount: c.amount })), over_budget: sample.over_budget },
+    sample: { gross: SAMPLE_GROSS, annual_ctc: at.breakup.ctc.annual_ctc, monthly: sample.monthly.map((c) => ({ name: c.name, amount: c.amount })), yearly: sample.yearly.map((c) => ({ name: c.name, amount: c.amount })), over_budget: sample.over_budget },
     validation: validateStructure(components, SAMPLE_GROSS, at.ctc_basis),
   };
 }
@@ -229,10 +253,18 @@ setupRouter.post(
   '/structures/validate',
   requirePerm('setup.read'),
   ah(async (req, res) => {
-    const b = z.object({ components: structureCreateSchema.shape.components, sample_gross: z.number().int().min(1) }).strict().parse(req.body);
+    const b = z
+      .object({
+        components: structureCreateSchema.shape.components,
+        sample: z
+          .object({ mode: z.enum(['GROSS', 'CTC']), amount: z.number().int().min(1), pf_enabled: z.boolean().default(true), esi_enabled: z.boolean().default(true), pt_state: z.string().min(1).optional() })
+          .strict(),
+      })
+      .strict()
+      .parse(req.body);
     const components = b.components.map((c) => ({ ...c }));
-    const at = await sampleAt(components, b.sample_gross);
-    res.json({ data: { ...validateStructure(components, b.sample_gross, at.ctc_basis), expanded: at.expanded, annual_ctc: at.annual_ctc, statutory: at.statutory } });
+    const at = await sampleAt(components, b.sample);
+    res.json({ data: { ...validateStructure(components, at.breakup.gross, at.ctc_basis), breakup: at.breakup, rates: at.rates, pt_state: at.pt_state } });
   }),
 );
 
@@ -242,7 +274,7 @@ setupRouter.post(
   requirePerm('setup.write'),
   ah(async (req, res) => {
     const b = structureCreateSchema.parse(req.body);
-    const v = validateStructure(b.components, SAMPLE_GROSS, (await sampleAt(b.components, SAMPLE_GROSS)).ctc_basis);
+    const v = validateStructure(b.components, SAMPLE_GROSS, (await sampleAt(b.components, AT_SAMPLE_GROSS)).ctc_basis);
     if (v.errors.length) throw new AppError('VALIDATION', v.errors[0], 422, 'components', v.errors);
     const { actor, ip } = who(req);
     const s = await prisma.$transaction(async (tx) => {
