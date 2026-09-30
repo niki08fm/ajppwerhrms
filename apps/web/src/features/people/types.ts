@@ -1,0 +1,61 @@
+export interface Employee {
+  id: string;
+  code: string;
+  name: string;
+  dob: string | null;
+  gender: 'MALE' | 'FEMALE' | 'OTHER';
+  phone: string;
+  email: string | null;
+  address: string | null;
+  blood_group: string | null;
+  department: { id: string; name: string; colour: string };
+  designation: string;
+  pay_group: { id: string; name: string; calendar_method: string; weekly_off: string[]; structure_id: string };
+  status: string;
+  joined_on: string;
+  resigned_on: string | null;
+  last_day: string | null;
+  notice_days: number;
+  notice_served_days: number | null;
+  exit_reason: string | null;
+  updated_at: string;
+  read_only: boolean;
+  identity: {
+    has_pan: boolean;
+    has_aadhaar: boolean;
+    has_bank: boolean;
+    pan: string | null;
+    aadhaar_masked: string | null;
+    uan: string | null;
+    esi_number: string | null;
+    bank_account: string | null;
+    bank_ifsc: string | null;
+    bank_name: string | null;
+  };
+  statutory: {
+    pf_enabled: boolean;
+    pf_restrict_to_ceiling: boolean;
+    vpf_pct: number;
+    esi_enabled: boolean;
+    esi_locked_until: string | null;
+    pt_applicable: boolean;
+    pt_exempt_reason: string | null;
+    pt_state: string;
+    tax_regime_code: string;
+    decl_80c: number;
+    decl_80d: number;
+    decl_rent_monthly: number;
+    decl_metro: boolean;
+  } | null;
+  salary: { id: string; mode: 'CTC' | 'GROSS'; amount: number; monthly_gross: number; structure_id: string; valid_from: string; valid_to: string | null } | null;
+  face: { enrolled: boolean; enrolled_at?: string; consent_at?: string; model_version?: string };
+  onboarding: { items: { code: string; label: string; required: boolean; opens: string | null; done_at: string | null; done_by: string | null }[]; required_left: number; done: number; total: number };
+  rules: {
+    pay_group: { id: string; name: string };
+    calendar_method: string;
+    weekly_off: string[];
+    shift: { name: string; start_min: number; end_min: number; break_min: number };
+    structure: { id: string; name: string; valid_from: string } | null;
+    policies: { kind: string; label: string; id: string | null; name: string | null; version: number | null; valid_from: string | null; valid_to: string | null; rules: Record<string, unknown> | null; missing: string | null }[];
+  };
+}
