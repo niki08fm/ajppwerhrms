@@ -430,8 +430,8 @@ const ALLOWED: Record<Transition, { from: string; to: string }> = {
 
 export async function transition(ym: string, t: Transition, actor: string, ip: string | null, opts: { payment_ref?: string } = {}) {
   return prisma.$transaction(async (tx) => {
+    await getPeriod(tx, ym);
     const [row] = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM payroll_period WHERE period_ym = ${ym} FOR UPDATE`;
-    if (!row) throw new AppError('NOT_FOUND', `${formatYearMonth(ym)} has not been started.`, 404);
     const p = await tx.payrollPeriod.findUniqueOrThrow({ where: { id: row.id } });
     if (p.running_job_id) throw new AppError('RUN_IN_PROGRESS', 'A run is in progress. Wait for it to finish.', 409);
     const rule = ALLOWED[t];
