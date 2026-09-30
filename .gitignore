@@ -7,8 +7,8 @@ coverage/
 !.env.example
 *.log
 .DS_Store
-apps/api/uploads/
-apps/api/exports/
+backend/uploads/
+backend/exports/
 playwright-report/
 test-results/
 .vite/

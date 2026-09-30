@@ -8,20 +8,23 @@ Host it on infrastructure **in India** — for latency at the sites and because 
 
 ## 2. Deploying
 
-One image serves the API and the built web app; a second process from the same image works the job queue.
+One Node process serves the backend API and the built frontend; a second process from the same build works the job queue.
 
 ```bash
-cp .env.example .env         # fill in real secrets (see README → Environment)
-docker compose --profile app up -d --build
+npm ci
+npm run build                                   # → backend/dist and frontend/dist
+npx prisma migrate deploy --schema backend/prisma/schema.prisma
+SERVE_WEB_DIR=frontend/dist node backend/dist/server.js     # API + web app on API_PORT
+node backend/dist/worker.js                                 # job worker (when REDIS_URL is set)
 ```
+
+Run both under a process manager (systemd or pm2) so they restart on failure and on boot. The backend also serves the face model files from `face/models` at `/face-models`; keep that folder next to `backend/` (or set `FACE_MODELS_DIR`).
 
 Production settings in `.env`:
 
 - `NODE_ENV=production`, `COOKIE_SECURE=true`, `WEB_ORIGIN=https://hr.your-domain.in`, `TRUST_PROXY=1` behind a reverse proxy
-- `REDIS_URL` set (payroll runs and large exports go to the queue; the `worker` service processes them)
+- `REDIS_URL` set (payroll runs and large exports go to the queue; the worker process handles them)
 - Terminate **TLS** at a reverse proxy (nginx, Caddy, or the cloud load balancer). Everything is HTTPS; the database is never reachable from the internet.
-
-Without Docker: `npm ci && npm run build`, then run `npx prisma migrate deploy --schema apps/api/prisma/schema.prisma`, `SERVE_WEB_DIR=apps/web/dist node apps/api/dist/server.js` and `node apps/api/dist/worker.js` under a process manager.
 
 ## 3. Least-privilege database role
 
@@ -56,7 +59,7 @@ An untested backup is not a backup.
    createdb ajpwer_restore_test
    pg_restore --no-owner -d ajpwer_restore_test backup.dump      # or restore a PITR target
    # point a scratch copy of the app at it and check it
-   DATABASE_URL=postgresql://…/ajpwer_restore_test PII_ENCRYPTION_KEY=… npm run test:load --workspace=@ajpwer/api
+   DATABASE_URL=postgresql://…/ajpwer_restore_test PII_ENCRYPTION_KEY=… npm run test:load --workspace=@ajpwer/backend
    ```
    Then sign in, open a locked month's payslip and a profile's identity panel (proves the PII key works), and record the date and duration of the rehearsal.
 
@@ -65,7 +68,7 @@ An untested backup is not a backup.
 Run nightly (for example 01:30 IST):
 
 ```bash
-npm run jobs:retention        # or: node apps/api/dist/jobs/retention.js
+npm run jobs:retention        # or: node backend/dist/jobs/retention.js
 ```
 
 It deletes gate snapshots older than 30 days, deletes the face embedding of anyone who has exited, deletes punches older than three years (the only deletion the append-only trigger allows), prunes login attempts and idempotency keys, rebuilds the cached daily aggregates, and writes one audit entry with what it did. Payroll records are kept seven years and are never deleted by this job.

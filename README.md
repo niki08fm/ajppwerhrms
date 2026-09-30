@@ -4,31 +4,24 @@ Attendance, payroll and settlement for AJ Power Engineering — built to the *AJ
 
 It records attendance from face punches at geofenced sites, turns punches into paid days under each pay group's policies, runs monthly payroll with full Indian statutory deduction (PF, ESI, professional tax, income tax), settles people who leave, and reports labour cost per project.
 
-**Stack:** PostgreSQL 16 · Prisma · Express 4 + TypeScript · React 18 + Vite · TanStack Query / Table / Virtual · Tailwind CSS v4 · Zod (shared) · BullMQ + Redis · Vitest, Supertest, Playwright.
+**Stack:** React 18 + Vite (frontend) · Node + Express 4 (backend) · PostgreSQL 16 + Prisma · face-api models (face) · all written in TypeScript · TanStack Query / Table / Virtual · Tailwind CSS v4 · Zod · BullMQ + Redis · Vitest, Supertest, Playwright.
 
 ---
 
-## Just want to try it?
-
-With Docker Desktop running: `docker compose -f docker-compose.demo.yml up --build`, open http://localhost:4000 and sign in as **hr@ajpwer.in / Demo@12345**. It comes loaded with sample people, four months of attendance and payroll at every stage. **[DEMO.md](DEMO.md)** is a guided tour. No configuration needed — and never put real data in the demo.
-
 ## Quick start
 
-Prerequisites: **Node 20+** (22 recommended), **PostgreSQL 16**, and optionally **Redis 7** (without it, jobs run in-process). Docker can provide both databases.
+Prerequisites: **Node 20+** (22 recommended) and **PostgreSQL 16**. Redis is optional (without it, jobs run inside the backend).
 
 ```bash
 # 1. Configuration — fill in your own values (see "Environment" below)
 cp .env.example .env
 
-# 2. Databases (or point DATABASE_URL at your own PostgreSQL 16)
-docker compose up -d
-
-# 3. Install, migrate, seed
+# 2. Install, create the database tables, load sample data
 npm install
-npm run db:migrate
+npm run db:migrate       # creates the database named in DATABASE_URL if it does not exist
 npm run db:seed          # prints the admin login and each site tablet's login once
 
-# 4. Run the API (port 4000) and the web app (port 5173)
+# 3. Run the backend (port 4000) and the frontend (port 5173)
 npm run dev
 ```
 
@@ -59,9 +52,9 @@ The API refuses to start with a clear list of what is missing or malformed.
 
 | Command | Does |
 | --- | --- |
-| `npm run dev` | API (tsx watch) and web (Vite) together |
-| `npm run build` | Production build of both (`apps/api/dist`, `apps/web/dist`) |
-| `npm start` | Start the built API; with `SERVE_WEB_DIR=apps/web/dist` it also serves the web app |
+| `npm run dev` | Backend (tsx watch) and frontend (Vite) together; `dev:backend` / `dev:frontend` run one |
+| `npm run build` | Production build of both (`backend/dist`, `frontend/dist`) |
+| `npm start` | Start the built backend; with `SERVE_WEB_DIR=frontend/dist` it also serves the frontend |
 | `npm run db:migrate` | Apply migrations (`prisma migrate deploy`) |
 | `npm run db:seed` | Development seed |
 | `npm run db:reset` | Drop and re-create the schema (development only) |
@@ -76,28 +69,44 @@ The API refuses to start with a clear list of what is missing or malformed.
 
 ## Repository layout
 
+Three folders, one job each:
+
 ```
-apps/
-  api/                      Express + Prisma
-    prisma/                 schema.prisma, migrations (incl. raw-SQL constraints), seed.ts, seed-load.ts
-    src/engines/            attendance, pay, statutory, settlement — pure functions, no I/O, no clock
-    src/services/           load data for the engines; payroll run, reports, settlement, register
-    src/modules/            HTTP routes (auth, employees, offers, attendance, tablet, leave, setup,
+frontend/     React (Vite) — every screen: the admin app and the site tablet
+backend/      Node + Express — the API, the PostgreSQL database (Prisma), payroll and attendance engines
+face/         Face detection and recognition — the model files, detection in the browser, matching on the server
+```
+
+In more detail:
+
+```
+frontend/                   React 18 + Vite + Tailwind
+  src/features/<area>/      one folder per area: people, attendance, payroll, sites, setup, tablet…
+  src/components/           shell, data table, list toolbar, states, charts; ui/ holds the primitives (Radix)
+  src/lib/                  API client, session, lookups, hooks; face.ts points at the face models
+  e2e/                      Playwright browser flows
+
+backend/                    Node + Express 4 + Prisma (PostgreSQL 16)
+  prisma/                   schema.prisma, migrations (incl. raw-SQL constraints), seed.ts, seed-load.ts
+  src/modules/              HTTP routes (auth, employees, offers, attendance, tablet, leave, setup,
                             sites, payroll, money, audit, dashboard, misc)
-    src/lib/                auth, audit, PII crypto, list contract, idempotency, jobs, errors
-    test/engines/           spec §20 acceptance tests
-    test/api/               spec §20.25–31 integration tests
-    test/load/budgets.ts    spec §15 budgets
-  web/                      React
-    src/features/<module>/  one folder per area, matching the API modules
-    src/components/         shell, data table, list toolbar, states, charts, network diagram
-    src/components/ui/      shadcn-style primitives (Radix)
-    e2e/                    Playwright flows
-packages/
-  shared/                   Zod schemas, money (integer paise), IST dates, enums, policy rule shapes,
-                            statutory seed data — imported by both apps
+  src/services/             load data for the engines; payroll run, reports, settlement, register
+  src/engines/              attendance, pay, statutory, settlement — pure functions, no I/O, no clock
+  src/lib/                  auth, audit, PII crypto, list contract, idempotency, jobs, errors
+  shared/                   the business rules both sides use: money in integer paise, IST dates,
+                            validation schemas, statutory tables — owned by the backend, reused by
+                            the frontend for live previews (package @ajpwer/shared)
+  test/                     engines/ (spec §20 acceptance), api/ (integration), load/ (budgets)
+
+face/                       Face detection and recognition (package @ajpwer/face)
+  models/                   the model files, served by the backend at /face-models (no outside CDN)
+  src/browser.ts            detection and the 128-number embedding, in the browser (tablet, enrolment)
+  src/match.ts              matching an embedding against enrolled people, on the server
+
 docs/OPERATIONS.md          production setup, backups and a restore rehearsal, retention, hosting
 ```
+
+Each folder has its own README. The root `package.json` ties them together (npm workspaces), so one `npm install` and one `npm run dev` cover all three.
 
 ## How it is built
 
@@ -111,7 +120,7 @@ docs/OPERATIONS.md          production setup, backups and a restore rehearsal, r
 
 **Money is integer paise** end to end (`bigint` in the database). Percentages are converted once to integer micro-percent and multiplied in `BigInt` with explicit rounding (PF to the nearest rupee, ESI up, TDS to the nearest rupee).
 
-**The engines are pure** (`apps/api/src/engines`): data in, data out, no database, no clock. That is what makes the acceptance tests possible and a disputed payslip reproducible.
+**The engines are pure** (`backend/src/engines`): data in, data out, no database, no clock. That is what makes the acceptance tests possible and a disputed payslip reproducible.
 
 **Guarantees in the database, not just the code** (`prisma/migrations/*_constraints`): the punch ledger and audit log are append-only (triggers, plus revoked grants for the application role); payslips in a LOCKED or PAID month cannot be updated (trigger); salary rows cannot overlap (exclusion constraint); weekly-off values are checked; trigram and partial indexes back search and audit.
 
@@ -147,7 +156,7 @@ Recorded here as the spec asks for any "SHOULD" done differently.
 - **Face exception review** shows the gate snapshot; enrolled photographs are not stored (only embeddings, per §18), so HR compares the snapshot with the person or their ID.
 - **Face recognition** uses `@vladmandic/face-api` (tiny detector, 128-dimension descriptors) loaded only on the tablet and enrolment screens; the match threshold is `FACE_MATCH_THRESHOLD`. The spec defers ArcFace/InsightFace and liveness.
 - **People search** covers name, code, designation and phone. PAN is encrypted at rest, so it is not substring-searchable.
-- **Theme.** The tweakcn theme referred to in §2 was not in the document; the tokens in `apps/web/src/styles.css` follow the same shadcn/tweakcn format (with both font corrections applied), so a tweakcn export can be pasted over `:root` and `.dark`.
+- **Theme.** The tweakcn theme referred to in §2 was not in the document; the tokens in `frontend/src/styles.css` follow the same shadcn/tweakcn format (with both font corrections applied), so a tweakcn export can be pasted over `:root` and `.dark`.
 - **Dependency advisories.** `npm audit` reports four *moderate* advisories (React Router 6 client-side redirect handling; `uuid` inside `exceljs`). Neither path is exercised in a way that is exploitable here; upgrading to React Router 7 is a planned follow-up. CI fails on any *high* advisory.
 
 ## Honest limits (spec §19)

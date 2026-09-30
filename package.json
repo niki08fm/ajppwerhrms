@@ -5,27 +5,29 @@
   "description": "AJPWER Workforce \u2014 attendance, payroll and settlement for AJ Power Engineering",
   "type": "module",
   "workspaces": [
-    "packages/*",
-    "apps/*"
+    "frontend",
+    "backend",
+    "backend/shared",
+    "face"
   ],
   "scripts": {
-    "dev": "npm run dev --workspace=@ajpwer/api & npm run dev --workspace=@ajpwer/web",
-    "dev:api": "npm run dev --workspace=@ajpwer/api",
-    "dev:web": "npm run dev --workspace=@ajpwer/web",
-    "build": "npm run build --workspace=@ajpwer/api && npm run build --workspace=@ajpwer/web",
+    "dev": "npm run dev --workspace=@ajpwer/backend & npm run dev --workspace=@ajpwer/frontend",
+    "dev:backend": "npm run dev --workspace=@ajpwer/backend",
+    "dev:frontend": "npm run dev --workspace=@ajpwer/frontend",
+    "build": "npm run build --workspace=@ajpwer/backend && npm run build --workspace=@ajpwer/frontend",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test --workspace=@ajpwer/api",
-    "test:engines": "npm run test:engines --workspace=@ajpwer/api",
-    "db:migrate": "npm run db:migrate --workspace=@ajpwer/api",
-    "db:deploy": "npm run db:deploy --workspace=@ajpwer/api",
-    "db:seed": "npm run db:seed --workspace=@ajpwer/api",
-    "db:seed:load": "npm run db:seed:load --workspace=@ajpwer/api",
-    "db:reset": "npm run db:reset --workspace=@ajpwer/api",
-    "test:api": "npm run test:api --workspace=@ajpwer/api",
-    "test:e2e": "npm run test:e2e --workspace=@ajpwer/web",
-    "test:load": "npm run test:load --workspace=@ajpwer/api",
-    "jobs:retention": "npm run jobs:retention --workspace=@ajpwer/api",
-    "start": "npm run start --workspace=@ajpwer/api"
+    "test": "npm run test --workspace=@ajpwer/backend",
+    "test:engines": "npm run test:engines --workspace=@ajpwer/backend",
+    "db:migrate": "npm run db:migrate --workspace=@ajpwer/backend",
+    "db:deploy": "npm run db:deploy --workspace=@ajpwer/backend",
+    "db:seed": "npm run db:seed --workspace=@ajpwer/backend",
+    "db:seed:load": "npm run db:seed:load --workspace=@ajpwer/backend",
+    "db:reset": "npm run db:reset --workspace=@ajpwer/backend",
+    "test:api": "npm run test:api --workspace=@ajpwer/backend",
+    "test:e2e": "npm run test:e2e --workspace=@ajpwer/frontend",
+    "test:load": "npm run test:load --workspace=@ajpwer/backend",
+    "jobs:retention": "npm run jobs:retention --workspace=@ajpwer/backend",
+    "start": "npm run start --workspace=@ajpwer/backend"
   },
   "engines": {
     "node": ">=20"

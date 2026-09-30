@@ -22,27 +22,25 @@ env:
 jobs:
   test:
     name: Typecheck, tests, build
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: ajpwer_test
-        ports: ['5432:5432']
-        options: >-
-          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    runs-on: ubuntu-24.04
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ajpwer_test?schema=public
       TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ajpwer_test?schema=public
     steps:
       - uses: actions/checkout@v4
+      # PostgreSQL 16 comes installed on GitHub's Ubuntu runners: start it, no containers.
+      - name: Start PostgreSQL
+        run: |
+          sudo systemctl start postgresql.service
+          for i in $(seq 1 30); do pg_isready -h localhost && break; sleep 1; done
+          sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
+          sudo -u postgres createdb ajpwer_test
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
-      - run: npx prisma generate --schema apps/api/prisma/schema.prisma
+      - run: npx prisma generate --schema backend/prisma/schema.prisma
       - name: Typecheck
         run: npm run typecheck
       - name: Engine acceptance tests (spec §20)
@@ -56,28 +54,26 @@ jobs:
 
   load:
     name: Performance budgets (spec §15, §20.34)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: test
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: ajpwer_load
-        ports: ['5432:5432']
-        options: >-
-          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ajpwer_load?schema=public
     steps:
       - uses: actions/checkout@v4
+      # PostgreSQL 16 comes installed on GitHub's Ubuntu runners: start it, no containers.
+      - name: Start PostgreSQL
+        run: |
+          sudo systemctl start postgresql.service
+          for i in $(seq 1 30); do pg_isready -h localhost && break; sleep 1; done
+          sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
+          sudo -u postgres createdb ajpwer_load
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
-      - run: npx prisma generate --schema apps/api/prisma/schema.prisma
-      - run: npx prisma migrate deploy --schema apps/api/prisma/schema.prisma
+      - run: npx prisma generate --schema backend/prisma/schema.prisma
+      - run: npx prisma migrate deploy --schema backend/prisma/schema.prisma
       - name: Seed, then 200 employees and three years of punches
         run: npm run db:seed && npm run db:seed:load
       - name: Budgets
@@ -85,23 +81,21 @@ jobs:
 
   e2e:
     name: Browser flows (Playwright)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: test
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: ajpwer
-        ports: ['5432:5432']
-        options: >-
-          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ajpwer?schema=public
       E2E_PASSWORD: ci-admin-password
       PW_USE_BUNDLED: '1'
     steps:
       - uses: actions/checkout@v4
+      # PostgreSQL 16 comes installed on GitHub's Ubuntu runners: start it, no containers.
+      - name: Start PostgreSQL
+        run: |
+          sudo systemctl start postgresql.service
+          for i in $(seq 1 30); do pg_isready -h localhost && break; sleep 1; done
+          sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
+          sudo -u postgres createdb ajpwer
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -110,13 +104,13 @@ jobs:
       - run: npx playwright install --with-deps chromium
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '0'
-      - run: npx prisma generate --schema apps/api/prisma/schema.prisma
-      - run: npx prisma migrate deploy --schema apps/api/prisma/schema.prisma
+      - run: npx prisma generate --schema backend/prisma/schema.prisma
+      - run: npx prisma migrate deploy --schema backend/prisma/schema.prisma
       - run: npm run db:seed
       - name: Start API and web
         run: |
-          (cd apps/api && npx tsx src/server.ts > ../../api.log 2>&1 &)
-          (cd apps/web && npx vite --port 5173 > ../../web.log 2>&1 &)
+          (cd backend && npx tsx src/server.ts > ../api.log 2>&1 &)
+          (cd frontend && npx vite --port 5173 > ../web.log 2>&1 &)
           npx wait-on -t 60000 http://localhost:4000/api/v1/health http://localhost:5173
       - run: npm run test:e2e
       - if: failure()
