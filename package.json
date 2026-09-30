@@ -1,0 +1,28 @@
+{
+  "name": "ajpwer-workforce",
+  "private": true,
+  "version": "1.0.0",
+  "description": "AJPWER Workforce — attendance, payroll and settlement for AJ Power Engineering",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=@ajpwer/api & npm run dev --workspace=@ajpwer/web",
+    "dev:api": "npm run dev --workspace=@ajpwer/api",
+    "dev:web": "npm run dev --workspace=@ajpwer/web",
+    "build": "npm run build --workspace=@ajpwer/api && npm run build --workspace=@ajpwer/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "test:engines": "npm run test:engines --workspace=@ajpwer/api",
+    "db:migrate": "npm run db:migrate --workspace=@ajpwer/api",
+    "db:deploy": "npm run db:deploy --workspace=@ajpwer/api",
+    "db:seed": "npm run db:seed --workspace=@ajpwer/api",
+    "db:seed:load": "npm run db:seed:load --workspace=@ajpwer/api",
+    "db:reset": "npm run db:reset --workspace=@ajpwer/api"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,23 @@
+# Local infrastructure for development. Production should run PostgreSQL with
+# point-in-time recovery on India-hosted infrastructure (see docs/OPERATIONS.md).
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ajpwer}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ajpwer}
+      POSTGRES_DB: ${POSTGRES_DB:-ajpwer}
+      TZ: UTC
+      PGTZ: UTC
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+volumes:
+  pgdata:
