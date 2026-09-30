@@ -4,13 +4,13 @@ Attendance, payroll and settlement for AJ Power Engineering — built to the *AJ
 
 It records attendance from face punches at geofenced sites, turns punches into paid days under each pay group's policies, runs monthly payroll with full Indian statutory deduction (PF, ESI, professional tax, income tax), settles people who leave, and reports labour cost per project.
 
-**Stack:** React 18 + Vite (frontend) · Node + Express 4 (backend) · PostgreSQL 16 + Prisma · face-api models (face) · plain JavaScript (ES modules) throughout · TanStack Query / Table / Virtual · Tailwind CSS v4 · Zod · BullMQ + Redis · Vitest, Supertest, Playwright.
+**Stack:** React 18 + Vite (frontend) · Node + Express 4 (backend) · PostgreSQL 16 + Prisma · Python face service with YuNet, SFace and MiniFASNet (face) · plain JavaScript (ES modules) throughout · TanStack Query / Table / Virtual · Tailwind CSS v4 · Zod · BullMQ + Redis · Vitest, Supertest, Playwright.
 
 ---
 
 ## Quick start
 
-Prerequisites: **Node 22.9 or newer** and **PostgreSQL 16**. Redis is optional (without it, jobs run inside the backend).
+Prerequisites: **Node 22.9 or newer**, **PostgreSQL 16** and **Python 3.10 or newer** (for the face service). Redis is optional (without it, jobs run inside the backend).
 
 ```bash
 # 1. Configuration — fill in your own values (see "Environment" below)
@@ -20,13 +20,14 @@ cp .env.example .env
 npm install
 npm run db:migrate       # creates the database named in DATABASE_URL if it does not exist
 npm run db:seed          # prints the admin login and each site tablet's login once
+npm run face:install     # the face service: a Python venv and the four model files (set FACE_SERVICE_DEV=1 in .env)
 
-# 3. Run the backend (port 4000) and the frontend (port 5173)
+# 3. Run the backend (port 4000), the frontend (port 5173) and the face service (127.0.0.1:8100)
 npm run dev
 ```
 
 Open **http://localhost:5173** and sign in with `ADMIN_EMAIL` / `ADMIN_PASSWORD` from `.env`.
-A site tablet signs in at **http://localhost:5173/tablet** with a site login (it only works inside that site's geofence — for local testing, set your browser's location to the site's coordinates in DevTools → Sensors).
+A site tablet signs in at **http://localhost:5173/tablet** with a site login (it only works inside that site's geofence — for local testing, set your browser's location to the site's coordinates in DevTools → Sensors). The seeded people have only old face templates: register a face first with **Register face** on the tablet (employee ID and name), or from the profile.
 
 The seed creates about 30 people with three months of punches. The two months before last are run, locked and paid; last month is ready to run; the current month contains every case spec §20 asks for (a mid-month joiner with no bank account, a mid-month leaver near the gratuity threshold, a cross-site worker, a worked holiday and Sunday, a loan big enough to hit the recovery cap, an old-regime employee with declarations, a CTC-agreed salary, PF above the ceiling with restrict-to-ceiling off, two people in one crew in different PT states, and an expired document).
 
@@ -44,7 +45,8 @@ Everything configurable is in [`.env.example`](.env.example), commented. The one
 | `COMPANY_*` | Company name, address, PAN, TAN, PF and ESI codes (printed on payslips and letters) |
 | `REDIS_URL` | BullMQ queue for payroll runs and large exports. Blank = in-process |
 | `WEB_ORIGIN`, `COOKIE_SECURE`, `TRUST_PROXY` | Set for production behind HTTPS |
-| `FACE_MATCH_THRESHOLD`, `GPS_MAX_ACCURACY_M` | Face-match confidence and GPS accuracy needed for a punch |
+| `FACE_SERVICE_URL`, `FACE_SERVICE_TOKEN` | Where the face service listens (127.0.0.1:8100) and the shared secret it requires. Optional `FACE_*` thresholds: see `.env.example` |
+| `GPS_MAX_ACCURACY_M` | GPS accuracy needed to sign in and punch |
 | `NOMINATIM_USER_AGENT`, `NOMINATIM_EMAIL` | Identify the app to OpenStreetMap's place search, used by the site map |
 
 The API refuses to start with a clear list of what is missing or malformed.
@@ -53,7 +55,8 @@ The API refuses to start with a clear list of what is missing or malformed.
 
 | Command | Does |
 | --- | --- |
-| `npm run dev` | Backend (`node --watch`) and frontend (Vite) together; `dev:backend` / `dev:frontend` run one |
+| `npm run dev` | Backend (`node --watch`), frontend (Vite), and the face service when `FACE_SERVICE_DEV=1`; `dev:backend` / `dev:frontend` run one |
+| `npm run face:install` | Face service: Python venv, packages and the four model files (`face:models` re-checks the models) |
 | `npm run build` | Generates the database client and builds the frontend (`frontend/dist`); the backend runs as it is |
 | `npm start` | Start the built backend; with `SERVE_WEB_DIR=frontend/dist` it also serves the frontend |
 | `npm run db:migrate` | Apply migrations (`prisma migrate deploy`) |
@@ -62,6 +65,7 @@ The API refuses to start with a clear list of what is missing or malformed.
 | `npm run db:seed:load` | Add 200 employees and three years of punches (load testing) |
 | `npm test` | Engine acceptance tests and API integration tests |
 | `npm run test:engines` | Spec §20 acceptance tests against the pure engines (no database) |
+| `npm run test:face` | The face service's Python tests (`npm run service:test -w @ajpwer/face`) |
 | `npm run test:api` | Spec §20.25–31 and the database guarantees, against `TEST_DATABASE_URL` |
 | `npm run test:e2e` | Playwright browser flows against a running, seeded stack |
 | `npm run test:load` | Spec §15 performance budgets against a load-test database |
@@ -74,7 +78,7 @@ Three folders, one job each:
 ```
 frontend/     React (Vite) — every screen: the admin app and the site tablet
 backend/      Node + Express — the API, the PostgreSQL database (Prisma), payroll and attendance engines
-face/         Face detection and recognition — the model files, detection in the browser, matching on the server
+face/         Face v2 — the Python face service (detection, recognition, live-face check), the punch rules, tablet guidance
 ```
 
 In more detail:
@@ -83,7 +87,7 @@ In more detail:
 frontend/                   React 18 + Vite + Tailwind (.jsx)
   src/pages/<area>/         one file per screen: people, attendance, payroll, sites, setup, tablet…
   src/components/           shared pieces (shell, data table, charts, ui/) and area parts (people/, payroll/…)
-  src/services/             api.js — every call to the backend; face.js — where the face models load from
+  src/services/             api.js — every call to the backend; face.js — the tablet's face guidance (no recognition)
   src/hooks/  src/context/  useLookups and list hooks; SessionContext (who is signed in)
   src/utils/                formatting helpers
   e2e/                      Playwright browser flows
@@ -103,10 +107,11 @@ backend/                    Node + Express 4 + Prisma (PostgreSQL 16)
   prisma/                   schema.prisma (the database), migrations, seed.js, seed-load.js
   tests/                    engines/ (spec §20 acceptance), api/ (integration), load/ (budgets)
 
-face/                       Face detection and recognition (package @ajpwer/face)
-  models/                   the model files, served by the backend at /face-models (no outside CDN)
-  src/detection.js            detection and the 128-number embedding, in the browser (tablet, enrolment)
-  src/recognition.js              matching an embedding against enrolled people, on the server
+face/                       Face v2 (package @ajpwer/face) — see face/INTEGRATION.md
+  service/                  Python face service on 127.0.0.1:8100: YuNet, SFace, MiniFASNetV2 + V1SE
+  src/                      the backend's punch rules (decidePunch, sessions, gallery, client) and tablet guidance
+  models/                   the Tiny Face Detector for tablet guidance, served at /face-models (no outside CDN)
+  deploy/                   systemd unit for the face service
 
 docs/OPERATIONS.md          production setup, backups and a restore rehearsal, retention, hosting
 ```
@@ -133,14 +138,15 @@ Each folder has its own README. The root `package.json` ties them together (npm 
 
 **The list contract** (spec §15) is one hook and one table component: server-side filtering, sorting and keyset pagination (never OFFSET), page sizes 50/100/200, filter state in the URL, filter chips, saved views, "select all N matching" bulk actions with before/after previews, filtered CSV export, sticky header and first column, virtualised rows past 200.
 
-**Security** (spec §18): argon2id passwords; JWT in httpOnly SameSite=Lax cookies with an 8-hour sliding session; five failed sign-ins in 15 minutes lock by account and IP; permissions are a lookup (`role.permissions`), not `isAdmin`; site tablets sign in with a login ID and password set by HR (argon2id; the password is shown once and never stored, returned again or logged) and only inside their geofence, which is re-checked on every punch; resetting a site password or disabling its login invalidates its tokens; PAN, Aadhaar and bank accounts are AES-256-GCM encrypted at rest, Aadhaar is masked everywhere, and every read of identity data is audited; face data is stored as embeddings, never photographs, and deleted on exit; gate snapshots are deleted after 30 days; punches store distance from the site centre, never a coordinate trail.
+**Security** (spec §18): argon2id passwords; JWT in httpOnly SameSite=Lax cookies with an 8-hour sliding session; five failed sign-ins in 15 minutes lock by account and IP; permissions are a lookup (`role.permissions`), not `isAdmin`; site tablets sign in with a login ID and password set by HR (argon2id; the password is shown once and never stored, returned again or logged) and only inside their geofence, which is re-checked on every punch; resetting a site password or disabling its login invalidates its tokens; PAN, Aadhaar and bank accounts are AES-256-GCM encrypted at rest, Aadhaar is masked everywhere, and every read of identity data is audited; face data is stored as face codes (embeddings), never photographs, is made on our own server by the face service (which keeps nothing), and is deleted on exit; face crops of failed tries are kept 30 days for HR only when a manual request is raised; gate snapshots are deleted after 30 days; punches store distance from the site centre, never a coordinate trail.
 
 ## Verification
 
 | Check | Result |
 | --- | --- |
-| Engine acceptance tests (spec §20.1–24, 32–33 and more) | 89 passing |
-| API integration tests (spec §20.25–31, DB guarantees, auth, PII, tablet, structures, pay group moves, salary breakups) | 34 passing |
+| Engine acceptance tests (spec §20.1–24, 32–33 and more), geofence and face rules | 118 passing |
+| API integration tests (spec §20.25–31, DB guarantees, auth, PII, sites and tablet sign-in, face v2 punches, structures, pay group moves, salary breakups) | 75 passing |
+| Face service (Python: API, head-turn geometry, model download; the real-model tests need the models and a test photo) | 21 passing, 2 skipped without models |
 | Playwright flows (dashboard; a month through all five steps, run, reports, lock, paid; register correction and revert; people search and profile) | 4 passing |
 | Performance budgets (spec §15) at 200 employees and 568,125 punches | all passing — e.g. people list 16 ms (budget 400), month register 509 ms (1,500), 199-payslip run 2.5 s (30 s), register export 101 ms (3 s) |
 
@@ -157,9 +163,15 @@ Recorded here as the spec asks for any "SHOULD" done differently.
 - **PF, ESI and professional tax are not typed-in components.** They are worked out from the statutory rates (Setup → Statutory rules), the components switched on as PF wage, gross, and each person's own choices (PF on/off, restrict to ceiling, voluntary PF, ESI on/off, PT state on the profile's Pay tab), as §4 requires. The structure builder shows each of them at the sample gross, with take-home and CTC.
 - **ESI and PT base.** Computed on salary earnings (components after LOP, overtime, off-day pay) and not on adhoc bonuses, pending the open question in §6. Change in `assemblePayslip` (`statutory_gross`) if AJPWER decides otherwise.
 - **Open questions §22, taken at the spec's current rule:** the salary and pay group valid on the last day of the month apply to the whole month; leave encashment pays the whole encashable balance; notice shortfall is recovered at gross ÷ 30; no fixed-term contract type; overtime cost is spread across a person's minutes.
-- **Offline tablet punches** carry the face embedding and are matched on the server when they sync, so no biometric data is ever cached on the device; a queued punch that does not match confidently becomes a face exception at its original time.
-- **Face exception review** shows the gate snapshot; enrolled photographs are not stored (only embeddings, per §18), so HR compares the snapshot with the person or their ID.
-- **Face recognition** uses `@vladmandic/face-api` (tiny detector, 128-dimension descriptors) loaded only on the tablet and enrolment screens; the match threshold is `FACE_MATCH_THRESHOLD`. The spec defers ArcFace/InsightFace and liveness.
+- **No offline punching.** Without network the tablet says "No network. Punch is not possible right now. Tell your site in-charge." and HR enters the day manually. (The earlier offline queue is gone.)
+- **Face v2** (face/INTEGRATION.md).
+  - Recognition and the live-face check run on our server: YuNet, SFace and MiniFASNetV2 + V1SE in a Python service. The browser only guides (Tiny Face Detector).
+  - A punch needs a live face and a head turn in the direction the server asks, then "Is this you?".
+  - Five failed tries (including "This is not me") open an ID and name form that becomes a manual request for HR, with the face crops.
+  - Templates made by the old face-api are kept as `faceapi-v1` and never matched. Everyone registers once more, and until then their punches go through the manual request.
+  - Confident punches add rolling templates (at most five per person).
+  - Change site records travel, which counts only on arrival at the named site the same day; HR can change it.
+- **Face exception review** shows the face crops of the failed tries (or the gate snapshot for older exceptions). Enrolled photographs are not stored (only face codes, per §18), so HR compares the crops with the person or their ID.
 - **Sites.** HR marks each site on an OpenStreetMap map (drag the marker, search a place, paste coordinates or a Google Maps link, or use the browser's location) with a 50–2000 m geofence, and sets the tablet's login ID and password on the same form (typed, or generated: 12 characters without look-alikes). A new centre or radius is audited and applies from the next sign-in and punch; past punches keep the distance recorded when they were made. Site names are unique ignoring case. The migration that introduced this brought any radius outside 50–2000 m inside it and appended the code to duplicate names, and recorded each change in the audit log. Permission `sites.write` became `sites.manage`.
 - **Tablet sign-in order.** The login ID, then the password, then the lockout, then GPS accuracy, then distance, each with its own message. The lockout is looked up before the password is checked, so a locked-out caller cannot keep guessing.
 - **People search** covers name, code, designation and phone. PAN is encrypted at rest, so it is not substring-searchable.
@@ -168,6 +180,6 @@ Recorded here as the spec asks for any "SHOULD" done differently.
 
 ## Honest limits (spec §19)
 
-Face recognition is not identity proof — there is always a human exception path. Browser GPS is spoofable; the geofence raises the effort, and the Android wrapper reading `isFromMockProvider` is the real fix. TDS is a projection (no quarterly true-up yet). Income-tax surcharge above ₹50 lakh is not built. Tamil Nadu's half-yearly professional tax is not built. Verify PT slabs for states other than Andhra Pradesh and Telangana, and the income-tax slabs against the Finance Act, before the first live run.
+Face recognition is not identity proof — there is always a human exception path. The live-face check raises the effort of a photo or screen attack but does not rule it out; tune `FACE_LIVE_MIN` from real attempts. Browser GPS is spoofable; the geofence raises the effort, and the Android wrapper reading `isFromMockProvider` is the real fix. TDS is a projection (no quarterly true-up yet). Income-tax surcharge above ₹50 lakh is not built. Tamil Nadu's half-yearly professional tax is not built. Verify PT slabs for states other than Andhra Pradesh and Telangana, and the income-tax slabs against the Finance Act, before the first live run.
 
 See [docs/OPERATIONS.md](docs/OPERATIONS.md) for production deployment, backups with a rehearsed restore, retention and hosting.

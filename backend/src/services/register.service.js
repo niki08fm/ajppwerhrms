@@ -1,7 +1,7 @@
 import { dayName } from '@ajpwer/shared';
 import { computeDay, resolvePolicies } from '../calculations/index.js';
 import { fromDbDate, toDbDate } from '../utils/dbDates.js';
-import { toEnginePunch } from './attendance.service.js';
+import { toEnginePunch, travelMinutes } from './attendance.service.js';
 import { holidaysBetween, payGroupRulesCache } from './rules.service.js';
 import { pickPolicy } from '../calculations/index.js';
 
@@ -23,11 +23,12 @@ export async function dayRegister(db, date, employeeIds, today) {
     orderBy: { name: 'asc' },
   });
   const ids = employees.map((e) => e.id);
-  const [punches, overrides, leaves, holidays] = await Promise.all([
+  const [punches, overrides, leaves, holidays, travel] = await Promise.all([
     db.punch.findMany({ where: { employee_id: { in: ids }, work_date: d }, orderBy: { punched_at: 'asc' } }),
     db.attendanceOverride.findMany({ where: { employee_id: { in: ids }, work_date: d, deleted_at: null } }),
     db.leaveRequest.findMany({ where: { employee_id: { in: ids }, status: 'APPROVED', deleted_at: null, from_date: { lte: d }, to_date: { gte: d } } }),
     holidaysBetween(db, date, date),
+    travelMinutes(db, ids, date, date),
   ]);
   const rulesFor = payGroupRulesCache(db);
   const rows = [];
@@ -45,6 +46,7 @@ export async function dayRegister(db, date, employeeIds, today) {
       is_weekly_off: rules.weekly_off.includes(dayName(date)),
       leave: leave ? { leave_type: leave.leave_type, paid: !!leavePolicy?.types.find((t) => t.code === leave.leave_type)?.paid } : null,
       punches: ep,
+      travel_min: travel.get(e.id)?.[date] ?? 0,
       policies,
       shift_start_min: rules.shift.start_min,
     });

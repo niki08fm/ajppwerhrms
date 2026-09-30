@@ -172,7 +172,7 @@ describe('Auth', () => {
     expect((await tablet.get('/api/v1/employees')).status).toBe(401);
     expect((await tablet.get('/api/v1/tablet/summary')).status).toBe(200);
     // A punch from outside the fence is rejected even with a valid session.
-    const far = await tablet.post('/api/v1/punches/identify').send({ embedding: Array(128).fill(0.1), lat: 17.385, lng: 78.4867, accuracy_m: 10 });
+    const far = await tablet.post('/api/v1/punches/sessions').send({ lat: 17.385, lng: 78.4867, accuracy_m: 10 });
     expect(far.status).toBe(403);
   });
 
@@ -186,33 +186,7 @@ describe('Auth', () => {
   });
 });
 
-describe('Tablet punch', () => {
-  it('identifies, punches once, and deduplicates a retry on (employee, site, client time)', async () => {
-    const emb = Array.from({ length: 128 }, (_, i) => Math.sin(i + 1));
-    await f.agent.post(`/api/v1/employees/${f.employees.A}/face`).send({ embedding: emb, model_version: 'test', consent: true });
-    const pw = (await f.agent.post(`/api/v1/sites/${f.siteId}/reissue-login`)).body.data.password;
-    const tablet = request.agent(app);
-    await tablet.post('/api/v1/auth/site-login').send({ login: 'site-alpha', password: pw, lat: 16.5063, lng: 80.6481, accuracy_m: 12 });
-    const id = await tablet.post('/api/v1/punches/identify').send({ embedding: emb, lat: 16.5063, lng: 80.6481, accuracy_m: 12 });
-    expect(id.status).toBe(200);
-    expect(id.body.data.matched).toBe(true);
-    expect(id.body.data.employee.id).toBe(f.employees.A);
-    const body = {
-      direction: id.body.data.direction,
-      client_punched_at: new Date().toISOString(),
-      lat: 16.5063,
-      lng: 80.6481,
-      accuracy_m: 12,
-      match_token: id.body.data.match_token,
-      device_id: 'tab-1',
-    };
-    const p1 = await tablet.post('/api/v1/punches').send(body);
-    expect(p1.status).toBe(201);
-    const p2 = await tablet.post('/api/v1/punches').send(body);
-    expect(p2.status).toBe(200);
-    expect(p2.body.data.duplicate).toBe(true);
-  });
-});
+// Tablet punches (face v2) are covered in face-punch.test.js.
 
 describe('Salary structures: name, percentage or fixed, % of gross, CTC or basic, an optional maximum', () => {
   const comp = (seq, name, calc_type, calc_value, extra = {}) => ({

@@ -18,8 +18,21 @@ env:
   PII_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
   ADMIN_EMAIL: hr@ajpwer.in
   ADMIN_PASSWORD: ci-admin-password
+  FACE_SERVICE_URL: http://127.0.0.1:8100
+  FACE_SERVICE_TOKEN: ci-face-token-ci-face-token-ci-face
 
 jobs:
+  face-service:
+    name: Face service (Python)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r face/service/requirements-dev.txt
+      - run: cd face/service && python -m pytest
+
   test:
     name: Typecheck, tests, build
     runs-on: ubuntu-24.04

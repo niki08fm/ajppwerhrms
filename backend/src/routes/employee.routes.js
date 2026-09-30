@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { requirePerm } from '../middleware/auth.js';
-import { upload } from '../middleware/upload.js';
+import { frames, upload } from '../middleware/upload.js';
 import * as employeeController from '../controllers/employee.controller.js';
 
 export const employeesRouter = Router();
@@ -39,7 +39,7 @@ employeesRouter.post('/:id/activate', requirePerm('people.write'), employeeContr
 employeesRouter.post('/:id/resign', requirePerm('people.write'), employeeController.resign);
 
 // ─── Face enrolment ──────────────────────────────────────────────────────────
-employeesRouter.post('/:id/face', requirePerm('people.write'), employeeController.enrolFace);
+employeesRouter.post('/:id/face', requirePerm('people.write'), frames, employeeController.enrolFace);
 employeesRouter.delete('/:id/face', requirePerm('people.write'), employeeController.removeFace);
 
 // ─── Documents ───────────────────────────────────────────────────────────────

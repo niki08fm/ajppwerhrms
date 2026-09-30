@@ -398,11 +398,12 @@ export const documentCreateSchema = z
   })
   .strict();
 
+/** HR enrolment from the profile: multipart fields sent with one or more frames. */
 export const faceEnrolSchema = z
   .object({
-    embedding: z.array(z.number()).min(64).max(1024),
-    model_version: z.string().min(1).max(60),
-    consent: z.literal(true, { errorMap: () => ({ message: 'Written consent is required before enrolment' }) }),
+    consent: z.enum(['true'], { errorMap: () => ({ message: 'Written consent is required before enrolment' }) }),
+    /** HR's decision is final: enrol even though the face resembles someone else's */
+    confirm_duplicate: z.enum(['true', 'false']).optional(),
   })
   .strict();
 
@@ -465,46 +466,46 @@ export const bulkOverrideSchema = z
   })
   .strict();
 
-export const punchIdentifySchema = z
-  .object({
-    embedding: z.array(z.number()).min(64).max(1024),
-    lat: z.number(),
-    lng: z.number(),
-    accuracy_m: z.number().min(0),
-  })
-  .strict();
+// ─── Tablet punches (face v2) ────────────────────────────────────────────────
 
-export const punchCreateSchema = z
+const position = {
+  lat: z.coerce.number().min(-90).max(90),
+  lng: z.coerce.number().min(-180).max(180),
+  accuracy_m: z.coerce.number().min(0),
+};
+
+/** Chosen by the tablet for each upload and sent again, unchanged, on a retry. */
+export const faceRequestId = z.string().regex(/^[A-Za-z0-9_-]{8,80}$/, 'A request id is 8–80 letters, digits, dashes or underscores');
+
+export const employeeCodeSchema = z.string().trim().min(1, 'Enter your employee ID').max(30);
+
+export const punchSessionStartSchema = z
   .object({
-    employee_id: uuid.optional(),
-    direction: z.enum(['IN', 'OUT']),
-    client_punched_at: z.string().datetime({ offset: true }),
-    lat: z.number(),
-    lng: z.number(),
-    accuracy_m: z.number().min(0),
-    /** Signed token from /punches/identify proving the match happened server-side (live punches) */
-    match_token: z.string().min(1).optional(),
-    /** Offline-queued punches carry the embedding; the server matches it on sync */
-    embedding: z.array(z.number()).min(64).max(1024).optional(),
-    device_id: z.string().max(100),
-    queued: z.boolean().default(false),
-    snapshot: z.string().max(400_000).optional(),
+    purpose: z.enum(['PUNCH', 'REGISTER']).default('PUNCH'),
+    /** Register face only: who is registering */
+    employee_code: employeeCodeSchema.optional(),
+    name: z.string().trim().min(2, 'Enter your name').max(120).optional(),
+    ...position,
   })
   .strict()
-  .refine((v) => !!v.match_token || !!v.embedding, { message: 'A punch needs a match token or, when queued offline, the face embedding' });
+  .refine((v) => v.purpose === 'PUNCH' || (!!v.employee_code && !!v.name), { message: 'Enter your employee ID and name to register', path: ['employee_code'] });
 
-export const faceExceptionCreateSchema = z
+/** Multipart fields sent with the two frames (front, turn). */
+export const punchFramesSchema = z.object({ request_id: faceRequestId, ...position }).strict();
+
+export const punchConfirmSchema = z.object({ confirm_token: z.string().min(16).max(200), device_id: z.string().max(100).optional(), ...position }).strict();
+
+export const punchNotMeSchema = z.object({ confirm_token: z.string().min(16).max(200) }).strict();
+
+export const punchChangeSiteSchema = z.object({ confirm_token: z.string().min(16).max(200), to_site_id: uuid, ...position }).strict();
+
+/** The ID/name form after the try limit: becomes a manual request for HR, with the face crops. */
+export const punchManualSchema = z.object({ employee_code: employeeCodeSchema, name: z.string().trim().min(2, 'Enter your name').max(120), ...position }).strict();
+
+export const siteChangeReviewSchema = z
   .object({
-    occurred_at: z.string().datetime({ offset: true }),
-    claimed_employee_id: uuid.nullable().optional(),
-    best_match_id: uuid.nullable().optional(),
-    score: z.number().min(0).max(1).nullable().optional(),
-    reason: z.string().min(1).max(200),
-    lat: z.number(),
-    lng: z.number(),
-    accuracy_m: z.number().min(0),
-    snapshot: z.string().max(400_000).optional(),
-    direction: z.enum(['IN', 'OUT']).optional(),
+    travel_min: z.number().int().min(0).max(1440),
+    reason: z.string().trim().min(3, 'Say why, in a few words').max(300),
   })
   .strict();
 

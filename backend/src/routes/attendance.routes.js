@@ -21,3 +21,8 @@ attendanceRouter.get('/overtime', requirePerm('attendance.read'), attendanceCont
 // ─── Face exceptions (Approvals) ─────────────────────────────────────────────
 attendanceRouter.get('/face-exceptions', requirePerm('attendance.read'), attendanceController.listFaceExceptions);
 attendanceRouter.post('/face-exceptions/:id/decide', requirePerm('attendance.write'), attendanceController.decideFaceException);
+
+// ─── Face v2: site changes with travel, and the punch attempt log ────────────
+attendanceRouter.get('/site-changes', requirePerm('attendance.read'), attendanceController.listSiteChanges);
+attendanceRouter.patch('/site-changes/:id', requirePerm('attendance.write'), attendanceController.reviewSiteChange);
+attendanceRouter.get('/punch-attempts.csv', requirePerm('attendance.read', 'reports.export'), attendanceController.exportPunchAttempts);

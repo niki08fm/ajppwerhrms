@@ -1,0 +1,6 @@
+# Server model files are fetched at deploy by service/download_models.py, never committed.
+service/models/
+service/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/

@@ -1,26 +1,54 @@
-# face — face detection and recognition
+# face — face v2
 
-Everything to do with faces lives here: the model files, detecting a face and turning it into numbers in the browser, and matching those numbers on the server. It is its own folder so the models can be hosted, upgraded or replaced without touching the rest of the system.
+Face detection, recognition and the live-face check for site punches, done **on our server**:
 
 ```
-models/          the model files (about 7 MB), served by the backend at /face-models
-  tiny_face_detector_model*       finds a face in the camera frame
-  face_landmark_68_model*         locates eyes, nose and mouth to line the face up
-  face_recognition_model*         turns the face into 128 numbers (the "embedding")
-src/detection.js   used by the frontend (site tablet, face enrolment): loads the models, reads the camera,
-                 returns the embedding
-src/recognition.js     used by the backend: compares an embedding with everyone enrolled (cosine similarity)
+service/                 the Python face service (FastAPI, CPU only) on 127.0.0.1:8100
+  app/engine.py            the four models: YuNet (detect + 5 landmarks), SFace (128-number face code),
+                           MiniFASNetV2 + MiniFASNetV1SE (live face, averaged)
+  app/main.py              POST /analyze, GET /health; X-Face-Token; one worker, "busy" when it is taken
+  app/geometry.py          head turn from the landmarks, anti-spoofing crop, picture quality
+  download_models.py       fetches the models into service/models and checks their sizes (models are not in git)
+  tests/                   pytest
+src/                     JavaScript used by the backend (and guidance.js by the tablet)
+  client.js                createFaceClient — calls the service; busy / unavailable / bad image
+  decide.js                decidePunch, decideRegistration, checkDuplicate, rollingToDelete, shouldLearn
+  gallery.js               buildGallery, matchGallery — only "sface-2021dec" templates are compared
+  session.js               createPunchSession — tries, the head-turn challenge, identification
+  messages.js              messageFor — every sentence the tablet shows
+  guidance.js              browser only: Tiny Face Detector guidance and frame capture
+models/                  tiny_face_detector — the only model the browser loads (served at /face-models)
+deploy/ajpwer-face.service   systemd unit (700 MB memory limit, restarts itself)
+INTEGRATION.md           rules, database, routes, tablet, hosting
 ```
 
 ## How a punch works
-1. The tablet's camera sees a face. `detection.js` finds it and turns it into 128 numbers — in the browser, on the tablet.
-2. Only those numbers are sent to the backend, never a photograph (a small gate snapshot is kept for the exception queue and deleted after 30 days).
-3. The backend compares them with every enrolled person (`recognition.js`). At or above `FACE_MATCH_THRESHOLD` (default 0.55) the punch is recorded; below it the attempt goes to the exception queue for a person to decide.
-4. When someone leaves, their enrolled numbers are deleted.
 
-## Hosting the models
-- By default the backend serves `face/models` at `/face-models`, so the tablet loads them from our own server — no outside CDN.
-- To serve them from somewhere else (a separate model host or bucket), copy the `models/` folder there and set `VITE_FACE_MODEL_URL` to its address before building the frontend. To serve a different folder from the backend, set `FACE_MODELS_DIR`.
+1. The tablet guides the person into the oval (Tiny Face Detector, in the browser). It captures one frame looking straight and one turned the way the server asked.
+2. The backend sends both frames to the face service. The service finds the face (YuNet), checks it is a live face (MiniFASNet ×2), reads the head turn from the landmarks, and makes the 128-number face code (SFace). It keeps nothing.
+3. The backend decides:
+   - live, turned as asked, and clearly one registered person → "Is this you?" → the punch;
+   - otherwise a try. After five tries, the ID and name go to HR with the face crops.
+4. Face codes, not photographs, are stored. They are deleted when someone leaves.
 
-## Replacing the model
-The models come from [@vladmandic/face-api](https://github.com/vladmandic/face-api) 1.7 (MIT licence). To move to another model (for example ArcFace, or add liveness detection): replace the files in `models/`, change `detection.js` to produce the new embedding, and re-enrol everyone — embeddings from different models cannot be compared. `FACE_MODEL_VERSION` in `detection.js` is stored with each enrolment so old and new can be told apart.
+All thresholds are in `.env` (`FACE_*`); the rules are in [INTEGRATION.md](INTEGRATION.md).
+
+## Install (development)
+
+```bash
+npm run face:install            # python venv in face/service/.venv, packages, and the four models
+# then in .env: FACE_SERVICE_DEV=1, and FACE_SERVICE_URL / FACE_SERVICE_TOKEN
+npm run dev                     # backend, frontend and the face service
+npm run service:test -w @ajpwer/face
+```
+
+Production: [docs/OPERATIONS.md](../docs/OPERATIONS.md) §2a.
+
+## Replacing a model
+
+A different recognition model makes face codes that cannot be compared with the old ones:
+- change `MODEL_VERSION` in `service/app/config.py` and `src/gallery.js` together;
+- keep the old templates (they are ignored);
+- have everyone register again.
+
+Licences: YuNet and SFace (OpenCV Zoo) and MiniFASNet (yakhyo/face-anti-spoofing) are Apache 2.0; the Tiny Face Detector (`@vladmandic/face-api`) is MIT.

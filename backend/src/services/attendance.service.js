@@ -16,6 +16,29 @@ export function toEnginePunch(p) {
   return { id: p.id, at: p.punched_at.getTime(), work_date: fromDbDate(p.work_date), direction: p.direction, site_id: p.site_id, method: p.method };
 }
 
+/** Travel minutes of a site change that count: HR's figure when set, else the counted trip. */
+export function effectiveTravel(c) {
+  return c.hr_travel_min ?? (c.status === 'COUNTED' ? (c.travel_min ?? 0) : 0);
+}
+
+/** employee id → { work date → travel minutes } between two dates (site changes, face v2). */
+export async function travelMinutes(db, ids, from, to) {
+  const rows = await db.siteChange.findMany({
+    where: { employee_id: { in: ids }, work_date: { gte: toDbDate(from), lte: toDbDate(to) } },
+    select: { employee_id: true, work_date: true, status: true, travel_min: true, hr_travel_min: true },
+  });
+  const out = new Map();
+  for (const r of rows) {
+    const min = effectiveTravel(r);
+    if (!min) continue;
+    const m = out.get(r.employee_id) ?? {};
+    const d = fromDbDate(r.work_date);
+    m[d] = (m[d] ?? 0) + min;
+    out.set(r.employee_id, m);
+  }
+  return out;
+}
+
 /**
  * Effective attendance for a month, for many employees at once. Computed from the
  * ledger every time — derived, never stored as truth.
@@ -29,7 +52,7 @@ export async function computeMonths(db, employees, ym) {
   const to = addDays(last, CONTEXT_DAYS);
   const ids = employees.map((e) => e.id);
 
-  const [punches, overrides, leaves, holidays] = await Promise.all([
+  const [punches, overrides, leaves, holidays, travel] = await Promise.all([
     db.punch.findMany({
       where: { employee_id: { in: ids }, work_date: { gte: toDbDate(from), lte: toDbDate(to) } },
       select: { id: true, employee_id: true, punched_at: true, work_date: true, direction: true, site_id: true, method: true },
@@ -42,6 +65,7 @@ export async function computeMonths(db, employees, ym) {
       where: { employee_id: { in: ids }, status: 'APPROVED', deleted_at: null, from_date: { lte: toDbDate(to) }, to_date: { gte: toDbDate(from) } },
     }),
     holidaysBetween(db, from, to),
+    travelMinutes(db, ids, from, to),
   ]);
 
   const punchesBy = new Map();
@@ -70,6 +94,7 @@ export async function computeMonths(db, employees, ym) {
       }
     }
     const empPunches = punchesBy.get(e.id) ?? {};
+    const empTravel = travel.get(e.id) ?? {};
     const empOverrides = overridesBy.get(e.id) ?? {};
     const joined = fromDbDate(e.joined_on);
     const lastDay = fromDbDate(e.last_day);
@@ -86,6 +111,7 @@ export async function computeMonths(db, employees, ym) {
         is_weekly_off: rules.weekly_off.includes(dayName(date)),
         leave: leaveByDate[date] ?? null,
         punches: empPunches[date] ?? [],
+        travel_min: empTravel[date] ?? 0,
         policies,
         shift_start_min: rules.shift.start_min,
       });

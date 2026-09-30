@@ -612,10 +612,11 @@ async function main() {
         },
       },
     });
-    // Face embeddings (random, for demo data only — real enrolment happens on the profile).
+    // Old face-api templates (random, demo only): like production after the face v2 migration, each
+    // person must register once more (tablet "Register face" or the profile) before punching by face.
     const v = Array.from({ length: 128 }, () => rand() * 2 - 1);
     const norm = Math.sqrt(v.reduce((a, x) => a + x * x, 0));
-    await prisma.employeeFace.create({ data: { employee_id: e.id, embedding: Buffer.from(new Float32Array(v.map((x) => x / norm)).buffer), model_version: 'seed-random', consent_at: new Date() } });
+    await prisma.employeeFace.create({ data: { employee_id: e.id, embedding: Buffer.from(new Float32Array(v.map((x) => x / norm)).buffer), model_version: 'faceapi-v1', consent_at: new Date() } });
     created.push({ p, id: e.id, code });
   }
 

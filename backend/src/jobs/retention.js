@@ -11,8 +11,9 @@ import { rebuildAggregates } from '../services/aggregates.service.js';
 /**
  * Nightly retention and housekeeping. Built at the start, because retention added later never happens.
  *
- *   Gate snapshots    30 days
+ *   Gate snapshots    30 days (and the face crops of manual requests, kept with them)
  *   Face embeddings   until exit
+ *   Punch attempts    RETENTION_PUNCH_ATTEMPT_DAYS (the log for tuning face thresholds)
  *   Punches           three years
  *   Payroll records   seven years (never deleted by this job; payslips are protected by trigger)
  */
@@ -42,6 +43,10 @@ export async function runRetention(now = new Date()) {
     // no directory yet
   }
   report.snapshots_deleted = old.length;
+  // Face crops of manual requests and punch sessions: the files went with the sweep above.
+  report.crops_released =
+    (await prisma.faceException.updateMany({ where: { occurred_at: { lt: cutoff }, NOT: { crop_keys: { isEmpty: true } } }, data: { crop_keys: [] } })).count +
+    (await prisma.punchSession.updateMany({ where: { created_at: { lt: cutoff }, NOT: { crop_keys: { isEmpty: true } } }, data: { crop_keys: [] } })).count;
 
   // 2. Face embeddings of people who have exited: no further purpose.
   const exited = await prisma.employeeFace.updateMany({
@@ -57,11 +62,17 @@ export async function runRetention(now = new Date()) {
     return tx.$executeRaw`DELETE FROM punch WHERE work_date < ${toDbDate(punchCutoff)}::date`;
   });
 
-  // 4. Housekeeping.
+  // 4. Face v2: a change of site still pending after its day never reached the named site.
+  report.site_changes_not_counted = (await prisma.siteChange.updateMany({ where: { status: 'PENDING', work_date: { lt: toDbDate(today) } }, data: { status: 'NOT_COUNTED' } })).count;
+  const attemptCutoff = new Date(now.getTime() - env.RETENTION_PUNCH_ATTEMPT_DAYS * 86_400_000);
+  report.punch_attempts_deleted = (await prisma.punchAttempt.deleteMany({ where: { created_at: { lt: attemptCutoff } } })).count;
+  report.punch_sessions_deleted = (await prisma.punchSession.deleteMany({ where: { created_at: { lt: attemptCutoff }, attempts: { none: {} } } })).count;
+
+  // 5. Housekeeping.
   report.login_attempts_deleted = (await prisma.loginAttempt.deleteMany({ where: { at: { lt: new Date(now.getTime() - 30 * 86_400_000) } } })).count;
   report.idempotency_keys_deleted = (await prisma.idempotencyKey.deleteMany({ where: { created_at: { lt: new Date(now.getTime() - 7 * 86_400_000) } } })).count;
 
-  // 5. Rebuild the cached daily aggregates.
+  // 6. Rebuild the cached daily aggregates.
   await rebuildAggregates(60, today);
 
   await audit(prisma, { actor: 'system', action: 'retention.run', entity_type: 'system', detail: report });

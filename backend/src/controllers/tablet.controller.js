@@ -1,8 +1,26 @@
-import jwt from 'jsonwebtoken';
-import { mkdirSync, writeFileSync, existsSync, createReadStream } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createReadStream, existsSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
-import { faceExceptionCreateSchema, istDate, punchCreateSchema, punchIdentifySchema } from '@ajpwer/shared';
+import {
+  istDate,
+  punchChangeSiteSchema,
+  punchConfirmSchema,
+  punchFramesSchema,
+  punchManualSchema,
+  punchNotMeSchema,
+  punchSessionStartSchema,
+} from '@ajpwer/shared';
+import {
+  checkDuplicate,
+  createPunchSession,
+  decidePunch,
+  decideRegistration,
+  FaceServiceBadImage,
+  FaceServiceBusy,
+  FaceServiceUnavailable,
+  hasTemplate,
+  messageFor,
+} from '@ajpwer/face';
 import { assignWorkDate, inferDirection, OVERNIGHT_MAX_GAP_MIN } from '../calculations/index.js';
 import { audit } from '../utils/audit.js';
 import { fromDbDate, toDbDate } from '../utils/dbDates.js';
@@ -11,11 +29,20 @@ import { AppError, notFound } from '../utils/errors.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { checkGeofence } from '../utils/geo.js';
 import { prisma } from '../config/db.js';
-import { matchFace } from '../services/face.service.js';
+import { faceClient, faceConfig, hasCurrentTemplate, learnFromPunch, loadGallery, saveCrop, saveRegisteredTemplate, snapshotDir } from '../services/face.service.js';
 import { attendanceFrozen } from '../services/attendance.service.js';
 import { bumpAggregate } from '../services/aggregates.service.js';
 
-const snapshotDir = path.resolve(env.UPLOAD_DIR, 'snapshots');
+/**
+ * Tablet punches, face v2 (face/INTEGRATION.md §3). The browser only guides and
+ * captures; the backend owns every decision: tries, the head-turn challenge,
+ * who it is, the confirm token, the punch, face exceptions and the attempt log.
+ */
+
+const siteActor = (req) => `site:${req.site.code}`;
+const hash = (t) => createHash('sha256').update(t).digest('hex');
+const hhmm = (d) => new Date(d.getTime() + 330 * 60_000).toISOString().slice(11, 16);
+const MAX_CROPS = 5;
 
 /** Re-check the geofence on every call — a tablet signed in inside the fence and carried outside must stop working. */
 async function fence(req, pos) {
@@ -23,7 +50,7 @@ async function fence(req, pos) {
   const check = checkGeofence(site, pos, env.GPS_MAX_ACCURACY_M, 'Punch');
   if (!check.ok) {
     await audit(prisma, {
-      actor: `site:${site.code}`,
+      actor: siteActor(req),
       ip: req.ip ?? null,
       action: 'geofence.rejected',
       entity_type: 'site',
@@ -35,19 +62,74 @@ async function fence(req, pos) {
   return check;
 }
 
-function saveSnapshot(dataUrl) {
-  if (!dataUrl) return null;
-  const m = /^data:image\/(jpeg|png|webp);base64,(.+)$/.exec(dataUrl);
-  if (!m) return null;
-  mkdirSync(snapshotDir, { recursive: true });
-  const key = `${randomUUID()}.${m[1] === 'jpeg' ? 'jpg' : m[1]}`;
-  writeFileSync(path.join(snapshotDir, key), Buffer.from(m[2], 'base64'));
-  return key;
+async function lastPunch(employeeId, db = prisma) {
+  return db.punch.findFirst({ where: { employee_id: employeeId }, orderBy: { punched_at: 'desc' }, include: { site: { select: { id: true, name: true } } } });
 }
 
-async function lastPunch(employeeId, before) {
-  return prisma.punch.findFirst({ where: { employee_id: employeeId, punched_at: { lt: before } }, orderBy: { punched_at: 'desc' }, include: { site: { select: { id: true, name: true } } } });
+/** The direction the next punch takes: OUT while an IN from the same shift is open, IN otherwise. */
+function nextDirection(last, now) {
+  const recent = last && now.getTime() - last.punched_at.getTime() <= OVERNIGHT_MAX_GAP_MIN * 60_000 ? last : null;
+  return inferDirection(recent);
 }
+
+function duplicateOf(direction, last, siteId, now) {
+  const dup = checkDuplicate({ direction, siteId, now, last: last ? { direction: last.direction, site_id: last.site_id, site_name: last.site?.name, punched_at: last.punched_at } : null });
+  if (!dup) return null;
+  return { code: dup.code, message: messageFor(dup.code, { time: hhmm(dup.at), site: dup.site }) };
+}
+
+async function loadSession(req) {
+  const row = await prisma.punchSession.findUnique({ where: { id: req.params.id } });
+  if (!row || row.site_id !== req.site.id) throw notFound('That punch session');
+  return row;
+}
+
+const sessionOf = (row) => createPunchSession(row.state, { config: faceConfig() });
+
+function sessionReply(s, extra = {}) {
+  const st = s.state;
+  return {
+    status: st.status,
+    tries_left: s.triesLeft,
+    challenge: st.status === 'ACTIVE' ? st.challenge : null,
+    ...extra,
+  };
+}
+
+async function saveSession(db, id, s, data = {}) {
+  const st = s.state;
+  return db.punchSession.update({
+    where: { id },
+    data: { state: st, status: st.status, tries: st.tries, ...(st.status === 'DONE' ? { closed_at: new Date() } : {}), ...data },
+  });
+}
+
+function checkToken(s, token) {
+  const id = s.state.identified;
+  if (s.status !== 'IDENTIFIED' || !id || id.token_hash !== hash(token)) throw new AppError('CONFLICT', 'This confirmation is no longer valid. Scan again.', 409);
+}
+
+/** Crops of failed tries are only for a manual request: once a session ends any other way, they go. */
+function dropCrops(keys) {
+  for (const k of keys ?? []) {
+    try {
+      unlinkSync(path.join(snapshotDir, path.basename(k)));
+    } catch {
+      // already gone
+    }
+  }
+}
+
+const attemptNumbers = (d) => ({
+  employee_id: d.employee_id ?? null,
+  score: d.score ?? null,
+  second_score: d.second_score ?? null,
+  live_score: d.live_score ?? null,
+  yaw_front: d.yaw_front ?? null,
+  yaw_turn: d.yaw_turn ?? null,
+});
+
+// ─── Summary ─────────────────────────────────────────────────────────────────
 
 /** A site token can read that site's own day summary — and nothing about salaries or other sites. */
 export const getSummary = asyncHandler(async (req, res) => {
@@ -71,149 +153,410 @@ export const getSummary = asyncHandler(async (req, res) => {
   res.json({ data: { site: { id: site.id, code: site.code, name: site.name }, date: today, punched_in_today: punches.length, on_site_now: onSite } });
 });
 
-/** Step 1 of a punch: match the face server-side and infer the direction. */
-export const identify = asyncHandler(async (req, res) => {
-  const b = punchIdentifySchema.parse(req.body);
-  const check = await fence(req, b);
-  const m = await matchFace(b.embedding);
-  const threshold = env.FACE_MATCH_THRESHOLD;
-  if (!m.best || m.best.score < threshold) {
-    return res.json({ data: { matched: false, best_match_id: m.best?.employee_id ?? null, score: m.best?.score ?? null, threshold, distance_m: check.distance_m } });
+/** Other active sites, for "Change site". Names only. */
+export const listOtherSites = asyncHandler(async (req, res) => {
+  const sites = await prisma.site.findMany({ where: { deleted_at: null, is_active: true, id: { not: req.site.id } }, select: { id: true, name: true }, orderBy: { name: 'asc' } });
+  res.json({ data: sites });
+});
+
+// ─── Sessions ────────────────────────────────────────────────────────────────
+
+async function findEmployeeByCode(code) {
+  return prisma.employee.findFirst({
+    where: { code: { equals: code.trim(), mode: 'insensitive' }, deleted_at: null, status: { in: ['ACTIVE', 'NOTICE', 'ONBOARDING'] } },
+    select: { id: true, code: true, name: true, designation: true },
+  });
+}
+
+/** The typed name matches when every word typed appears in the person's name. */
+function nameMatches(typed, actual) {
+  const words = typed.toLowerCase().split(/\s+/).filter(Boolean);
+  const name = actual.toLowerCase();
+  return words.length > 0 && words.every((w) => name.includes(w));
+}
+
+/** Start a punch (or a face registration): a head-turn challenge and a fresh count of tries. */
+export const startSession = asyncHandler(async (req, res) => {
+  const b = punchSessionStartSchema.parse(req.body);
+  await fence(req, b);
+  let employee = null;
+  if (b.purpose === 'REGISTER') {
+    employee = await findEmployeeByCode(b.employee_code);
+    if (!employee || !nameMatches(b.name, employee.name)) throw new AppError('UNKNOWN_EMPLOYEE', messageFor('UNKNOWN_EMPLOYEE'), 422, 'employee_code');
+    if (await hasCurrentTemplate(employee.id)) throw new AppError('ALREADY_REGISTERED', messageFor('ALREADY_REGISTERED'), 409, 'employee_code');
   }
-  const e = await prisma.employee.findUniqueOrThrow({ where: { id: m.best.employee_id }, select: { id: true, name: true, code: true, designation: true } });
-  const now = new Date();
-  const last = await lastPunch(e.id, now);
-  const recent = last && now.getTime() - last.punched_at.getTime() <= OVERNIGHT_MAX_GAP_MIN * 60_000 ? last : null;
-  const direction = inferDirection(recent);
-  const crossSite = recent && recent.direction === 'IN' && recent.site_id !== req.site.id ? { from: recent.site.name } : null;
-  const token = jwt.sign({ eid: e.id, sid: req.site.id, score: m.best.score, typ: 'match' }, env.SITE_JWT_SECRET, { expiresIn: '3m' });
-  res.json({
-    data: {
-      matched: true,
-      employee: e,
-      score: m.best.score,
-      direction,
-      cross_site: crossSite,
-      note: crossSite ? `Last punch was IN at ${crossSite.from}. Punching out here is fine — both sites are recorded and the day is paid by hours.` : null,
-      match_token: token,
-      distance_m: check.distance_m,
-    },
+  const s = createPunchSession(null, { config: faceConfig() });
+  const row = await prisma.punchSession.create({
+    data: { site_id: req.site.id, purpose: b.purpose, employee_id: employee?.id ?? null, state: s.state, status: s.status, tries: 0 },
+  });
+  res.status(201).json({
+    data: { session_id: row.id, purpose: b.purpose, employee: employee ? { name: employee.name, code: employee.code } : null, ...sessionReply(s) },
   });
 });
 
 /**
- * Step 2: write the punch. Server timestamp for live punches; the original time
- * for offline-queued ones, with both times stored and late arrivals flagged.
- * Idempotent on (employee, site, client timestamp).
+ * One upload: the straight frame and the turned frame. The same request_id always
+ * gets the same reply (so a retry never counts twice or punches twice). "Busy" is
+ * not a try: the tablet sends the same upload again.
  */
-export const createPunch = asyncHandler(async (req, res) => {
-  const b = punchCreateSchema.parse(req.body);
-  const site = req.site;
+export const uploadFrames = asyncHandler(async (req, res) => {
+  const b = punchFramesSchema.parse(req.body);
+  const front = req.files?.front?.[0];
+  const turn = req.files?.turn?.[0];
+  if (!front || !turn) throw new AppError('VALIDATION', 'Send two frames: front and turn.', 422);
+  const row = await loadSession(req);
+  const prior = await prisma.punchAttempt.findUnique({ where: { session_id_request_id: { session_id: row.id, request_id: b.request_id } } });
+  if (prior) {
+    res.setHeader('Idempotent-Replay', 'true');
+    // The tablet lost the reply to an identification: same answer, with a fresh confirm token.
+    const again = sessionOf(row);
+    if (prior.outcome === 'IDENTIFIED' && again.status === 'IDENTIFIED' && again.state.identified.request_id === b.request_id && !again.confirmExpired()) {
+      const token = randomBytes(24).toString('hex');
+      again.annotate({ token_hash: hash(token) });
+      await saveSession(prisma, row.id, again);
+      return res.json({ data: { ...prior.reply, confirm_token: token } });
+    }
+    return res.json({ data: prior.reply });
+  }
   const check = await fence(req, b);
-  const serverNow = new Date();
-  const clientAt = new Date(b.client_punched_at);
-
-  let employeeId;
-  let score;
-  if (b.match_token) {
-    let payload;
-    try {
-      payload = jwt.verify(b.match_token, env.SITE_JWT_SECRET);
-    } catch {
-      throw new AppError('VALIDATION', 'The face match has expired. Scan again.', 422, 'match_token');
-    }
-    if (payload.typ !== 'match' || payload.sid !== site.id || (b.employee_id && payload.eid !== b.employee_id)) {
-      throw new AppError('FORBIDDEN', 'This face match was not made at this site.', 403);
-    }
-    employeeId = payload.eid;
-    score = payload.score;
-  } else {
-    // Queued offline: match now; below threshold becomes an exception at the original time.
-    const m = await matchFace(b.embedding);
-    if (!m.best || m.best.score < env.FACE_MATCH_THRESHOLD) {
-      const fx = await prisma.faceException.create({
-        data: {
-          site_id: site.id,
-          occurred_at: clientAt,
-          best_match_id: m.best?.employee_id ?? null,
-          score: m.best?.score ?? null,
-          reason: 'Queued offline punch did not match confidently on sync',
-          direction: b.direction,
-          distance_m: check.distance_m,
-          snapshot_key: saveSnapshot(b.snapshot),
-        },
-      });
-      return res.status(202).json({ data: { exception_id: fx.id, matched: false } });
-    }
-    employeeId = m.best.employee_id;
-    score = m.best.score;
+  const s = sessionOf(row);
+  const logAttempt = (data) =>
+    prisma.punchAttempt.create({
+      data: { session_id: row.id, site_id: row.site_id, purpose: row.purpose, challenge: s.state.challenge?.direction ?? null, tries_after: s.state.tries, created_at: new Date(), ...data },
+    });
+  if (s.status !== 'ACTIVE') {
+    return res.status(409).json({ error: { code: 'SESSION_STATE', message: 'This scan has finished. Start again.', field: null }, data: sessionReply(s) });
+  }
+  if (s.challengeExpired()) {
+    s.renewChallenge();
+    await saveSession(prisma, row.id, s);
+    const reply = sessionReply(s, { outcome: 'EXPIRED', code: 'CHALLENGE_EXPIRED', message: messageFor('CHALLENGE_EXPIRED') });
+    await logAttempt({ request_id: b.request_id, outcome: 'EXPIRED', code: 'CHALLENGE_EXPIRED', reply });
+    return res.json({ data: reply });
   }
 
-  // Deduplicate a retry on (employee, site, client timestamp).
-  const dup = await prisma.punch.findUnique({ where: { employee_id_site_id_client_punched_at: { employee_id: employeeId, site_id: site.id, client_punched_at: clientAt } } });
-  if (dup) return res.status(200).json({ data: { ...dup, work_date: fromDbDate(dup.work_date), duplicate: true } });
+  let analysis;
+  try {
+    analysis = await faceClient().analyze([front.buffer, turn.buffer], { requestId: b.request_id });
+  } catch (e) {
+    // Never a try. Logged under its own id so the retry with the same request_id is analysed afresh.
+    const busy = e instanceof FaceServiceBusy;
+    const bad = e instanceof FaceServiceBadImage;
+    if (!busy && !bad && !(e instanceof FaceServiceUnavailable)) throw e;
+    const code = busy ? 'BUSY' : bad ? 'NO_FACE' : 'SERVICE_DOWN';
+    const reply = sessionReply(s, { outcome: busy ? 'BUSY' : bad ? 'NO_FACE' : 'SERVICE_DOWN', code, message: messageFor(code), retry_same_request: busy });
+    await logAttempt({ request_id: `${b.request_id}:${code.toLowerCase()}:${randomUUID()}`, outcome: reply.outcome, code, reply });
+    if (busy) return res.status(503).json({ error: { code: 'FACE_BUSY', message: reply.message, field: null }, data: reply });
+    if (bad) return res.json({ data: reply });
+    return res.status(503).json({ error: { code: 'FACE_UNAVAILABLE', message: reply.message, field: null }, data: reply });
+  }
 
-  const punchedAt = b.queued ? clientAt : serverNow;
+  const cfg = faceConfig();
+  const gallery = await loadGallery();
+  const challenge = s.state.challenge;
+  const frontFrame = analysis.frames?.[0];
+  const quality = { front: frontFrame?.quality ?? null, turn: analysis.frames?.[1]?.quality ?? null };
+  const common = { request_id: b.request_id, quality, service_ms: analysis.ms ?? null };
+
+  // ── Registering a face ────────────────────────────────────────────────────
+  if (row.purpose === 'REGISTER') {
+    const d = decideRegistration({ analysis, challenge, gallery, employeeId: row.employee_id, config: cfg });
+    let reply;
+    if (d.outcome === 'REGISTERED') {
+      const e = await prisma.employee.findUnique({ where: { id: row.employee_id }, select: { id: true, name: true, code: true } });
+      await prisma.$transaction(async (tx) => {
+        await saveRegisteredTemplate(tx, { employeeId: e.id, embedding: d.embedding, siteId: row.site_id, liveScore: d.live_score });
+        s.finish({ registered: true });
+        await saveSession(tx, row.id, s);
+        await audit(tx, { actor: siteActor(req), ip: req.ip ?? null, action: 'face.register', entity_type: 'employee', entity_id: e.id, detail: { site_id: row.site_id, live_score: d.live_score, via: 'tablet' } });
+      });
+      reply = sessionReply(s, { outcome: 'REGISTERED', code: 'REGISTERED', message: messageFor('REGISTERED', { name: e.name }) });
+    } else if (d.outcome === 'DUPLICATE_FACE') {
+      s.finish({ refused: 'DUPLICATE_FACE' });
+      await saveSession(prisma, row.id, s);
+      await audit(prisma, { actor: siteActor(req), ip: req.ip ?? null, action: 'face.register_refused', entity_type: 'employee', entity_id: row.employee_id, detail: { reason: 'DUPLICATE_FACE', resembles: d.duplicate_of, score: d.score } });
+      reply = sessionReply(s, { outcome: 'DUPLICATE_FACE', code: 'DUPLICATE_FACE', message: messageFor('DUPLICATE_FACE') });
+    } else {
+      if (d.countsAsTry) s.recordTry(d.outcome);
+      else s.renewChallenge();
+      await saveSession(prisma, row.id, s);
+      reply = sessionReply(s, { outcome: d.outcome, code: d.code, message: messageFor(s.status === 'BLOCKED' ? 'BLOCKED' : d.code, { tries: s.state.tries }) });
+    }
+    await logAttempt({ ...common, outcome: d.outcome, code: d.code, counts_as_try: d.countsAsTry, tries_after: s.state.tries, ...attemptNumbers({ ...d, employee_id: d.duplicate_of ?? row.employee_id }), reply });
+    return res.json({ data: reply });
+  }
+
+  // ── Punching ─────────────────────────────────────────────────────────────
+  const d = decidePunch({ analysis, challenge, gallery, config: cfg });
+  let reply;
+  if (d.outcome === 'IDENTIFIED') {
+    const now = new Date();
+    const last = await lastPunch(d.employee_id);
+    const direction = nextDirection(last, now);
+    const dup = duplicateOf(direction, last, row.site_id, now);
+    const e = await prisma.employee.findUnique({ where: { id: d.employee_id }, select: { id: true, name: true, code: true, designation: true } });
+    if (dup) {
+      s.finish({ duplicate: dup.code });
+      await saveSession(prisma, row.id, s, { employee_id: e.id });
+      dropCrops(row.crop_keys);
+      reply = sessionReply(s, { outcome: 'DUPLICATE', code: dup.code, message: dup.message, employee: { name: e.name, code: e.code } });
+    } else {
+      const token = randomBytes(24).toString('hex');
+      s.identify({ employee_id: e.id, score: d.score, live_score: d.live_score, direction });
+      // Kept server-side only: the embedding (to learn from on confirm) and the token's hash.
+      s.annotate({ token_hash: hash(token), embedding: d.embedding, request_id: b.request_id });
+      await saveSession(prisma, row.id, s, { employee_id: e.id });
+      const st = s.state;
+      const crossSite = direction === 'OUT' && last && last.site_id !== row.site_id ? last.site.name : null;
+      reply = {
+        ...sessionReply(s),
+        outcome: 'IDENTIFIED',
+        code: 'IDENTIFIED',
+        message: messageFor('IDENTIFIED'),
+        employee: { name: e.name, code: e.code, designation: e.designation },
+        direction,
+        confirm_token: token,
+        confirm_expires_at: st.identified.expires_at,
+        can_change_site: direction === 'OUT',
+        note: crossSite ? `Last punch was IN at ${crossSite}. Punching out here is fine — both sites are recorded and the day is paid by hours.` : null,
+        distance_m: check.distance_m,
+      };
+    }
+  } else {
+    let cropKey = null;
+    if (d.countsAsTry) {
+      if ((row.crop_keys?.length ?? 0) < MAX_CROPS) cropKey = saveCrop(frontFrame?.crop_jpeg);
+      s.recordTry(d.outcome);
+    } else s.renewChallenge();
+    const notRegistered = d.outcome === 'NO_MATCH' && gallery.people === 0;
+    await saveSession(prisma, row.id, s, cropKey ? { crop_keys: { push: cropKey } } : {});
+    const code = s.status === 'BLOCKED' ? 'BLOCKED' : notRegistered ? 'NOT_REGISTERED' : d.code;
+    reply = sessionReply(s, { outcome: d.outcome, code: d.code, message: messageFor(code, { tries: s.state.tries }) });
+  }
+  // The tablet never learns who the best (unconfirmed) match was; the log keeps it for tuning.
+  await logAttempt({ ...common, outcome: d.outcome, code: d.code, counts_as_try: d.countsAsTry, tries_after: s.state.tries, ...attemptNumbers(d), reply: { ...reply, confirm_token: undefined } });
+  res.json({ data: reply });
+});
+
+/** Write the punch the person confirmed. Idempotent: confirming twice returns the same punch. */
+async function writePunch(tx, { row, s, siteId, direction, distance_m, deviceId }) {
+  const id = s.state.identified;
+  const now = new Date();
+  const last = await lastPunch(id.employee_id, tx);
+  const dup = duplicateOf(direction, last, siteId, now);
+  if (dup) throw new AppError('DUPLICATE_PUNCH', dup.message, 409);
+  const work_date = assignWorkDate(now, direction, last ? { direction: last.direction, work_date: fromDbDate(last.work_date), at: last.punched_at.getTime() } : null);
   const flags = [];
-  const lateMin = (serverNow.getTime() - clientAt.getTime()) / 60_000;
-  if (b.queued && lateMin > env.LATE_SYNC_FLAG_MIN) flags.push(`Arrived ${Math.round(lateMin)} min after it was taken (offline queue)`);
-  if (!b.queued && Math.abs(lateMin) > env.CLOCK_SKEW_FLAG_MIN) flags.push(`Tablet clock differs from server by ${Math.round(Math.abs(lateMin))} min`);
-
-  const last = await lastPunch(employeeId, punchedAt);
-  const work_date = assignWorkDate(punchedAt, b.direction, last ? { direction: last.direction, work_date: fromDbDate(last.work_date), at: last.punched_at.getTime() } : null);
-
-  const frozen = await attendanceFrozen(prisma, work_date.slice(0, 7));
+  const frozen = await attendanceFrozen(tx, work_date.slice(0, 7));
   if (frozen.frozen) flags.push('Arrived after the month was submitted for payroll');
-
-  const p = await prisma.punch.create({
+  const p = await tx.punch.create({
     data: {
-      employee_id: employeeId,
-      site_id: site.id,
-      direction: b.direction,
-      punched_at: punchedAt,
-      client_punched_at: clientAt,
+      employee_id: id.employee_id,
+      site_id: siteId,
+      direction,
+      punched_at: now,
+      client_punched_at: now,
       work_date: toDbDate(work_date),
       method: 'FACE',
-      match_score: score,
-      distance_m: check.distance_m,
-      device_id: b.device_id,
+      match_score: id.score,
+      distance_m,
+      device_id: deviceId,
+      session_id: row.id,
       flagged: flags.length > 0,
       flag_reason: flags.join('; ') || null,
     },
   });
-  await bumpAggregate(work_date, site.id).catch(() => undefined);
-  const e = await prisma.employee.findUnique({ where: { id: employeeId }, select: { name: true, code: true } });
-  res.status(201).json({ data: { id: p.id, employee: e, direction: p.direction, punched_at: p.punched_at, work_date, flagged: p.flagged, flag_reason: p.flag_reason } });
+  const learned = await learnFromPunch(tx, { employeeId: id.employee_id, embedding: id.embedding, score: id.score, liveScore: id.live_score, siteId });
+  await tx.punchAttempt.updateMany({ where: { session_id: row.id, request_id: id.request_id }, data: { resolution: 'CONFIRMED' } });
+  return { punch: p, work_date, learned };
+}
+
+/** Arriving at a named site the same day counts the travel; any other pending change for the person no longer can. */
+async function settleSiteChanges(tx, punch, work_date) {
+  const pending = await tx.siteChange.findMany({ where: { employee_id: punch.employee_id, status: 'PENDING' } });
+  for (const c of pending) {
+    const sameDay = fromDbDate(c.work_date) === work_date;
+    if (punch.direction === 'IN' && sameDay && c.to_site_id === punch.site_id) {
+      const minutes = Math.max(0, Math.floor((punch.punched_at.getTime() - c.left_at.getTime()) / 60_000));
+      await tx.siteChange.update({ where: { id: c.id }, data: { status: 'COUNTED', in_punch_id: punch.id, arrived_at: punch.punched_at, travel_min: Math.min(minutes, env.FACE_TRAVEL_MAX_MIN) } });
+    } else if (punch.direction === 'IN') {
+      await tx.siteChange.update({ where: { id: c.id }, data: { status: 'NOT_COUNTED', in_punch_id: punch.id, arrived_at: punch.punched_at } });
+    }
+  }
+}
+
+export const confirmPunch = asyncHandler(async (req, res) => {
+  const b = punchConfirmSchema.parse(req.body);
+  const row = await loadSession(req);
+  if (row.punch_id) return res.json({ data: await punchReply(row.punch_id, true) });
+  const check = await fence(req, b);
+  const s = sessionOf(row);
+  checkToken(s, b.confirm_token);
+  if (s.confirmExpired()) {
+    const requestId = s.state.identified.request_id;
+    s.cancelIdentification();
+    await saveSession(prisma, row.id, s);
+    await prisma.punchAttempt.updateMany({ where: { session_id: row.id, request_id: requestId }, data: { resolution: 'EXPIRED' } });
+    return res.status(409).json({ error: { code: 'CONFIRM_EXPIRED', message: messageFor('CHALLENGE_EXPIRED'), field: null }, data: sessionReply(s) });
+  }
+  const direction = s.state.identified.direction;
+  const result = await prisma.$transaction(async (tx) => {
+    const r = await writePunch(tx, { row, s, siteId: req.site.id, direction, distance_m: check.distance_m, deviceId: b.device_id ?? null });
+    await settleSiteChanges(tx, r.punch, r.work_date);
+    s.finish({ punch_id: r.punch.id });
+    await saveSession(tx, row.id, s, { punch_id: r.punch.id });
+    return r;
+  });
+  dropCrops(row.crop_keys);
+  await bumpAggregate(result.work_date, req.site.id).catch(() => undefined);
+  res.status(201).json({ data: await punchReply(result.punch.id, false) });
 });
 
-/** When the camera cannot identify someone, nothing is marked present: the attempt is queued for HR. */
-export const raiseFaceException = asyncHandler(async (req, res) => {
-  const b = faceExceptionCreateSchema.parse(req.body);
-  const site = req.site;
-  const check = await fence(req, b);
-  const fx = await prisma.faceException.create({
+async function punchReply(punchId, duplicate) {
+  const p = await prisma.punch.findUnique({ where: { id: punchId }, include: { employee: { select: { name: true, code: true } } } });
+  const code = p.direction === 'IN' ? 'PUNCHED_IN' : 'PUNCHED_OUT';
+  return {
+    id: p.id,
+    employee: p.employee,
+    direction: p.direction,
+    punched_at: p.punched_at,
+    work_date: fromDbDate(p.work_date),
+    flagged: p.flagged,
+    flag_reason: p.flag_reason,
+    duplicate,
+    message: messageFor(code, { time: hhmm(p.punched_at), name: p.employee.name.split(' ')[0] }),
+  };
+}
+
+/** "This is not me": counts as a try; after the last try the ID/name form opens. */
+export const notMe = asyncHandler(async (req, res) => {
+  const b = punchNotMeSchema.parse(req.body);
+  const row = await loadSession(req);
+  const s = sessionOf(row);
+  checkToken(s, b.confirm_token);
+  const id = s.state.identified;
+  const blocked = s.notMe();
+  await saveSession(prisma, row.id, s);
+  await prisma.punchAttempt.updateMany({ where: { session_id: row.id, request_id: id.request_id }, data: { resolution: 'NOT_ME' } });
+  const reply = sessionReply(s, { outcome: 'NOT_ME', code: 'NOT_ME', message: messageFor(blocked ? 'BLOCKED' : 'NOT_ME', { tries: s.state.tries }) });
+  await prisma.punchAttempt.create({
     data: {
-      site_id: site.id,
-      occurred_at: new Date(b.occurred_at),
-      claimed_employee_id: b.claimed_employee_id ?? null,
-      best_match_id: b.best_match_id ?? null,
-      score: b.score ?? null,
-      reason: b.reason,
-      direction: b.direction ?? null,
-      distance_m: check.distance_m,
-      snapshot_key: saveSnapshot(b.snapshot),
+      session_id: row.id,
+      site_id: row.site_id,
+      purpose: row.purpose,
+      request_id: `not-me:${randomUUID()}`,
+      created_at: new Date(),
+      outcome: 'NOT_ME',
+      code: 'NOT_ME',
+      counts_as_try: true,
+      tries_after: s.state.tries,
+      employee_id: id.employee_id,
+      score: id.score,
+      live_score: id.live_score,
+      reply,
     },
   });
-  await audit(prisma, { actor: `site:${site.code}`, ip: req.ip ?? null, action: 'face_exception.raise', entity_type: 'face_exception', entity_id: fx.id, detail: { reason: b.reason } });
-  res.status(201).json({ data: { id: fx.id } });
+  await audit(prisma, { actor: siteActor(req), ip: req.ip ?? null, action: 'punch.not_me', entity_type: 'punch_session', entity_id: row.id, detail: { shown: id.employee_id, score: id.score } });
+  res.json({ data: reply });
 });
+
+/**
+ * Leaving for another site: punch OUT here and name the site. The travel time
+ * counts only if they punch IN at that site the same day; HR sees every one.
+ */
+export const changeSite = asyncHandler(async (req, res) => {
+  const b = punchChangeSiteSchema.parse(req.body);
+  const row = await loadSession(req);
+  if (row.punch_id) return res.json({ data: await punchReply(row.punch_id, true) });
+  const check = await fence(req, b);
+  const s = sessionOf(row);
+  checkToken(s, b.confirm_token);
+  if (s.confirmExpired()) throw new AppError('CONFIRM_EXPIRED', messageFor('CHALLENGE_EXPIRED'), 409);
+  if (s.state.identified.direction !== 'OUT') throw new AppError('VALIDATION', 'Change site is for leaving a site: punch in first.', 422);
+  const to = await prisma.site.findFirst({ where: { id: b.to_site_id, deleted_at: null, is_active: true } });
+  if (!to || to.id === req.site.id) throw new AppError('VALIDATION', 'Choose the site you are going to.', 422, 'to_site_id');
+  const result = await prisma.$transaction(async (tx) => {
+    const r = await writePunch(tx, { row, s, siteId: req.site.id, direction: 'OUT', distance_m: check.distance_m, deviceId: null });
+    const change = await tx.siteChange.create({
+      data: { employee_id: r.punch.employee_id, work_date: toDbDate(r.work_date), from_site_id: req.site.id, to_site_id: to.id, out_punch_id: r.punch.id, left_at: r.punch.punched_at },
+    });
+    await tx.punchAttempt.updateMany({ where: { session_id: row.id, request_id: s.state.identified.request_id }, data: { resolution: 'CHANGED_SITE' } });
+    s.finish({ punch_id: r.punch.id, site_change_id: change.id });
+    await saveSession(tx, row.id, s, { punch_id: r.punch.id });
+    await audit(tx, { actor: siteActor(req), ip: req.ip ?? null, action: 'punch.change_site', entity_type: 'site_change', entity_id: change.id, detail: { employee_id: r.punch.employee_id, from: req.site.id, to: to.id } });
+    return r;
+  });
+  dropCrops(row.crop_keys);
+  await bumpAggregate(result.work_date, req.site.id).catch(() => undefined);
+  const reply = await punchReply(result.punch.id, false);
+  res.status(201).json({ data: { ...reply, message: messageFor('SITE_CHANGED', { time: hhmm(result.punch.punched_at), site: to.name }) } });
+});
+
+/**
+ * After the try limit: the person types their employee ID and name, and HR gets a
+ * manual request with the face crops of the failed tries. Nothing is marked present
+ * until HR decides.
+ */
+export const manualRequest = asyncHandler(async (req, res) => {
+  const b = punchManualSchema.parse(req.body);
+  const row = await loadSession(req);
+  if (row.face_exception_id) return res.json({ data: { exception_id: row.face_exception_id, message: messageFor('MANUAL_SENT') } });
+  if (row.status !== 'BLOCKED') throw new AppError('CONFLICT', 'The ID and name form opens after the face tries run out.', 409);
+  const check = await fence(req, b);
+  const e = await findEmployeeByCode(b.employee_code);
+  if (!e) throw new AppError('UNKNOWN_EMPLOYEE', messageFor('UNKNOWN_EMPLOYEE'), 422, 'employee_code');
+  const now = new Date();
+  const last = await lastPunch(e.id);
+  const direction = nextDirection(last, now);
+  const reasons = [`${row.tries} failed face tries`];
+  if (!nameMatches(b.name, e.name)) reasons.push(`name typed "${b.name}" does not match`);
+  if (!hasTemplate(await loadGallery(), e.id)) reasons.push('not registered with the new face system yet');
+  const s = sessionOf(row);
+  const fx = await prisma.$transaction(async (tx) => {
+    const created = await tx.faceException.create({
+      data: {
+        site_id: row.site_id,
+        occurred_at: now,
+        claimed_employee_id: e.id,
+        claimed_name: b.name,
+        reason: reasons.join('; '),
+        kind: 'FAILED_TRIES',
+        direction,
+        distance_m: check.distance_m,
+        crop_keys: row.crop_keys ?? [],
+        session_id: row.id,
+      },
+    });
+    s.finish({ face_exception_id: created.id });
+    await saveSession(tx, row.id, s, { face_exception_id: created.id, employee_id: e.id });
+    await audit(tx, { actor: siteActor(req), ip: req.ip ?? null, action: 'face_exception.raise', entity_type: 'face_exception', entity_id: created.id, detail: { kind: 'FAILED_TRIES', claimed_employee_id: e.id } });
+    return created;
+  });
+  res.status(201).json({ data: { exception_id: fx.id, message: messageFor('MANUAL_SENT') } });
+});
+
+// ─── HR: gate snapshots and crops ────────────────────────────────────────────
+
+function sendImage(res, key) {
+  const file = path.join(snapshotDir, path.basename(key));
+  if (!existsSync(file)) throw notFound('That image (it may have passed its 30-day retention)');
+  res.setHeader('Cache-Control', 'private, max-age=300');
+  res.type('jpeg');
+  createReadStream(file).pipe(res);
+}
 
 /** Gate snapshot for review (admin only). Deleted automatically after 30 days. */
 export const getSnapshot = asyncHandler(async (req, res) => {
   const fx = await prisma.faceException.findUnique({ where: { id: req.params.id } });
   if (!fx?.snapshot_key) throw notFound('That snapshot');
-  const file = path.join(snapshotDir, path.basename(fx.snapshot_key));
-  if (!existsSync(file)) throw notFound('That snapshot (it may have passed its 30-day retention)');
-  res.setHeader('Cache-Control', 'private, max-age=300');
-  createReadStream(file).pipe(res);
+  sendImage(res, fx.snapshot_key);
+});
+
+/** One face crop from a manual request's failed tries (admin only). Deleted with the gate snapshots. */
+export const getCrop = asyncHandler(async (req, res) => {
+  const fx = await prisma.faceException.findUnique({ where: { id: req.params.id } });
+  const n = Number(req.params.n);
+  const key = Number.isInteger(n) ? fx?.crop_keys?.[n] : null;
+  if (!key) throw notFound('That face crop');
+  sendImage(res, key);
 });

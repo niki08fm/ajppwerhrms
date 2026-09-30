@@ -1,16 +1,17 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, ImageOff, X } from 'lucide-react';
+import { Check, Download, ImageOff, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { AJPWER_LEAVE_TYPES } from '@ajpwer/shared';
-import { api, API_BASE, errorMessage } from '@/services/api';
+import { api, API_BASE, download, errorMessage } from '@/services/api';
+import { useSession } from '@/context/SessionContext';
 import { istTime } from '@/utils';
 import { KV, PageHeader, PersonLink } from '@/components/bits';
 import { Chip, EmptyState, ErrorState, SkeletonRows } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
-import { Select, Textarea } from '@/components/ui/form';
+import { Input, Select, Textarea } from '@/components/ui/form';
 import { TabsContent, TabsList, TabsRoot } from '@/components/ui/overlay';
 
 /** What is waiting: face exceptions with evidence, and pending leave. */
@@ -18,14 +19,27 @@ export default function Approvals() {
   const [tab, setTab] = useState('face');
   const fx = useQuery({ queryKey: ['face-exceptions'], queryFn: () => api.get('/face-exceptions', { status: 'PENDING' }).then((r) => r.data) });
   const leave = useQuery({ queryKey: ['leave', 'pending'], queryFn: () => api.get('/leave', { 'filter[status]': 'PENDING', limit: 200 }).then((r) => r.data) });
+  const moves = useQuery({ queryKey: ['site-changes'], queryFn: () => api.get('/site-changes') });
+  const { can } = useSession();
   return (
     <div>
-      <PageHeader title="Approvals" description="When the camera cannot identify someone, nothing is marked present until a person decides here." />
+      <PageHeader
+        title="Approvals"
+        description="When the camera cannot identify someone, nothing is marked present until a person decides here."
+        actions={
+          can('reports.export') && (
+            <Button variant="outline" onClick={() => download('/punch-attempts.csv', 'punch-attempts.csv').catch((e) => toast.error(errorMessage(e)))}>
+              <Download /> Punch attempts (CSV)
+            </Button>
+          )
+        }
+      />
       <TabsRoot value={tab} onValueChange={setTab}>
         <TabsList
           tabs={[
             { value: 'face', label: 'Face exceptions', badge: fx.data?.length ? <Chip tone="warning">{fx.data.length}</Chip> : undefined },
             { value: 'leave', label: 'Leave', badge: leave.data?.length ? <Chip tone="info">{leave.data.length}</Chip> : undefined },
+            { value: 'moves', label: 'Site changes', badge: moves.data?.meta.unreviewed ? <Chip tone="warning">{moves.data.meta.unreviewed}</Chip> : undefined },
           ]}
         />
 
@@ -48,6 +62,9 @@ export default function Approvals() {
         </TabsContent>
         <TabsContent value="leave" className="pt-4">
           <LeaveQueue q={leave} />
+        </TabsContent>
+        <TabsContent value="moves" className="pt-4">
+          <SiteChanges q={moves} />
         </TabsContent>
       </TabsRoot>
     </div>
@@ -75,8 +92,14 @@ function ExceptionCard({ f }) {
       <CardHeader title={`${f.site.name} · ${istTime(f.occurred_at, true)}`} description={f.reason} />
       <CardBody className="grid gap-4 sm:grid-cols-2">
         <div>
-          <div className="mb-1 text-[12px] text-muted-foreground">Gate snapshot</div>
-          {f.has_snapshot ? (
+          <div className="mb-1 text-[12px] text-muted-foreground">{f.crops ? `Face at the tablet, ${f.crops} tr${f.crops === 1 ? 'y' : 'ies'}` : 'Gate snapshot'}</div>
+          {f.crops ? (
+            <div className="grid grid-cols-3 gap-1.5">
+              {Array.from({ length: f.crops }, (_, n) => (
+                <img key={n} src={`${API_BASE}/face-exceptions/${f.id}/crops/${n}`} alt={`Face crop, try ${n + 1}`} className="aspect-square w-full rounded-md border object-cover" />
+              ))}
+            </div>
+          ) : f.has_snapshot ? (
             <img src={`${API_BASE}/face-exceptions/${f.id}/snapshot`} alt="Gate snapshot" className="aspect-[4/3] w-full rounded-md border object-cover" />
           ) : (
             <div className="flex aspect-[4/3] w-full flex-col items-center justify-center gap-1 rounded-md border bg-muted text-[12px] text-muted-foreground">
@@ -99,6 +122,7 @@ function ExceptionCard({ f }) {
                   'Nobody close'
                 ),
               ],
+              ...(f.kind === 'FAILED_TRIES' ? [['Typed at the tablet', f.claimed ? `${f.claimed_name} · ID ${f.claimed.code} (${f.claimed.name})` : f.claimed_name]] : []),
               ['Distance from centre', f.distance_m !== null ? `${f.distance_m} m` : '—'],
             ]}
           />
@@ -213,5 +237,101 @@ function LeaveQueue({ q }) {
         </tbody>
       </table>
     </Card>
+  );
+}
+
+/**
+ * People who used "Change site" on a tablet. Travel counts only when they punched
+ * in at the named site the same day; HR can set any figure, which is final.
+ */
+function SiteChanges({ q }) {
+  if (q.isLoading) return <SkeletonRows rows={4} />;
+  if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
+  if (!q.data.data.length)
+    return (
+      <Card>
+        <EmptyState title="No site changes" body="When someone leaves one site for another with Change site on the tablet, it appears here with the travel time." />
+      </Card>
+    );
+  return (
+    <Card>
+      <table className="w-full text-[13px]">
+        <thead className="border-b text-left text-[12px] text-muted-foreground">
+          <tr>
+            <th className="px-4 py-2 font-medium">Person</th>
+            <th className="px-4 py-2 font-medium">From → to</th>
+            <th className="px-4 py-2 font-medium">Left · arrived</th>
+            <th className="px-4 py-2 font-medium">Status</th>
+            <th className="px-4 py-2 font-medium">Travel counted</th>
+            <th className="px-4 py-2" />
+          </tr>
+        </thead>
+        <tbody className="divide-y">
+          {q.data.data.map((c) => (
+            <SiteChangeRow key={c.id} c={c} />
+          ))}
+        </tbody>
+      </table>
+    </Card>
+  );
+}
+
+const MOVE_STATUS = { PENDING: ['info', 'On the way'], COUNTED: ['success', 'Arrived same day'], NOT_COUNTED: ['muted', 'Not counted'] };
+
+function SiteChangeRow({ c }) {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [minutes, setMinutes] = useState(String(c.effective_travel_min));
+  const [reason, setReason] = useState('');
+  const save = useMutation({
+    mutationFn: () => api.patch(`/site-changes/${c.id}`, { travel_min: Number(minutes), reason }),
+    onSuccess: () => {
+      toast.success('Travel time saved. The day is recomputed with it.');
+      setEditing(false);
+      qc.invalidateQueries({ queryKey: ['site-changes'] });
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+  const [tone, label] = MOVE_STATUS[c.status];
+  return (
+    <tr className="align-top">
+      <td className="px-4 py-2">{c.employee && <PersonLink id={c.employee.id} name={c.employee.name} code={c.employee.code} />}</td>
+      <td className="px-4 py-2">
+        {c.from_site?.name} → {c.to_site?.name}
+      </td>
+      <td className="px-4 py-2 num">
+        {istTime(c.left_at, true)} · {c.arrived_at ? istTime(c.arrived_at) : '—'}
+      </td>
+      <td className="px-4 py-2">
+        <Chip tone={tone}>{label}</Chip>
+        {c.reviewed_at && <div className="mt-1 text-[11px] text-muted-foreground">Set by {c.reviewed_by}</div>}
+      </td>
+      <td className="px-4 py-2 num">
+        {editing ? (
+          <div className="flex w-56 flex-col gap-1.5">
+            <Input type="number" min={0} max={1440} value={minutes} onChange={(e) => setMinutes(e.target.value)} aria-label="Travel minutes" />
+            <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why (e.g. bus takes 30 min)" aria-label="Reason" />
+          </div>
+        ) : (
+          `${c.effective_travel_min} min`
+        )}
+      </td>
+      <td className="px-4 py-2 text-right">
+        {editing ? (
+          <div className="flex justify-end gap-1">
+            <Button size="sm" variant="outline" onClick={() => setEditing(false)}>
+              Cancel
+            </Button>
+            <Button size="sm" disabled={minutes === '' || reason.trim().length < 3} loading={save.isPending} onClick={() => save.mutate()}>
+              Save
+            </Button>
+          </div>
+        ) : (
+          <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
+            {c.reviewed_at ? 'Change' : 'Review'}
+          </Button>
+        )}
+      </td>
+    </tr>
   );
 }

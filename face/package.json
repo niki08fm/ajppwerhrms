@@ -1,12 +1,19 @@
 {
   "name": "@ajpwer/face",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
-  "description": "Face detection and recognition for AJPWER Workforce: the model files, detection in the browser, matching on the server",
+  "description": "Face v2 for AJPWER Workforce: the Python face service (YuNet, SFace, MiniFASNet), the backend's punch logic, and the tablet's live guidance",
   "exports": {
-    "./detection": "./src/detection.js",
-    "./recognition": "./src/recognition.js"
+    ".": "./src/index.js",
+    "./guidance": "./src/guidance.js",
+    "./messages": "./src/messages.js"
+  },
+  "scripts": {
+    "service:install": "cd service && python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt && .venv/bin/python download_models.py",
+    "service:models": "cd service && PY=python3; [ -x .venv/bin/python ] && PY=.venv/bin/python; $PY download_models.py",
+    "service:test": "cd service && PY=python3; [ -x .venv/bin/python ] && PY=.venv/bin/python; $PY -m pytest",
+    "service:dev": "node scripts/dev-service.js"
   },
   "dependencies": {
     "@vladmandic/face-api": "^1.7.14"

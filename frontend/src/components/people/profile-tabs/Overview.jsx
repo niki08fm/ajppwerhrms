@@ -83,7 +83,7 @@ export function OverviewTab({ e }) {
                 ['Bank account', e.identity.has_bank ? <Mono>{e.identity.bank_account}</Mono> : <Chip tone="destructive">No bank account — blocks payroll</Chip>],
                 ['IFSC', e.identity.bank_ifsc ? <Mono>{e.identity.bank_ifsc}</Mono> : '—'],
                 ['Bank', e.identity.bank_name],
-                ['Face', e.face.enrolled ? `Enrolled ${longDate(String(e.face.enrolled_at).slice(0, 10))}` : <Chip tone="warning">Not enrolled</Chip>],
+                ['Face', e.face.enrolled ? `Enrolled ${longDate(String(e.face.enrolled_at).slice(0, 10))}` : e.face.needs_registration ? <Chip tone="warning">Register again (new face system)</Chip> : <Chip tone="warning">Not enrolled</Chip>],
               ]}
             />
           </CardBody>

@@ -1,0 +1,7 @@
+# AJPWER face service — Python 3.10 or newer, CPU only.
+fastapi
+uvicorn[standard]
+python-multipart
+opencv-python-headless>=4.9
+onnxruntime>=1.17
+numpy

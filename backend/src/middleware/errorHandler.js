@@ -47,7 +47,9 @@ export const errorHandler = (err, req, res, _next) => {
   if (err instanceof AppError) e = err;
   else if (err instanceof ZodError) e = fromZod(err);
   else if (err?.type === 'entity.parse.failed') e = new AppError('VALIDATION', 'The request body is not valid JSON.', 400);
-  else {
+  else if (err?.name === 'MulterError') {
+    e = err.code === 'LIMIT_FILE_SIZE' ? new AppError('TOO_LARGE', 'The file or camera frame is too large.', 413) : new AppError('VALIDATION', `The upload is not valid (${err.field ?? err.code}).`, 422);
+  } else {
     const p = fromPrisma(err);
     if (p) e = p;
     else {

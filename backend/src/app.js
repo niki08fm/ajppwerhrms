@@ -28,8 +28,8 @@ export function createApp() {
 
   app.get('/api/v1/health', (_req, res) => res.json({ data: { ok: true, at: new Date().toISOString() } }));
 
-  // Face detection and recognition model files (the face/ folder), for the tablet and enrolment
-  // screens: served from our own host, never an outside CDN. A missing file is a plain 404.
+  // The tablet's live-guidance model (Tiny Face Detector, face/models): served from our own host,
+  // never an outside CDN. A missing file is a plain 404. Recognition runs in the face service, not here.
   const faceModels = process.env.FACE_MODELS_DIR ? path.resolve(process.env.FACE_MODELS_DIR) : fileURLToPath(new URL('../../face/models', import.meta.url));
   if (existsSync(faceModels)) {
     app.use('/face-models', express.static(faceModels, { index: false, maxAge: '30d', immutable: true }));

@@ -47,16 +47,24 @@ function minuteOfWorkDate(at, workDate) {
   return minutesBetween(istMidnight(workDate).getTime(), at);
 }
 
-/** Steps 1–4 for one employee-day. Pure: no I/O, no clock. */
+/**
+ * Steps 1–4 for one employee-day. Pure: no I/O, no clock.
+ * `travel_min` is time spent moving between sites on the tablet's "Change site"
+ * (counted only on arrival at the named site the same day, or as HR set it). It is
+ * worked time: it adds to the paired minutes and comes out of the break between them.
+ */
 export function computeDay(input) {
   const { date, policies } = input;
   const pr = pairPunches(input.punches);
   const hasPunches = input.punches.length > 0;
+  const travel_min = hasPunches ? Math.max(0, input.travel_min ?? 0) : 0;
+  const worked_min = pr.worked_min + travel_min;
   const flags = [];
   if (pr.orphan_outs.length) flags.push('ORPHAN_OUT');
   if (pr.pairs.some((p) => !p.out)) flags.push('UNMATCHED_IN');
   if (pr.sites.length > 1) flags.push('CROSS_SITE');
   if (policies.attendance_defaulted) flags.push('NO_ATTENDANCE_POLICY');
+  if (travel_min > 0) flags.push('TRAVEL');
 
   const sortedAt = input.punches.map((p) => p.at).sort((a, b) => a - b);
   const first_punch_min = hasPunches ? minuteOfWorkDate(sortedAt[0], date) : null;
@@ -67,8 +75,9 @@ export function computeDay(input) {
     status: 'ABSENT',
     day_value: 0,
     provisional: false,
-    worked_min: pr.worked_min,
-    break_min: pr.break_min,
+    worked_min,
+    break_min: Math.max(0, pr.break_min - travel_min),
+    travel_min,
     late_min: 0,
     ot_min: 0,
     first_punch_min,
@@ -104,7 +113,7 @@ export function computeDay(input) {
   let ot_min = 0;
   const ot = policies.overtime;
   if (ot) {
-    const raw = Math.max(0, pr.worked_min - rules.standard_min);
+    const raw = Math.max(0, worked_min - rules.standard_min);
     ot_min = raw < ot.after_min ? 0 : Math.floor(raw / ot.rounding_min) * ot.rounding_min;
   }
 
@@ -113,8 +122,8 @@ export function computeDay(input) {
   if (pr.pairs.some((p) => !p.out) || pr.orphan_outs.length > 0) {
     return { ...withTime, status: 'MISSING_PUNCH', day_value: 0.5, ot_min: 0 };
   }
-  if (pr.worked_min * 100 >= rules.standard_min * PRESENT_TOLERANCE_PCT) return { ...withTime, status: 'PRESENT', day_value: 1 };
-  if (pr.worked_min >= rules.half_day_min) return { ...withTime, status: 'HALF_DAY', day_value: 0.5 };
+  if (worked_min * 100 >= rules.standard_min * PRESENT_TOLERANCE_PCT) return { ...withTime, status: 'PRESENT', day_value: 1 };
+  if (worked_min >= rules.half_day_min) return { ...withTime, status: 'HALF_DAY', day_value: 0.5 };
   return { ...withTime, status: 'SHORT', day_value: 0 };
 }
 

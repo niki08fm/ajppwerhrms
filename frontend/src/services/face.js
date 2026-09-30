@@ -1,11 +1,13 @@
 /**
- * Face detection and recognition live in the face/ folder (@ajpwer/face): the
- * model files, the browser detection used here, and the server-side matching.
- * This file only points the browser at where the models are served.
+ * Face v2 in the browser is guidance only (face/INTEGRATION.md §4): the Tiny Face
+ * Detector says "come closer", "one person", "more light", and the camera frame is
+ * captured as a JPEG. Recognition, the live-face check and every decision happen on
+ * the server. This file only points the browser at where the detector model is served.
  */
-import { configureFace } from '@ajpwer/face/detection';
+import { configureGuidance } from '@ajpwer/face/guidance';
 
-// Default: served by our own backend at /face-models. Set VITE_FACE_MODEL_URL to host them elsewhere.
-configureFace({ modelUrl: import.meta.env.VITE_FACE_MODEL_URL || '/face-models' });
+// Default: served by our own backend at /face-models. Set VITE_FACE_MODEL_URL to host it elsewhere.
+configureGuidance({ modelUrl: import.meta.env.VITE_FACE_MODEL_URL || '/face-models' });
 
-export * from '@ajpwer/face/detection';
+export * from '@ajpwer/face/guidance';
+export { messageFor } from '@ajpwer/face/messages';

@@ -19,3 +19,16 @@ export const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => cb(null, /^(application\/pdf|image\/(png|jpeg|webp))$/.test(file.mimetype)),
 });
+
+/**
+ * Camera frames for the face service: JPEG, in memory only (never written to disk),
+ * up to 1.5 MB each. Tablet punches send `front` and `turn`; HR enrolment sends `front`.
+ */
+export const frames = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 1_500_000, files: 2, fields: 10 },
+  fileFilter: (_req, file, cb) => cb(null, /^image\/(jpeg|png|webp)$/.test(file.mimetype)),
+}).fields([
+  { name: 'front', maxCount: 1 },
+  { name: 'turn', maxCount: 1 },
+]);

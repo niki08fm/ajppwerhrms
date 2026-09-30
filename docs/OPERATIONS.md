@@ -18,13 +18,82 @@ SERVE_WEB_DIR=frontend/dist node backend/src/server.js      # API + web app on A
 node backend/src/worker.js                                  # job worker (when REDIS_URL is set)
 ```
 
-Run both under a process manager (systemd or pm2) so they restart on failure and on boot. The backend also serves the face model files from `face/models` at `/face-models`; keep that folder next to `backend/` (or set `FACE_MODELS_DIR`).
+Run both under a process manager (systemd or pm2) so they restart on failure and on boot. The backend also serves the tablet's guidance model (Tiny Face Detector) from `face/models` at `/face-models`; keep that folder next to `backend/` (or set `FACE_MODELS_DIR`). The face service (§2a) runs next to them.
 
 Production settings in `.env`:
 
 - `NODE_ENV=production`, `COOKIE_SECURE=true`, `WEB_ORIGIN=https://hr.your-domain.in`, `TRUST_PROXY=1` behind a reverse proxy
 - `REDIS_URL` set (payroll runs and large exports go to the queue; the worker process handles them)
 - Terminate **TLS** at a reverse proxy (nginx, Caddy, or the cloud load balancer). Everything is HTTPS; the database is never reachable from the internet.
+
+## 2a. The face service (face v2)
+
+Punches are recognised on this server by a small Python service (`face/service`) that only the backend calls. See [face/INTEGRATION.md](../face/INTEGRATION.md) for the rules.
+
+**Install** (Python 3.10 or newer; Ubuntu 24.04 ships 3.12):
+
+```bash
+sudo apt install python3-venv
+cd /opt/ajpwer/face/service
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt       # fastapi, uvicorn, python-multipart, opencv-python-headless>=4.9, onnxruntime>=1.17, numpy
+.venv/bin/python download_models.py             # every deploy: fetches the four models into face/service/models and checks each size and checksum
+```
+
+The models are not in git. `download_models.py` fetches them:
+- YuNet and SFace from the OpenCV Zoo;
+- MiniFASNetV2 and V1SE from the yakhyo/face-anti-spoofing GitHub releases.
+
+The server therefore needs outbound HTTPS to `media.githubusercontent.com` and `github.com` (and GitHub's download host) **at deploy time**. It exits non-zero when a file is missing or wrong; make the deploy fail on that. All four models are Apache 2.0.
+
+**Configure.** In the app's `.env`, which both the backend and the service read:
+- `FACE_SERVICE_URL=http://127.0.0.1:8100`
+- `FACE_SERVICE_TOKEN` — a long random string (`openssl rand -hex 32`). The backend sends it as `X-Face-Token` and the service refuses anything else.
+
+The backend refuses to start without both. The thresholds (`FACE_MATCH_MIN`, `FACE_LIVE_MIN`…) are optional; see `.env.example`.
+
+**Run under systemd:**
+
+```bash
+sudo cp face/deploy/ajpwer-face.service /etc/systemd/system/     # edit User, WorkingDirectory, EnvironmentFile to your paths
+sudo systemctl daemon-reload
+sudo systemctl enable --now ajpwer-face
+systemctl status ajpwer-face                                      # journalctl -u ajpwer-face for its log
+```
+
+The unit:
+- runs one worker on **127.0.0.1:8100**;
+- checks the model files before starting;
+- restarts itself on failure (`Restart=always`);
+- is killed and restarted if it grows past **700 MB** (`MemoryMax=700M`, `MemorySwapMax=0`).
+
+Measured: about 250 MB resident with all four models loaded, and about 0.1 s per two-frame punch on one CPU core. While it is working on one request, others wait up to `FACE_QUEUE_WAIT_MS` (2 s). After that the tablet is told "busy" and retries the same upload, which never counts as a failed try.
+
+**Never expose port 8100.** Nginx (or the load balancer) forwards only to the backend; do not add a `location` for 8100. The service listens on 127.0.0.1 only, and a firewall rule blocking 8100 from outside is a good second lock.
+
+**Memory and swap.** The backend (~200 MB), the job worker, PostgreSQL and the face service fit in 2 GB. On a 1–2 GB VM add 1–2 GB of swap for PostgreSQL and the Node processes:
+
+```bash
+sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
+
+The face service itself is kept out of swap (`MemorySwapMax=0`): if it would need swap, it is better restarted than slow.
+
+**Health.** `curl -H "X-Face-Token: $FACE_SERVICE_TOKEN" http://127.0.0.1:8100/health`. If the service is down, tablets show "Face check is not working right now. Tell your site in-charge." Nobody can punch by face until it is back; HR can enter punches manually.
+
+**After go-live: tune the thresholds.** For the first weeks, download **Approvals → Punch attempts (CSV)** weekly. Every analysed scan is there, with no images and no face codes:
+- the match score and the margin to the next person;
+- the live score;
+- both head angles;
+- the outcome, and what happened next (CONFIRMED, NOT_ME).
+
+What to look for:
+- **Genuine people failing:** "not live" or "no match" rows followed by a confirmed punch in the same session. Lower `FACE_LIVE_MIN` or `FACE_MATCH_MIN` carefully.
+- **Wrong people shown:** rows resolved as NOT_ME. Raise `FACE_MATCH_MIN` or `FACE_MATCH_MARGIN`.
+- **Spoofing:** before go-live, try a printed photo and a phone screen at one site and check their live scores sit well below `FACE_LIVE_MIN`.
+
+**Development.** `npm run face:install` (a venv in `face/service/.venv` and the models), then `FACE_SERVICE_DEV=1` in `.env`; `npm run dev` starts the service too. Tests: `npm run test:face`.
 
 ### Site maps (OpenStreetMap)
 
@@ -76,7 +145,7 @@ Run nightly (for example 01:30 IST):
 npm run jobs:retention        # or: node backend/src/jobs/retention.js
 ```
 
-It deletes gate snapshots older than 30 days, deletes the face embedding of anyone who has exited, deletes punches older than three years (the only deletion the append-only trigger allows), prunes login attempts and idempotency keys, rebuilds the cached daily aggregates, and writes one audit entry with what it did. Payroll records are kept seven years and are never deleted by this job.
+It deletes gate snapshots and manual-request face crops older than 30 days, deletes the face embedding of anyone who has exited, marks site changes from earlier days that never reached the named site as not counted, deletes punch attempts older than `RETENTION_PUNCH_ATTEMPT_DAYS`, deletes punches older than three years (the only deletion the append-only trigger allows), prunes login attempts and idempotency keys, rebuilds the cached daily aggregates, and writes one audit entry with what it did. Payroll records are kept seven years and are never deleted by this job.
 
 ## 7. Before the first live payroll
 
@@ -90,5 +159,5 @@ It deletes gate snapshots older than 30 days, deletes the face embedding of anyo
 
 - `GET /api/v1/health` for liveness.
 - The API logs JSON (pino) with request ids; PII fields and cookies are redacted.
-- Alert on: failed payroll jobs (`job.status = 'FAILED'`), repeated `geofence.rejected` or `auth.login_failed` audit entries, and a growing held-back list on the dashboard.
+- Alert on: failed payroll jobs (`job.status = 'FAILED'`), repeated `geofence.rejected` or `auth.login_failed` audit entries, a growing held-back list on the dashboard, the face service down (`systemctl is-active ajpwer-face`, or punch attempts with outcome `SERVICE_DOWN`), and many `BUSY` attempts (a slow CPU or too many tablets for one worker).
 - CI runs the engine tests, API tests, builds, a dependency scan, the Playwright flows and the performance budgets against 200 employees and three years of punches on every push.

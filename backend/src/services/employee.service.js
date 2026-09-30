@@ -1,3 +1,4 @@
+import { MODEL_VERSION as FACE_MODEL_VERSION } from '@ajpwer/face';
 import { ONBOARDING_TASKS, POLICY_KINDS, POLICY_KIND_LABELS, POLICY_KIND_MISSING_WARNING } from '@ajpwer/shared';
 import { pickPolicy } from '../calculations/index.js';
 import { decryptPII, maskAccount, maskPan } from '../utils/crypto.js';
@@ -20,7 +21,7 @@ export function loadEmployee(db, id) {
       identity: true,
       department: { select: { id: true, name: true, colour: true } },
       pay_group: { select: { id: true, name: true, calendar_method: true, weekly_off: true, structure_id: true } },
-      faces: { where: { deleted_at: null }, select: { enrolled_at: true, consent_at: true, model_version: true } },
+      faces: { where: { deleted_at: null }, select: { enrolled_at: true, consent_at: true, model_version: true, kind: true }, orderBy: { enrolled_at: 'asc' } },
       onboarding_tasks: true,
     },
   });
@@ -112,7 +113,7 @@ export async function employeeView(db, e, today, fullPii) {
         }
       : null,
     salary,
-    face: e.faces[0] ? { enrolled: true, enrolled_at: e.faces[0].enrolled_at, consent_at: e.faces[0].consent_at, model_version: e.faces[0].model_version } : { enrolled: false },
+    face: faceStatus(e.faces),
     onboarding: onboardingView(e.onboarding_tasks),
   };
 }
@@ -123,4 +124,17 @@ export async function markTask(db, employeeId, code, by) {
     update: { done_at: new Date(), done_by: by },
     create: { employee_id: employeeId, task_code: code, done_at: new Date(), done_by: by },
   });
+}
+
+/**
+ * Face v2 status for the profile: enrolled only with a current-model template.
+ * Someone with only old face-api templates must register once more.
+ */
+export function faceStatus(faces) {
+  const current = faces.filter((f) => f.model_version === FACE_MODEL_VERSION);
+  const registered = current.find((f) => f.kind === 'REGISTERED') ?? current[0];
+  if (registered) {
+    return { enrolled: true, enrolled_at: registered.enrolled_at, consent_at: registered.consent_at, model_version: FACE_MODEL_VERSION, templates: current.length, needs_registration: false };
+  }
+  return { enrolled: false, needs_registration: faces.length > 0, model_version: faces[0]?.model_version ?? null };
 }

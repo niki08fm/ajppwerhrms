@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Camera, CheckCircle2, CloudOff, LogOut, MapPin, RefreshCw, ScanFace, UserX } from 'lucide-react';
+import { ArrowRightLeft, CheckCircle2, CloudOff, LogOut, MapPin, ScanFace, UserPlus, UserX } from 'lucide-react';
 import { api, ApiError, errorMessage } from '@/services/api';
-import { embed, loadFaceApi, snapshot, startCamera, stopCamera } from '@/services/face';
+import { capture, loadGuidance, messageFor, startCamera, stopCamera, waitForGoodFrame } from '@/services/face';
 import { useOnline } from '@/hooks';
 import { istTime } from '@/utils';
 import { Button } from '@/components/ui/button';
@@ -21,7 +21,6 @@ function getPosition() {
 }
 
 const DEVICE_KEY = 'ajpwer.device';
-const QUEUE_KEY = 'ajpwer.queue';
 function deviceId() {
   try {
     let id = localStorage.getItem(DEVICE_KEY);
@@ -34,21 +33,6 @@ function deviceId() {
     return 'tab-unknown';
   }
 }
-
-const readQueue = () => {
-  try {
-    return JSON.parse(localStorage.getItem(QUEUE_KEY) ?? '[]');
-  } catch {
-    return [];
-  }
-};
-const writeQueue = (q) => {
-  try {
-    localStorage.setItem(QUEUE_KEY, JSON.stringify(q));
-  } catch {
-    // storage full: nothing more we can do on the device
-  }
-};
 
 export default function Tablet() {
   const me = useQuery({ queryKey: ['site-me'], queryFn: () => api.get('/auth/site-me').then((r) => r.data), retry: false });
@@ -96,6 +80,37 @@ function SiteLogin() {
   );
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const newRequestId = () => `req-${crypto.randomUUID()}`;
+
+/** Upload the two frames; a busy face service is retried with the same request id (never a failed try). */
+async function sendFrames(sessionId, front, turn, pos, requestId, onBusy) {
+  for (let attempt = 0; ; attempt++) {
+    const form = new FormData();
+    form.set('request_id', requestId);
+    form.set('lat', String(pos.lat));
+    form.set('lng', String(pos.lng));
+    form.set('accuracy_m', String(pos.accuracy_m));
+    form.append('front', front, 'front.jpg');
+    form.append('turn', turn, 'turn.jpg');
+    try {
+      return (await api.post(`/punches/sessions/${sessionId}/frames`, form)).data;
+    } catch (e) {
+      if (e instanceof ApiError && e.code === 'FACE_BUSY' && attempt < 10) {
+        onBusy();
+        await sleep(1200 + attempt * 300);
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
+/**
+ * The punch station (face/INTEGRATION.md §4): the browser guides and captures; the
+ * server decides. Look straight → turn as asked → "Is this you?" → punch in or out,
+ * "This is not me", or Change site. After the last try, the ID and name form.
+ */
 function Station({ site }) {
   const qc = useQueryClient();
   const online = useOnline();
@@ -106,113 +121,142 @@ function Station({ site }) {
     enabled: online,
   });
   const [stage, setStage] = useState({ k: 'idle' });
+  const [hint, setHint] = useState('');
   const [error, setError] = useState(null);
-  const [queue, setQueue] = useState(readQueue);
   const video = useRef(null);
   const stream = useRef(null);
+  const abort = useRef(null);
+  const session = useRef(null);
 
-  const reset = useCallback(() => {
+  const stop = useCallback(() => {
+    abort.current?.abort();
     stopCamera(stream.current);
     stream.current = null;
-    setStage({ k: 'idle' });
   }, []);
-
-  // Sync the offline queue when the connection returns, with the original times.
-  const sync = useCallback(async () => {
-    const q = readQueue();
-    if (!q.length) return;
-    const left = [];
-    for (const item of q) {
-      try {
-        await api.post('/punches', { ...item, device_id: deviceId(), queued: true });
-      } catch (e) {
-        if (e instanceof ApiError && e.status >= 400 && e.status < 500) continue; // rejected for good (e.g. outside the fence): drop
-        left.push(item);
-      }
-    }
-    writeQueue(left);
-    setQueue(left);
-    qc.invalidateQueries({ queryKey: ['tablet-summary'] });
-  }, [qc]);
+  const reset = useCallback(() => {
+    stop();
+    session.current = null;
+    setHint('');
+    setStage({ k: 'idle' });
+  }, [stop]);
+  useEffect(() => () => stop(), [stop]);
   useEffect(() => {
-    if (online) void sync();
-  }, [online, sync]);
-  useEffect(() => () => stopCamera(stream.current), []);
+    if (!online && stage.k !== 'idle' && stage.k !== 'done') {
+      stop();
+      setStage({ k: 'idle' });
+    }
+  }, [online, stage.k, stop]);
 
-  const begin = async () => {
+  const finish = (text, ms = 4000) => {
+    stop();
+    session.current = null;
+    setStage({ k: 'done', text });
+    qc.invalidateQueries({ queryKey: ['tablet-summary'] });
+    setTimeout(reset, ms);
+  };
+
+  const fail = (e) => {
+    stop();
+    setError(e instanceof ApiError && e.code === 'NETWORK' ? messageFor('OFFLINE') : errorMessage(e));
+    setStage((s) => (s.k === 'camera' || s.k === 'checking' ? { k: 'retry', text: null } : s));
+  };
+
+  /** One scan in the current session: straight frame, then the head turn the server asked for. */
+  const scan = async () => {
     setError(null);
-    setStage({ k: 'camera' });
+    const sess = session.current;
+    setStage({ k: 'camera', purpose: sess.purpose });
     try {
-      await loadFaceApi();
-      stream.current = await startCamera(video.current, 'user');
-    } catch {
-      setError('The camera or face models could not start. Check camera permission and the connection.');
-      reset();
+      if (!stream.current) {
+        await loadGuidance();
+        stream.current = await startCamera(video.current, 'user');
+      }
+      abort.current = new AbortController();
+      const ok = await waitForGoodFrame(video.current, { onHint: (r) => setHint(r.ok ? messageFor('LOOK_STRAIGHT') : r.message), signal: abort.current.signal });
+      if (!ok) return fail(new Error(messageFor('NO_FACE')));
+      const front = await capture(video.current);
+      setHint(messageFor(sess.challenge.direction === 'LEFT' ? 'TURN_LEFT' : 'TURN_RIGHT'));
+      await sleep(1800);
+      const turn = await capture(video.current);
+      setHint('');
+      setStage({ k: 'checking' });
+      const pos = await getPosition();
+      const d = await sendFrames(sess.id, front, turn, pos, newRequestId(), () => setHint(messageFor('BUSY')));
+      handle(d, pos);
+    } catch (e) {
+      if (e?.name === 'NotAllowedError') return fail(new Error(messageFor('CAMERA_BLOCKED')));
+      fail(e);
     }
   };
 
-  const capture = async () => {
-    setStage({ k: 'checking' });
+  const handle = (d, pos) => {
+    const sess = session.current;
+    if (d.challenge) sess.challenge = d.challenge;
+    if (d.outcome === 'IDENTIFIED') {
+      stop();
+      setStage({ k: 'identified', d, pos });
+    } else if (d.outcome === 'REGISTERED') finish(d.message, 5000);
+    else if (d.outcome === 'DUPLICATE' || d.outcome === 'DUPLICATE_FACE') finish(d.message, 5000);
+    else if (d.status === 'BLOCKED') {
+      stop();
+      setStage({ k: 'blocked', text: d.message });
+    } else {
+      stop();
+      setStage({ k: 'retry', text: d.message, triesLeft: d.tries_left });
+    }
+  };
+
+  const begin = async (purpose = 'PUNCH', who = null) => {
     setError(null);
-    const at = new Date().toISOString();
     try {
-      const [face, pos] = await Promise.all([embed(video.current), getPosition()]);
-      const shot = snapshot(video.current);
-      if (!face) {
-        setError('No face found. Look straight at the camera, remove helmet or glasses, and try again.');
-        setStage({ k: 'camera' });
+      const pos = await getPosition();
+      const r = await api.post('/punches/sessions', { purpose, ...(who ?? {}), ...pos });
+      session.current = { id: r.data.session_id, purpose, challenge: r.data.challenge };
+      await scan();
+    } catch (e) {
+      setError(e instanceof ApiError && e.code === 'NETWORK' ? messageFor('OFFLINE') : errorMessage(e));
+    }
+  };
+
+  const act = async (fn) => {
+    setError(null);
+    try {
+      await fn();
+    } catch (e) {
+      if (e instanceof ApiError && (e.code === 'CONFIRM_EXPIRED' || e.code === 'CONFLICT')) {
+        setStage({ k: 'retry', text: messageFor('CHALLENGE_EXPIRED') });
         return;
       }
-      if (!navigator.onLine) {
-        setStage({ k: 'offline', emb: face.embedding, pos, at, shot });
-        return;
-      }
-      const r = await api.post('/punches/identify', { embedding: face.embedding, ...pos });
-      stopCamera(stream.current);
-      if (r.data.matched) setStage({ k: 'matched', employee: r.data.employee, direction: r.data.direction, note: r.data.note ?? null, token: r.data.match_token, pos, at });
-      else setStage({ k: 'unmatched', best: r.data.best_match_id ?? null, score: r.data.score ?? null, pos, at, shot });
-    } catch (e) {
-      setError(errorMessage(e));
-      setStage({ k: 'camera' });
+      setError(e instanceof ApiError && e.code === 'NETWORK' ? messageFor('OFFLINE') : errorMessage(e));
     }
   };
 
-  const confirm = async (direction) => {
-    if (stage.k !== 'matched') return;
-    try {
-      const r = await api.post(
-        '/punches',
-        { employee_id: stage.employee.id, direction, client_punched_at: stage.at, ...stage.pos, match_token: stage.token, device_id: deviceId() },
-        { 'Idempotency-Key': `${stage.employee.id}-${stage.at}` },
-      );
-      setStage({ k: 'done', text: `${r.data.employee.name} — ${direction === 'IN' ? 'in' : 'out'} at ${istTime(r.data.punched_at)}` });
-      qc.invalidateQueries({ queryKey: ['tablet-summary'] });
-      setTimeout(reset, 3500);
-    } catch (e) {
-      setError(errorMessage(e));
-    }
-  };
+  const confirmPunch = () =>
+    act(async () => {
+      const pos = await getPosition();
+      const r = await api.post(`/punches/sessions/${session.current.id}/confirm`, { confirm_token: stage.d.confirm_token, device_id: deviceId(), ...pos });
+      finish(r.data.message);
+    });
 
-  const raise = async () => {
-    if (stage.k !== 'unmatched') return;
-    try {
-      await api.post('/face-exceptions', { occurred_at: stage.at, best_match_id: stage.best, score: stage.score, reason: 'Not recognised at the gate', ...stage.pos, snapshot: stage.shot });
-      setStage({ k: 'done', text: 'Sent to HR. Nobody is marked present until HR decides — at the time you stood here, not later.' });
-      setTimeout(reset, 5000);
-    } catch (e) {
-      setError(errorMessage(e));
-    }
-  };
+  const notMe = () =>
+    act(async () => {
+      const r = await api.post(`/punches/sessions/${session.current.id}/not-me`, { confirm_token: stage.d.confirm_token });
+      handle(r.data, stage.pos);
+    });
 
-  const queueOffline = (direction) => {
-    if (stage.k !== 'offline') return;
-    const q = [...readQueue(), { direction, client_punched_at: stage.at, ...stage.pos, embedding: stage.emb, snapshot: stage.shot }];
-    writeQueue(q);
-    setQueue(q);
-    stopCamera(stream.current);
-    setStage({ k: 'done', text: `Saved on this tablet at ${istTime(stage.at)}. It will be sent with its original time when the network returns.` });
-    setTimeout(reset, 4000);
-  };
+  const changeSite = (toSite) =>
+    act(async () => {
+      const pos = await getPosition();
+      const r = await api.post(`/punches/sessions/${session.current.id}/change-site`, { confirm_token: stage.d.confirm_token, to_site_id: toSite.id, ...pos });
+      finish(r.data.message, 6000);
+    });
+
+  const manual = (code, name) =>
+    act(async () => {
+      const pos = await getPosition();
+      const r = await api.post(`/punches/sessions/${session.current.id}/manual`, { employee_code: code, name, ...pos });
+      finish(r.data.message, 5000);
+    });
 
   const signOut = async () => {
     await api.post('/auth/site-logout').catch(() => undefined);
@@ -233,11 +277,6 @@ function Station({ site }) {
               <CloudOff className="size-4" /> Offline
             </span>
           )}
-          {queue.length > 0 && (
-            <Button size="sm" variant="outline" onClick={() => void sync()} disabled={!online}>
-              <RefreshCw /> {queue.length} waiting to send
-            </Button>
-          )}
           <Button variant="ghost" size="sm" onClick={signOut}>
             <LogOut /> Sign out
           </Button>
@@ -245,82 +284,51 @@ function Station({ site }) {
       </header>
       <main className="grid flex-1 gap-6 p-6 lg:grid-cols-[1fr_320px]">
         <section className="flex flex-col items-center justify-center gap-5">
-          {error && <Notice tone="destructive">{error}</Notice>}
+          {!online && <Notice tone="destructive">{messageFor('OFFLINE')}</Notice>}
+          {error && online && <Notice tone="destructive">{error}</Notice>}
           {stage.k === 'idle' && (
-            <Button size="xl" className="h-40 w-full max-w-md flex-col gap-2 text-2xl" onClick={begin}>
-              <ScanFace className="!size-12" /> Mark attendance
-            </Button>
+            <div className="flex w-full max-w-md flex-col gap-3">
+              <Button size="xl" className="h-40 w-full flex-col gap-2 text-2xl" disabled={!online} onClick={() => begin('PUNCH')}>
+                <ScanFace className="!size-12" /> Mark attendance
+              </Button>
+              <Button size="lg" variant="outline" disabled={!online} onClick={() => setStage({ k: 'register' })}>
+                <UserPlus /> Register face
+              </Button>
+            </div>
           )}
+          {stage.k === 'register' && <RegisterForm onCancel={reset} onStart={(who) => begin('REGISTER', who)} />}
           <div className={stage.k === 'camera' || stage.k === 'checking' ? 'flex w-full max-w-lg flex-col items-center gap-3' : 'hidden'}>
-            <video ref={video} className="aspect-[4/3] w-full rounded-xl border bg-muted object-cover" muted playsInline />
-            <div className="flex gap-2">
-              <Button variant="outline" size="lg" onClick={reset}>
-                Cancel
-              </Button>
-              <Button size="lg" loading={stage.k === 'checking'} onClick={capture}>
-                <Camera /> Capture
-              </Button>
+            <div className="relative w-full">
+              <video ref={video} className="aspect-[4/3] w-full -scale-x-100 rounded-xl border bg-muted object-cover" muted playsInline />
+              <div className="pointer-events-none absolute left-1/2 top-[45%] h-[70%] w-[42%] -translate-x-1/2 -translate-y-1/2 rounded-[50%] border-4 border-primary/80" aria-hidden />
             </div>
+            <div className="min-h-8 text-center font-display text-xl font-semibold" aria-live="polite">
+              {stage.k === 'checking' ? hint || messageFor('CHECKING') : hint}
+            </div>
+            <Button variant="outline" size="lg" onClick={reset}>
+              Cancel
+            </Button>
           </div>
-          {stage.k === 'matched' && (
-            <div className="flex w-full max-w-lg flex-col items-center gap-4 rounded-xl border bg-card p-6 text-center">
-              <div className="flex size-20 items-center justify-center rounded-full bg-primary font-display text-3xl font-semibold text-primary-foreground">
-                {stage.employee.name
-                  .split(' ')
-                  .map((w) => w[0])
-                  .slice(0, 2)
-                  .join('')}
-              </div>
-              <div>
-                <div className="font-display text-2xl font-semibold">{stage.employee.name}</div>
-                <div className="text-muted-foreground">
-                  {stage.employee.designation} · {stage.employee.code}
-                </div>
-              </div>
-              {stage.note && <Notice>{stage.note}</Notice>}
-              <div className="grid w-full grid-cols-2 gap-3">
-                <Button size="xl" variant={stage.direction === 'IN' ? 'default' : 'outline'} onClick={() => confirm('IN')}>
-                  In
-                </Button>
-                <Button size="xl" variant={stage.direction === 'OUT' ? 'default' : 'outline'} onClick={() => confirm('OUT')}>
-                  Out
-                </Button>
-              </div>
-              <button className="text-[13px] text-muted-foreground underline" onClick={reset}>
-                Not me
-              </button>
-            </div>
+          {stage.k === 'identified' && (
+            <Confirmation d={stage.d} onConfirm={confirmPunch} onNotMe={notMe} onChangeSite={() => setStage({ ...stage, k: 'change-site' })} />
           )}
-          {stage.k === 'unmatched' && (
+          {stage.k === 'change-site' && <ChangeSite onPick={changeSite} onBack={() => setStage({ ...stage, k: 'identified' })} />}
+          {stage.k === 'retry' && (
             <div className="flex w-full max-w-lg flex-col items-center gap-4 rounded-xl border bg-card p-6 text-center">
               <UserX className="size-12 text-warning" />
-              <div className="font-display text-xl font-semibold">We could not recognise you</div>
-              <p className="text-muted-foreground">Try again facing the camera, or send this to HR. HR will check it and, if approved, mark you at this time.</p>
+              {stage.text && <div className="font-display text-xl font-semibold">{stage.text}</div>}
+              {stage.triesLeft !== undefined && <p className="text-muted-foreground">Tries left: {stage.triesLeft}</p>}
               <div className="flex gap-2">
-                <Button size="lg" variant="outline" onClick={begin}>
+                <Button size="lg" variant="outline" onClick={reset}>
+                  Cancel
+                </Button>
+                <Button size="lg" disabled={!online} onClick={() => (session.current ? scan() : begin())}>
                   Try again
                 </Button>
-                <Button size="lg" onClick={raise}>
-                  Send to HR
-                </Button>
               </div>
             </div>
           )}
-          {stage.k === 'offline' && (
-            <div className="flex w-full max-w-lg flex-col items-center gap-4 rounded-xl border bg-card p-6 text-center">
-              <CloudOff className="size-12 text-muted-foreground" />
-              <div className="font-display text-xl font-semibold">No network</div>
-              <p className="text-muted-foreground">Your punch is kept on this tablet with its true time and matched when the network returns.</p>
-              <div className="grid w-full grid-cols-2 gap-3">
-                <Button size="xl" onClick={() => queueOffline('IN')}>
-                  In
-                </Button>
-                <Button size="xl" variant="outline" onClick={() => queueOffline('OUT')}>
-                  Out
-                </Button>
-              </div>
-            </div>
-          )}
+          {stage.k === 'blocked' && <ManualForm text={stage.text} onSend={manual} onCancel={reset} />}
           {stage.k === 'done' && (
             <div className="flex flex-col items-center gap-3 text-center">
               <CheckCircle2 className="size-16 text-success" />
@@ -351,9 +359,155 @@ function Station({ site }) {
               {s && !s.on_site_now.length && <li className="px-4 py-6 text-center text-muted-foreground">Nobody yet.</li>}
             </ul>
           </div>
-          <p className="text-[11px] text-muted-foreground">Location is checked on every punch. Face data is used only to match; a snapshot is kept for 30 days only when HR needs to review.</p>
+          <p className="text-[11px] text-muted-foreground">
+            Location is checked on every punch. The camera pictures are checked on our server and not kept; only when the face check fails five times are small face crops kept for HR, for 30 days.
+          </p>
         </aside>
       </main>
     </div>
+  );
+}
+
+/** "Is this you?" — the existing confirmation card, with one punch button for the direction the server worked out. */
+function Confirmation({ d, onConfirm, onNotMe, onChangeSite }) {
+  const [busy, setBusy] = useState(false);
+  const run = (fn) => async () => {
+    setBusy(true);
+    try {
+      await fn();
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="flex w-full max-w-lg flex-col items-center gap-4 rounded-xl border bg-card p-6 text-center">
+      <div className="text-muted-foreground">{d.message}</div>
+      <div className="flex size-20 items-center justify-center rounded-full bg-primary font-display text-3xl font-semibold text-primary-foreground">
+        {d.employee.name
+          .split(' ')
+          .map((w) => w[0])
+          .slice(0, 2)
+          .join('')}
+      </div>
+      <div>
+        <div className="font-display text-2xl font-semibold">{d.employee.name}</div>
+        <div className="text-muted-foreground">
+          {d.employee.designation} · {d.employee.code}
+        </div>
+      </div>
+      {d.note && <Notice>{d.note}</Notice>}
+      <Button size="xl" className="w-full" loading={busy} onClick={run(onConfirm)}>
+        {d.direction === 'IN' ? 'Punch in' : 'Punch out'}
+      </Button>
+      {d.can_change_site && (
+        <Button size="lg" variant="outline" className="w-full" disabled={busy} onClick={onChangeSite}>
+          <ArrowRightLeft /> Change site
+        </Button>
+      )}
+      <button className="text-[14px] text-muted-foreground underline" disabled={busy} onClick={run(onNotMe)}>
+        This is not me
+      </button>
+    </div>
+  );
+}
+
+/** Leaving for another site: pick it; this punches out here. Travel counts if he punches in there today. */
+function ChangeSite({ onPick, onBack }) {
+  const sites = useQuery({ queryKey: ['tablet-sites'], queryFn: () => api.get('/tablet/sites').then((r) => r.data) });
+  const [busy, setBusy] = useState(null);
+  return (
+    <div className="flex w-full max-w-lg flex-col gap-3 rounded-xl border bg-card p-6">
+      <div className="font-display text-xl font-semibold">Which site are you going to?</div>
+      <p className="text-[13px] text-muted-foreground">You are punched out here now. Your travel time counts if you punch in at that site today.</p>
+      <div className="flex max-h-72 flex-col gap-2 overflow-y-auto">
+        {sites.data?.map((x) => (
+          <Button
+            key={x.id}
+            size="lg"
+            variant="outline"
+            className="justify-start"
+            loading={busy === x.id}
+            disabled={!!busy}
+            onClick={async () => {
+              setBusy(x.id);
+              try {
+                await onPick(x);
+              } finally {
+                setBusy(null);
+              }
+            }}
+          >
+            {x.name}
+          </Button>
+        ))}
+        {sites.data && !sites.data.length && <p className="text-muted-foreground">No other sites.</p>}
+      </div>
+      <Button variant="ghost" onClick={onBack} disabled={!!busy}>
+        Back
+      </Button>
+    </div>
+  );
+}
+
+function RegisterForm({ onStart, onCancel }) {
+  const [code, setCode] = useState('');
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      await onStart({ employee_code: code.trim(), name: name.trim() });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <form onSubmit={submit} className="flex w-full max-w-md flex-col gap-4 rounded-xl border bg-card p-6">
+      <div className="font-display text-xl font-semibold">Register face</div>
+      <p className="text-[13px] text-muted-foreground">Once only, at any site. Then you punch with your face everywhere.</p>
+      <Field label="Employee ID">{(id) => <Input id={id} value={code} onChange={(e) => setCode(e.target.value)} className="h-11 text-base" autoCapitalize="characters" required />}</Field>
+      <Field label="Your name">{(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} className="h-11 text-base" required />}</Field>
+      <div className="flex gap-2">
+        <Button variant="outline" size="lg" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="submit" size="lg" className="flex-1" loading={busy}>
+          Start
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+/** After the last try: employee ID and name go to HR as a manual request, with the face crops. */
+function ManualForm({ text, onSend, onCancel }) {
+  const [code, setCode] = useState('');
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      await onSend(code.trim(), name.trim());
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <form onSubmit={submit} className="flex w-full max-w-md flex-col gap-4 rounded-xl border bg-card p-6">
+      <UserX className="size-10 text-warning" />
+      <p className="font-display text-lg font-semibold">{text}</p>
+      <Field label="Employee ID">{(id) => <Input id={id} value={code} onChange={(e) => setCode(e.target.value)} className="h-11 text-base" autoCapitalize="characters" required />}</Field>
+      <Field label="Your name">{(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} className="h-11 text-base" required />}</Field>
+      <div className="flex gap-2">
+        <Button variant="outline" size="lg" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="submit" size="lg" className="flex-1" loading={busy}>
+          Send to HR
+        </Button>
+      </div>
+    </form>
   );
 }

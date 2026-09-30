@@ -18,6 +18,7 @@ export function runEmployeeMonth(input) {
       is_weekly_off: input.weekly_off.includes(dayName(date)),
       leave: input.leave[date] ?? null,
       punches: input.punches[date] ?? [],
+      travel_min: input.travel?.[date] ?? 0,
       policies,
       shift_start_min: input.shift_start_min,
     });

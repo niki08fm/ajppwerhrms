@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { bulkOverrideSchema, DAY_STATUS_LABELS, faceExceptionDecideSchema, formatMinutes, isoDate, istDate, overrideCreateSchema, yearMonth, ymOf } from '@ajpwer/shared';
+import { addDays, bulkOverrideSchema, DAY_STATUS_LABELS, faceExceptionDecideSchema, formatMinutes, isoDate, istDate, overrideCreateSchema, siteChangeReviewSchema, yearMonth, ymOf } from '@ajpwer/shared';
 import { assignWorkDate, overrideDiffers, pickPolicy } from '../calculations/index.js';
 import { audit, who } from '../utils/audit.js';
 import { fromDbDate, toDbDate } from '../utils/dbDates.js';
@@ -7,7 +7,7 @@ import { AppError, notFound } from '../utils/errors.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { filterOne, filterValues, keysetOrder, keysetWhere, page, parseList, toCSV } from '../utils/list.js';
 import { prisma } from '../config/db.js';
-import { attendanceFrozen, computeMonths } from '../services/attendance.service.js';
+import { attendanceFrozen, computeMonths, effectiveTravel } from '../services/attendance.service.js';
 import { computePayslip, loadRecoveries } from '../services/payslip.service.js';
 import { payContext } from '../services/payroll.service.js';
 import { dayRegister } from '../services/register.service.js';
@@ -399,6 +399,9 @@ export const listFaceExceptions = asyncHandler(async (req, res) => {
       claimed: person(r.claimed_employee_id),
       decided_employee: person(r.decided_employee_id),
       has_snapshot: !!r.snapshot_key,
+      snapshot_key: undefined,
+      crop_keys: undefined,
+      crops: r.crop_keys?.length ?? 0,
     })),
     meta: { total: rows.length, nextCursor: null },
   });
@@ -462,4 +465,99 @@ export const decideFaceException = asyncHandler(async (req, res) => {
     return updated;
   });
   res.json({ data: result });
+});
+
+// ─── Site changes (travel between sites, from the tablet's "Change site") ───────
+
+/**
+ * Every change of site, newest first; unreviewed ones are what HR is notified of.
+ * Travel counts only when the person punched in at the named site the same day,
+ * unless HR sets a figure — HR's figure is final either way.
+ */
+export const listSiteChanges = asyncHandler(async (req, res) => {
+  const reviewed = req.query.reviewed;
+  const where = { ...(reviewed === 'false' ? { reviewed_at: null, status: { not: 'PENDING' } } : {}), ...(reviewed === 'true' ? { reviewed_at: { not: null } } : {}) };
+  const since = toDbDate(addDays(today(), -60));
+  const rows = await prisma.siteChange.findMany({ where: { ...where, work_date: { gte: since } }, orderBy: { left_at: 'desc' }, take: 300 });
+  const [people, sites] = await Promise.all([
+    prisma.employee.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.employee_id))] } }, select: { id: true, code: true, name: true } }),
+    prisma.site.findMany({ where: { id: { in: [...new Set(rows.flatMap((r) => [r.from_site_id, r.to_site_id]))] } }, select: { id: true, name: true } }),
+  ]);
+  const site = (id) => sites.find((x) => x.id === id) ?? null;
+  res.json({
+    data: rows.map((r) => ({
+      ...r,
+      work_date: fromDbDate(r.work_date),
+      employee: people.find((p) => p.id === r.employee_id) ?? null,
+      from_site: site(r.from_site_id),
+      to_site: site(r.to_site_id),
+      effective_travel_min: effectiveTravel(r),
+    })),
+    meta: { unreviewed: await prisma.siteChange.count({ where: { reviewed_at: null, status: { not: 'PENDING' } } }) },
+  });
+});
+
+/** HR sets (or confirms) the travel minutes for a site change. Refused once the month is frozen for payroll. */
+export const reviewSiteChange = asyncHandler(async (req, res) => {
+  const b = siteChangeReviewSchema.parse(req.body);
+  const c = await prisma.siteChange.findUnique({ where: { id: req.params.id } });
+  if (!c) throw notFound('That site change');
+  const frozen = await attendanceFrozen(prisma, ymOf(fromDbDate(c.work_date)));
+  if (frozen.frozen) throw new AppError('ATTENDANCE_FROZEN', frozen.reason, 409);
+  const { actor, ip } = who(req);
+  const updated = await prisma.$transaction(async (tx) => {
+    const u = await tx.siteChange.update({ where: { id: c.id }, data: { hr_travel_min: b.travel_min, reviewed_by: actor, reviewed_at: new Date(), review_reason: b.reason } });
+    await audit(tx, { actor, ip, action: 'site_change.review', entity_type: 'site_change', entity_id: c.id, detail: { travel_min: { from: effectiveTravel(c), to: b.travel_min }, reason: b.reason } });
+    return u;
+  });
+  res.json({ data: { ...updated, work_date: fromDbDate(updated.work_date), effective_travel_min: effectiveTravel(updated) } });
+});
+
+// ─── Punch attempts (tuning the face thresholds from real punches) ──────────
+
+/** Every analysed upload in a date range as CSV — scores, live score, head turn, outcome. No images, no embeddings. */
+export const exportPunchAttempts = asyncHandler(async (req, res) => {
+  const from = isoDate.parse(req.query.from ?? addDays(today(), -13));
+  const to = isoDate.parse(req.query.to ?? today());
+  const rows = await prisma.punchAttempt.findMany({
+    where: { created_at: { gte: new Date(`${from}T00:00:00+05:30`), lt: new Date(`${addDays(to, 1)}T00:00:00+05:30`) } },
+    orderBy: { created_at: 'asc' },
+    take: 200_000,
+  });
+  const [people, sites] = await Promise.all([
+    prisma.employee.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.employee_id).filter(Boolean))] } }, select: { id: true, code: true } }),
+    prisma.site.findMany({ select: { id: true, code: true } }),
+  ]);
+  const num = (v) => (v === null || v === undefined ? '' : Number(v));
+  const data = rows.map((r) => ({
+    at: r.created_at.toISOString(),
+    site: sites.find((x) => x.id === r.site_id)?.code ?? r.site_id,
+    session: r.session_id,
+    request: r.request_id,
+    purpose: r.purpose,
+    outcome: r.outcome,
+    resolution: r.resolution ?? '',
+    counts_as_try: r.counts_as_try ? 'yes' : 'no',
+    tries_after: r.tries_after,
+    employee: people.find((p) => p.id === r.employee_id)?.code ?? '',
+    score: num(r.score),
+    second_score: num(r.second_score),
+    margin: r.score !== null && r.second_score !== null ? (Number(r.score) - Number(r.second_score)).toFixed(4) : '',
+    live_score: num(r.live_score),
+    challenge: r.challenge ?? '',
+    yaw_front: num(r.yaw_front),
+    yaw_turn: num(r.yaw_turn),
+    brightness: r.quality?.front?.brightness ?? '',
+    sharpness: r.quality?.front?.sharpness ?? '',
+    face_px: r.quality?.front?.face_px ?? '',
+    service_ms: r.service_ms ?? '',
+  }));
+  const csv = toCSV(
+    data,
+    Object.keys(data[0] ?? { at: 0 }).map((k) => ({ key: k, label: k })),
+  );
+  await audit(prisma, { ...who(req), action: 'export.punch_attempts', entity_type: 'punch_attempt', detail: { from, to, rows: data.length } });
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="punch-attempts-${from}-to-${to}.csv"`);
+  res.send(csv);
 });

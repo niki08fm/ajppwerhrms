@@ -2,7 +2,7 @@
   "name": "ajpwer-workforce",
   "private": true,
   "version": "1.0.0",
-  "description": "AJPWER Workforce — attendance, payroll and settlement for AJ Power Engineering",
+  "description": "AJPWER Workforce \u2014 attendance, payroll and settlement for AJ Power Engineering",
   "type": "module",
   "workspaces": [
     "frontend",
@@ -11,12 +11,13 @@
     "face"
   ],
   "scripts": {
-    "dev": "npm run dev --workspace=@ajpwer/backend & npm run dev --workspace=@ajpwer/frontend",
+    "dev": "npm run dev --workspace=@ajpwer/backend & npm run dev --workspace=@ajpwer/frontend & npm run service:dev --workspace=@ajpwer/face",
     "dev:backend": "npm run dev --workspace=@ajpwer/backend",
     "dev:frontend": "npm run dev --workspace=@ajpwer/frontend",
     "build": "npm run build --workspace=@ajpwer/backend && npm run build --workspace=@ajpwer/frontend",
     "test": "npm run test --workspace=@ajpwer/backend",
     "test:engines": "npm run test:engines --workspace=@ajpwer/backend",
+    "test:face": "npm run service:test --workspace=@ajpwer/face",
     "db:migrate": "npm run db:migrate --workspace=@ajpwer/backend",
     "db:deploy": "npm run db:deploy --workspace=@ajpwer/backend",
     "db:seed": "npm run db:seed --workspace=@ajpwer/backend",
@@ -26,6 +27,8 @@
     "test:e2e": "npm run test:e2e --workspace=@ajpwer/frontend",
     "test:load": "npm run test:load --workspace=@ajpwer/backend",
     "jobs:retention": "npm run jobs:retention --workspace=@ajpwer/backend",
+    "face:install": "npm run service:install --workspace=@ajpwer/face",
+    "face:models": "npm run service:models --workspace=@ajpwer/face",
     "start": "npm run start --workspace=@ajpwer/backend"
   },
   "engines": {

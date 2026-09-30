@@ -31,7 +31,22 @@ const schema = z.object({
       return false;
     }
   }, 'PII_ENCRYPTION_KEY must be 32 bytes, base64 encoded (openssl rand -base64 32)'),
-  FACE_MATCH_THRESHOLD: z.coerce.number().min(0).max(1).default(0.55),
+  // Face v2: the Python face service on this machine (face/service). See face/INTEGRATION.md.
+  FACE_SERVICE_URL: z.string().url('FACE_SERVICE_URL is required — the face service address, e.g. http://127.0.0.1:8100'),
+  FACE_SERVICE_TOKEN: z.string().min(24, 'FACE_SERVICE_TOKEN must be at least 24 characters, and the same value the face service uses'),
+  FACE_SERVICE_TIMEOUT_MS: z.coerce.number().int().min(1000).default(8000),
+  FACE_MATCH_MIN: z.coerce.number().min(0).max(1).default(0.4),
+  FACE_MATCH_MARGIN: z.coerce.number().min(0).max(1).default(0.05),
+  FACE_LIVE_MIN: z.coerce.number().min(0).max(1).default(0.7),
+  FACE_TURN_MIN_DEG: z.coerce.number().min(0).max(60).default(15),
+  FACE_SAME_PERSON_MIN: z.coerce.number().min(0).max(1).default(0.3),
+  FACE_DUPLICATE_MIN: z.coerce.number().min(0).max(1).default(0.5),
+  FACE_LEARN_MIN: z.coerce.number().min(0).max(1).default(0.55),
+  FACE_ROLLING_MAX: z.coerce.number().int().min(0).max(20).default(5),
+  FACE_MAX_TRIES: z.coerce.number().int().min(1).max(20).default(5),
+  FACE_CHALLENGE_SECONDS: z.coerce.number().int().min(10).default(60),
+  FACE_CONFIRM_SECONDS: z.coerce.number().int().min(10).default(60),
+  FACE_TRAVEL_MAX_MIN: z.coerce.number().int().min(0).max(1440).default(180),
   GPS_MAX_ACCURACY_M: z.coerce.number().default(50),
   // Place search on the site form goes through our proxy to Nominatim (OpenStreetMap).
   NOMINATIM_URL: z.string().url().default('https://nominatim.openstreetmap.org'),
@@ -40,13 +55,13 @@ const schema = z.object({
     .string()
     .optional()
     .transform((v) => v || undefined),
-  LATE_SYNC_FLAG_MIN: z.coerce.number().default(60),
   CLOCK_SKEW_FLAG_MIN: z.coerce.number().default(5),
   UPLOAD_DIR: z.string().default('./uploads'),
   EXPORT_DIR: z.string().default('./exports'),
   RETENTION_GATE_SNAPSHOT_DAYS: z.coerce.number().default(30),
   RETENTION_PUNCH_DAYS: z.coerce.number().default(1095),
   RETENTION_PAYROLL_YEARS: z.coerce.number().default(7),
+  RETENTION_PUNCH_ATTEMPT_DAYS: z.coerce.number().default(365),
 });
 
 function load() {

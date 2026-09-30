@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { createReadStream, existsSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
@@ -30,7 +31,9 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { filterOne, filterValues, keysetOrder, keysetWhere, page, parseList, toCSV } from '../utils/list.js';
 import { prisma } from '../config/db.js';
 import { computeMonth1, computeMonths } from '../services/attendance.service.js';
-import { employeeView, loadEmployee, markTask, nextEmployeeCode, rulesThatApply } from '../services/employee.service.js';
+import { employeeView, faceStatus, loadEmployee, markTask, nextEmployeeCode, rulesThatApply } from '../services/employee.service.js';
+import { checkSingleFrame, FaceServiceBadImage, FaceServiceBusy, matchGallery, messageFor } from '@ajpwer/face';
+import { faceClient, faceConfig, invalidateFaceCache, loadGallery, saveRegisteredTemplate } from '../services/face.service.js';
 import { leaveBalances } from '../services/leave.service.js';
 import { computePayslip, loadRecoveries } from '../services/payslip.service.js';
 import { payContext } from '../services/payroll.service.js';
@@ -649,7 +652,7 @@ export const updateOnboardingTask = asyncHandler(async (req, res) => {
       (task.code === 'PERSONAL' && (!e.dob || !e.address) && 'Date of birth and address are needed.') ||
       (task.code === 'IDENTITY' && (!idn?.pan_enc || !idn?.aadhaar_enc) && 'PAN and Aadhaar are needed.') ||
       (task.code === 'BANK' && (!idn?.bank_account_enc || !idn?.bank_ifsc) && 'A bank account and IFSC are needed.') ||
-      (task.code === 'FACE' && e.faces.length === 0 && 'Enrol the face first.') ||
+      (task.code === 'FACE' && !faceStatus(e.faces).enrolled && 'Enrol the face first.') ||
       (task.code === 'JOINING_LETTER' && !(await prisma.letter.findFirst({ where: { employee_id: e.id, kind: 'JOINING', issued_on: { not: null } } })) && 'Issue the joining letter first.');
     if (missing) throw new AppError('VALIDATION', missing, 409, task.code, { opens: task.opens });
     await markTask(prisma, e.id, task.code, actor);
@@ -696,17 +699,50 @@ export const resign = asyncHandler(async (req, res) => {
 });
 
 // ─── Face enrolment ──────────────────────────────────────────────────────────
+/**
+ * HR enrols (or re-enrols) a face from the profile with one straight frame. The
+ * face service must see one live face; if it resembles someone else's face HR is
+ * told, and can enrol anyway (confirm_duplicate) — HR's decision is final.
+ * Re-enrolling replaces every earlier template, old face-api ones included.
+ */
 export const enrolFace = asyncHandler(async (req, res) => {
   const b = faceEnrolSchema.parse(req.body);
+  const front = req.files?.front?.[0];
+  if (!front) throw new AppError('VALIDATION', 'Send one camera frame (front).', 422, 'front');
   const e = await mustLoad(req.params.id);
   assertWritable(e);
-  const emb = Buffer.from(new Float32Array(b.embedding).buffer);
+  let analysis;
+  try {
+    analysis = await faceClient().analyze([front.buffer], { requestId: `enrol-${randomUUID()}` });
+  } catch (err) {
+    if (err instanceof FaceServiceBusy) throw new AppError('FACE_BUSY', 'The face service is busy. Try again in a moment.', 503);
+    if (err instanceof FaceServiceBadImage) throw new AppError('VALIDATION', 'The camera frame could not be read. Try again.', 422);
+    throw new AppError('FACE_UNAVAILABLE', messageFor('SERVICE_DOWN'), 503);
+  }
+  const cfg = faceConfig();
+  // One frame: the same checks as a punch, without the head turn (HR is watching).
+  const one = checkSingleFrame(analysis.frames[0], cfg);
+  if (one.outcome !== 'OK') throw new AppError('FACE_NOT_USABLE', messageFor(one.code), 422, null, { code: one.code, live_score: one.live_score });
+  const { best } = matchGallery(await loadGallery(), one.embedding, { exclude: e.id });
+  if (best && best.score >= cfg.duplicateMin && b.confirm_duplicate !== 'true') {
+    const other = await prisma.employee.findUnique({ where: { id: best.employee_id }, select: { id: true, code: true, name: true } });
+    throw new AppError('DUPLICATE_FACE', `This face looks like ${other?.name ?? 'someone else'} (${other?.code ?? '—'}), already enrolled. Check the person; enrol anyway only if you are sure.`, 409, null, {
+      resembles: other,
+      score: Math.round(best.score * 1000) / 1000,
+    });
+  }
   const { actor, ip } = who(req);
   await prisma.$transaction(async (tx) => {
-    await tx.employeeFace.updateMany({ where: { employee_id: e.id, deleted_at: null }, data: { deleted_at: new Date() } });
-    await tx.employeeFace.create({ data: { employee_id: e.id, embedding: emb, model_version: b.model_version, consent_at: new Date() } });
+    await saveRegisteredTemplate(tx, { employeeId: e.id, embedding: one.embedding, liveScore: one.live_score, replace: true });
     await markTask(tx, e.id, 'FACE', actor);
-    await audit(tx, { actor, ip, action: 'face.enrol', entity_type: 'employee', entity_id: e.id, detail: { model_version: b.model_version, consent: true } });
+    await audit(tx, {
+      actor,
+      ip,
+      action: 'face.enrol',
+      entity_type: 'employee',
+      entity_id: e.id,
+      detail: { model_version: analysis.model_version, consent: true, live_score: one.live_score, ...(best && best.score >= cfg.duplicateMin ? { resembles: best.employee_id, confirmed_by_hr: true } : {}) },
+    });
   });
   res.status(201).json({ data: { enrolled: true } });
 });
@@ -714,6 +750,7 @@ export const enrolFace = asyncHandler(async (req, res) => {
 export const removeFace = asyncHandler(async (req, res) => {
   const e = await mustLoad(req.params.id);
   await prisma.employeeFace.updateMany({ where: { employee_id: e.id, deleted_at: null }, data: { deleted_at: new Date(), embedding: Buffer.alloc(0) } });
+  invalidateFaceCache();
   await auditReq(req, { action: 'face.delete', entity_type: 'employee', entity_id: e.id });
   res.json({ data: { enrolled: false } });
 });

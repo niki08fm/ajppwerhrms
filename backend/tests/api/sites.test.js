@@ -269,7 +269,7 @@ describe('Tablet sign-in, check by check', () => {
     expect(cookie).toMatch(/HttpOnly/i);
     const payload = JSON.parse(Buffer.from(cookie.split('=')[1].split(';')[0].split('.')[1], 'base64url').toString());
     expect(payload).toMatchObject({ sid: expect.any(String), tv: 1, typ: 'site' });
-    const far = await tablet.post('/api/v1/face-exceptions').send({ occurred_at: new Date().toISOString(), reason: 'x', ...OUTSIDE });
+    const far = await tablet.post('/api/v1/punches/sessions').send(OUTSIDE);
     expect(far.status).toBe(403);
     expect(far.body.error.message).toMatch(/Punch from inside the site \(within 200 m\)/);
   });

@@ -125,6 +125,31 @@ enum FaceExceptionStatus {
   REJECTED
 }
 
+/// REGISTERED: from a registration (tablet or HR), never trimmed. ROLLING: learned from confident punches, the oldest trimmed.
+enum FaceTemplateKind {
+  REGISTERED
+  ROLLING
+}
+
+enum PunchSessionPurpose {
+  PUNCH
+  REGISTER
+}
+
+enum PunchSessionStatus {
+  ACTIVE
+  IDENTIFIED
+  BLOCKED
+  DONE
+}
+
+/// PENDING: out at one site, not yet in at the named site. COUNTED: in at the named site the same day. NOT_COUNTED: anything else.
+enum SiteChangeStatus {
+  PENDING
+  COUNTED
+  NOT_COUNTED
+}
+
 enum LeaveStatus {
   PENDING
   APPROVED
@@ -688,19 +713,27 @@ model EmployeeSalary {
 }
 
 model EmployeeFace {
-  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  employee_id   String    @db.Uuid
-  employee      Employee  @relation(fields: [employee_id], references: [id])
-  /// Float32 embedding. Embeddings, not photographs, are stored for matching.
+  id            String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id   String           @db.Uuid
+  employee      Employee         @relation(fields: [employee_id], references: [id])
+  /// Float32 embedding (128 numbers, length 1). Embeddings, not photographs, are stored for matching.
   embedding     Bytes
-  enrolled_at   DateTime  @default(now()) @db.Timestamptz(6)
+  enrolled_at   DateTime         @default(now()) @db.Timestamptz(6)
+  /// "sface-2021dec" for face v2. Older "faceapi-v1" templates are kept but never matched.
   model_version String
-  consent_at    DateTime  @db.Timestamptz(6)
+  kind          FaceTemplateKind @default(REGISTERED)
+  /// Where it was captured (tablet registration or a learned punch); null when HR enrolled it
+  site_id       String?          @db.Uuid
+  /// Match score of the punch a rolling template was learned from
+  score         Decimal?         @db.Decimal(9, 6)
+  live_score    Decimal?         @db.Decimal(9, 6)
+  consent_at    DateTime         @db.Timestamptz(6)
   created_at    DateTime  @default(now()) @db.Timestamptz(6)
   updated_at    DateTime? @updatedAt @db.Timestamptz(6)
   deleted_at    DateTime? @db.Timestamptz(6)
 
   @@index([employee_id])
+  @@index([model_version])
   @@map("employee_face")
 }
 
@@ -800,6 +833,8 @@ model Punch {
   flagged          Boolean        @default(false)
   flag_reason      String?
   source_ref       String?
+  /// The tablet punch session that made it — at most one punch per session
+  session_id       String?        @unique @db.Uuid
   created_at       DateTime       @default(now()) @db.Timestamptz(6)
   updated_at       DateTime?      @db.Timestamptz(6)
   deleted_at       DateTime?      @db.Timestamptz(6)
@@ -847,6 +882,12 @@ model FaceException {
   distance_m          Int?
   /// Gate snapshot — deleted automatically after 30 days
   snapshot_key        String?
+  /// NOT_RECOGNISED (the old tablet path), FAILED_TRIES (the ID/name form after the try limit)
+  kind                String              @default("NOT_RECOGNISED")
+  /// Aligned 112×112 face crops from the failed tries — deleted with the gate snapshots
+  crop_keys           String[]            @default([])
+  claimed_name        String?
+  session_id          String?             @db.Uuid
   status              FaceExceptionStatus @default(PENDING)
   decided_by          String?
   decided_at          DateTime?           @db.Timestamptz(6)
@@ -859,6 +900,96 @@ model FaceException {
 
   @@index([status, occurred_at])
   @@map("face_exception")
+}
+
+/// One person's attempt at a tablet: tries, the head-turn challenge, who was identified. See face/INTEGRATION.md §2.
+model PunchSession {
+  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  site_id           String              @db.Uuid
+  purpose           PunchSessionPurpose @default(PUNCH)
+  status            PunchSessionStatus  @default(ACTIVE)
+  tries             Int                 @default(0)
+  /// REGISTER: who is registering. PUNCH: who was identified, once identified.
+  employee_id       String?             @db.Uuid
+  /// createPunchSession state (challenge, identification, failures) — no embeddings
+  state             Json
+  /// Face crops of failed tries, kept only for a manual request (deleted with gate snapshots)
+  crop_keys         String[]            @default([])
+  punch_id          String?             @db.Uuid
+  face_exception_id String?             @db.Uuid
+  created_at        DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime?           @updatedAt @db.Timestamptz(6)
+  closed_at         DateTime?           @db.Timestamptz(6)
+  attempts          PunchAttempt[]
+
+  @@index([site_id, created_at])
+  @@index([status, created_at])
+  @@map("punch_session")
+}
+
+/// Every analysed upload (and every "This is not me"), for tuning the thresholds from real punches. No images, no embeddings.
+model PunchAttempt {
+  id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  session_id    String              @db.Uuid
+  session       PunchSession        @relation(fields: [session_id], references: [id])
+  site_id       String              @db.Uuid
+  /// Chosen by the tablet per upload and reused on retry: the same id never punches twice
+  request_id    String
+  purpose       PunchSessionPurpose
+  /// IDENTIFIED, NO_MATCH, NOT_LIVE, CHALLENGE_FAILED, NO_FACE, MULTIPLE_FACES, POOR_QUALITY, BUSY, EXPIRED, NOT_ME, REGISTERED, DUPLICATE_FACE…
+  outcome       String
+  code          String?
+  counts_as_try Boolean             @default(false)
+  tries_after   Int
+  /// Best match (or the person registering)
+  employee_id   String?             @db.Uuid
+  score         Decimal?            @db.Decimal(9, 6)
+  second_score  Decimal?            @db.Decimal(9, 6)
+  live_score    Decimal?            @db.Decimal(9, 6)
+  yaw_front     Decimal?            @db.Decimal(6, 1)
+  yaw_turn      Decimal?            @db.Decimal(6, 1)
+  challenge     String?
+  quality       Json?
+  service_ms    Int?
+  /// What happened after an identification: CONFIRMED, NOT_ME, CHANGED_SITE, EXPIRED
+  resolution    String?
+  /// The reply the tablet got, returned again for a retry with the same request_id
+  reply         Json
+  created_at    DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime?           @updatedAt @db.Timestamptz(6)
+
+  @@unique([session_id, request_id])
+  @@index([created_at])
+  @@index([site_id, created_at])
+  @@map("punch_attempt")
+}
+
+/// A person leaving one site for another on the tablet ("Change site"). Travel counts only
+/// if they punch in at the named site the same day; HR is shown each one and can change it.
+model SiteChange {
+  id            String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id   String           @db.Uuid
+  work_date     DateTime         @db.Date
+  from_site_id  String           @db.Uuid
+  to_site_id    String           @db.Uuid
+  out_punch_id  String           @db.Uuid
+  in_punch_id   String?          @db.Uuid
+  left_at       DateTime         @db.Timestamptz(6)
+  arrived_at    DateTime?        @db.Timestamptz(6)
+  /// Minutes between the OUT and the IN at the named site, capped by FACE_TRAVEL_MAX_MIN
+  travel_min    Int?
+  status        SiteChangeStatus @default(PENDING)
+  /// HR's figure, which replaces travel_min when set (HR's decision is final)
+  hr_travel_min Int?
+  reviewed_by   String?
+  reviewed_at   DateTime?        @db.Timestamptz(6)
+  review_reason String?
+  created_at    DateTime         @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime?        @updatedAt @db.Timestamptz(6)
+
+  @@index([employee_id, work_date])
+  @@index([status, created_at])
+  @@map("site_change")
 }
 
 model LeaveRequest {

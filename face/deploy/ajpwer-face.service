@@ -1,0 +1,31 @@
+# systemd unit for the AJPWER face service (face/service).
+# Install:  sudo cp face/deploy/ajpwer-face.service /etc/systemd/system/
+#           sudo systemctl daemon-reload && sudo systemctl enable --now ajpwer-face
+# Adjust User, WorkingDirectory and EnvironmentFile to where the app is installed.
+[Unit]
+Description=AJPWER face service (YuNet, SFace, MiniFASNet) on 127.0.0.1:8100
+After=network.target
+
+[Service]
+Type=simple
+User=ajpwer
+WorkingDirectory=/opt/ajpwer/face/service
+# FACE_SERVICE_TOKEN (same value as the backend's) comes from the app's .env.
+EnvironmentFile=/opt/ajpwer/.env
+Environment=PYTHONUNBUFFERED=1
+Environment=OMP_NUM_THREADS=2
+ExecStartPre=/opt/ajpwer/face/service/.venv/bin/python download_models.py --check
+ExecStart=/opt/ajpwer/face/service/.venv/bin/python -m app.server
+Restart=always
+RestartSec=3
+# One worker, CPU only. Killed and restarted if it grows past 700 MB.
+MemoryMax=700M
+MemorySwapMax=0
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/opt/ajpwer
+
+[Install]
+WantedBy=multi-user.target
