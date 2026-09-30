@@ -1,9 +1,9 @@
-import { bestMatches, vectorNorm } from '@ajpwer/face/match';
+import { bestMatches, vectorNorm } from '@ajpwer/face/recognition';
 import { prisma } from '../config/db.js';
 
 /**
  * Face matching over stored embeddings (never photographs). The matching itself
- * lives in face/ (@ajpwer/face/match); this service loads who is enrolled from
+ * lives in face/ (@ajpwer/face/recognition); this service loads who is enrolled from
  * the database and caches it. Below the threshold nothing is marked present:
  * the attempt goes to the exception queue for a human.
  */

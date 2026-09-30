@@ -2,7 +2,7 @@ import { useMemo, useRef } from 'react';
 import { flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { cn } from '@/utils';
 import { Button } from './ui/button';
 import { Checkbox } from './ui/overlay';
 import { Select } from './ui/form';

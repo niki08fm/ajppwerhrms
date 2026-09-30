@@ -30,10 +30,10 @@ import {
   Workflow,
   X,
 } from 'lucide-react';
-import { api } from '@/lib/api';
-import { useOnline } from '@/lib/hooks';
-import { useSession } from '@/lib/session';
-import { cn, initials } from '@/lib/utils';
+import { api } from '@/services/api';
+import { useOnline } from '@/hooks';
+import { useSession } from '@/context/SessionContext';
+import { cn, initials } from '@/utils';
 import { OfflineBanner } from './states';
 import { Button } from './ui/button';
 import { Menu } from './ui/overlay';

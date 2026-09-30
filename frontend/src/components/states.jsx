@@ -1,8 +1,8 @@
 import { AlertTriangle, Inbox, Lock, RefreshCw, SearchX, ShieldAlert, WifiOff } from 'lucide-react';
 import { DAY_STATUS_LABELS, DAY_STATUS_TONE } from '@ajpwer/shared';
 import { Button } from './ui/button';
-import { cn } from '@/lib/utils';
-import { ApiError } from '@/lib/api';
+import { cn } from '@/utils';
+import { ApiError } from '@/services/api';
 
 /** Skeleton rows matching the real layout — never a spinner on a blank page. */
 export function SkeletonRows({ rows = 8, cols = 6 }) {

@@ -80,9 +80,11 @@ In more detail:
 
 ```
 frontend/                   React 18 + Vite + Tailwind (.jsx)
-  src/features/<area>/      one folder per area: people, attendance, payroll, sites, setup, tablet…
-  src/components/           shell, data table, list toolbar, states, charts; ui/ holds the primitives (Radix)
-  src/lib/                  API client, session, lookups, hooks; face.js points at the face models
+  src/pages/<area>/         one file per screen: people, attendance, payroll, sites, setup, tablet…
+  src/components/           shared pieces (shell, data table, charts, ui/) and area parts (people/, payroll/…)
+  src/services/             api.js — every call to the backend; face.js — where the face models load from
+  src/hooks/  src/context/  useLookups and list hooks; SessionContext (who is signed in)
+  src/utils/                formatting helpers
   e2e/                      Playwright browser flows
 
 backend/                    Node + Express 4 + Prisma (PostgreSQL 16)
@@ -102,8 +104,8 @@ backend/                    Node + Express 4 + Prisma (PostgreSQL 16)
 
 face/                       Face detection and recognition (package @ajpwer/face)
   models/                   the model files, served by the backend at /face-models (no outside CDN)
-  src/browser.js            detection and the 128-number embedding, in the browser (tablet, enrolment)
-  src/match.js              matching an embedding against enrolled people, on the server
+  src/detection.js            detection and the 128-number embedding, in the browser (tablet, enrolment)
+  src/recognition.js              matching an embedding against enrolled people, on the server
 
 docs/OPERATIONS.md          production setup, backups and a restore rehearsal, retention, hosting
 ```

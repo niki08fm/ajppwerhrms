@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { ChevronRight } from 'lucide-react';
-import { cn, inr, mins } from '@/lib/utils';
+import { cn, inr, mins } from '@/utils';
 import { Card } from './ui/card';
 
 /** Money: ₹1,23,456, tabular. Negative reads −₹1,234, coloured and labelled. */

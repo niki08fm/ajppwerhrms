@@ -7,15 +7,15 @@ models/          the model files (about 7 MB), served by the backend at /face-mo
   tiny_face_detector_model*       finds a face in the camera frame
   face_landmark_68_model*         locates eyes, nose and mouth to line the face up
   face_recognition_model*         turns the face into 128 numbers (the "embedding")
-src/browser.js   used by the frontend (site tablet, face enrolment): loads the models, reads the camera,
+src/detection.js   used by the frontend (site tablet, face enrolment): loads the models, reads the camera,
                  returns the embedding
-src/match.js     used by the backend: compares an embedding with everyone enrolled (cosine similarity)
+src/recognition.js     used by the backend: compares an embedding with everyone enrolled (cosine similarity)
 ```
 
 ## How a punch works
-1. The tablet's camera sees a face. `browser.js` finds it and turns it into 128 numbers — in the browser, on the tablet.
+1. The tablet's camera sees a face. `detection.js` finds it and turns it into 128 numbers — in the browser, on the tablet.
 2. Only those numbers are sent to the backend, never a photograph (a small gate snapshot is kept for the exception queue and deleted after 30 days).
-3. The backend compares them with every enrolled person (`match.js`). At or above `FACE_MATCH_THRESHOLD` (default 0.55) the punch is recorded; below it the attempt goes to the exception queue for a person to decide.
+3. The backend compares them with every enrolled person (`recognition.js`). At or above `FACE_MATCH_THRESHOLD` (default 0.55) the punch is recorded; below it the attempt goes to the exception queue for a person to decide.
 4. When someone leaves, their enrolled numbers are deleted.
 
 ## Hosting the models
@@ -23,4 +23,4 @@ src/match.js     used by the backend: compares an embedding with everyone enroll
 - To serve them from somewhere else (a separate model host or bucket), copy the `models/` folder there and set `VITE_FACE_MODEL_URL` to its address before building the frontend. To serve a different folder from the backend, set `FACE_MODELS_DIR`.
 
 ## Replacing the model
-The models come from [@vladmandic/face-api](https://github.com/vladmandic/face-api) 1.7 (MIT licence). To move to another model (for example ArcFace, or add liveness detection): replace the files in `models/`, change `browser.js` to produce the new embedding, and re-enrol everyone — embeddings from different models cannot be compared. `FACE_MODEL_VERSION` in `browser.js` is stored with each enrolment so old and new can be told apart.
+The models come from [@vladmandic/face-api](https://github.com/vladmandic/face-api) 1.7 (MIT licence). To move to another model (for example ArcFace, or add liveness detection): replace the files in `models/`, change `detection.js` to produce the new embedding, and re-enrol everyone — embeddings from different models cannot be compared. `FACE_MODEL_VERSION` in `detection.js` is stored with each enrolment so old and new can be told apart.

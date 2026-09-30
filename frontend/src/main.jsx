@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'sonner';
-import { ApiError } from './lib/api';
+import { ApiError } from './services/api';
 import { App } from './App';
 import './styles.css';
 

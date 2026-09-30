@@ -6,7 +6,7 @@ import * as Sw from '@radix-ui/react-switch';
 import * as Cb from '@radix-ui/react-checkbox';
 import * as DM from '@radix-ui/react-dropdown-menu';
 import { Check, Minus, X } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { cn } from '@/utils';
 
 // ─── Dialog (focus-trapped, closes on Escape) ───────────────────────────────
 

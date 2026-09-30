@@ -27,7 +27,7 @@ tests/             engines/ (spec §20 acceptance), api/ (integration), load/ (p
 
 A request flows **route → middleware → controller → service → database**, with the calculations called by the services.
 
-- It also serves the face model files from `face/models` at `/face-models`, and matches faces with `face/src/match.js`.
+- It also serves the face model files from `face/models` at `/face-models`, and matches faces with `face/src/recognition.js`.
 - In production one process serves the API and the built frontend (`SERVE_WEB_DIR=frontend/dist`).
 - Settings come from the `.env` file in the project root (copy `.env.example`).
 

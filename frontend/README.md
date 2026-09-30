@@ -6,10 +6,16 @@ Every screen of AJPWER Workforce: the HR admin app and the site tablet (`/tablet
 
 ```
 src/
-  features/<area>/   one folder per area — people, attendance, payroll, sites, setup, dashboard, tablet
-  components/        shell (navigation), data table, list toolbar, states, charts; ui/ holds buttons, forms, dialogs
-  lib/               API client, session, lookups, hooks; face.js points the tablet at the face models
-  App.jsx            the routes; main.jsx starts the app
+  main.jsx           starts the app;  App.jsx  holds the routes
+  pages/<area>/      one file per screen: dashboard, people, attendance, payroll, sites, setup, auth, tablet
+  components/        pieces used by pages — shell (navigation), data table, charts, states;
+                     ui/ holds buttons, forms, dialogs; <area>/ holds area-specific parts
+                     (e.g. people/SalaryBreakup.jsx, people/profile-tabs/, payroll/Steps.jsx)
+  services/          api.js (every call to the backend), face.js (points at the face models)
+  hooks/             useLookups, list paging, debounce, online status
+  context/           SessionContext (who is signed in)
+  utils/             formatting helpers (rupees, dates, class names)
+  styles.css         theme colours and fonts
 e2e/                 Playwright browser tests
 ```
 
