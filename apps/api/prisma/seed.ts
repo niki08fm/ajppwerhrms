@@ -65,7 +65,7 @@ const START = firstOfMonth(M3);
 async function main() {
   const existing = await prisma.appUser.count();
   if (existing > 0 && !process.argv.includes('--force')) {
-    console.log('Database already seeded. Run `npm run db:reset` first, or pass --force to add to it.');
+    console.log('Database already has data, so the sample data is not loaded again. To start over: `npm run db:reset` (or, for the demo, `docker compose -f docker-compose.demo.yml down -v`). Pass --force to add to it anyway.');
     return;
   }
 

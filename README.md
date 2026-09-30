@@ -8,6 +8,10 @@ It records attendance from face punches at geofenced sites, turns punches into p
 
 ---
 
+## Just want to try it?
+
+With Docker Desktop running: `docker compose -f docker-compose.demo.yml up --build`, open http://localhost:4000 and sign in as **hr@ajpwer.in / Demo@12345**. It comes loaded with sample people, four months of attendance and payroll at every stage. **[DEMO.md](DEMO.md)** is a guided tour. No configuration needed — and never put real data in the demo.
+
 ## Quick start
 
 Prerequisites: **Node 20+** (22 recommended), **PostgreSQL 16**, and optionally **Redis 7** (without it, jobs run in-process). Docker can provide both databases.

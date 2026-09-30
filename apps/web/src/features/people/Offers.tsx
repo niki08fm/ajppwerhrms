@@ -186,7 +186,7 @@ function IssueOfferDialog({ onClose }: { onClose: () => void }) {
       }
     >
       <div className="grid gap-4 md:grid-cols-2">
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 content-start gap-3">
           <Field label="Name" required className="col-span-2" error={errors.name}>
             {(id) => <Input id={id} value={f.name} onChange={(e) => set('name', e.target.value)} />}
           </Field>

@@ -80,7 +80,7 @@ export function NewEmployeeDialog({ open, onOpenChange }: { open: boolean; onOpe
       }
     >
       <div className="grid gap-4 md:grid-cols-2">
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 content-start gap-3">
           <Field label="Full name" required className="col-span-2" error={errors.name}>
             {(id, inv) => <Input id={id} aria-invalid={inv} value={f.name} onChange={(e) => set('name', e.target.value)} />}
           </Field>

@@ -48,9 +48,10 @@ export function useSalaryPreview(args: PreviewArgs, enabled = true) {
 export function SalaryPreviewPanel({ args, chosen, onChoose, compact }: { args: PreviewArgs; chosen?: number; onChoose?: (g: number) => void; compact?: boolean }) {
   const q = useSalaryPreview({ ...args, chosen_gross: chosen });
   if (!args.amount) return <p className="text-[13px] text-muted-foreground">Type an amount to see the breakdown.</p>;
-  if (q.isLoading) return <SkeletonBlock className="h-48" />;
   if (q.isError) return <ErrorState error={q.error} compact />;
-  const p = q.data!;
+  // No data yet also covers the moment between typing and the debounced request starting.
+  if (!q.data) return <SkeletonBlock className="h-48" />;
+  const p = q.data;
   const sol = p.solution;
   return (
     <div className={`flex flex-col gap-3 ${q.isFetching ? 'opacity-70' : ''}`}>
