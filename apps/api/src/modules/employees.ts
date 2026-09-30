@@ -40,7 +40,7 @@ import { leaveBalances } from '../services/leave';
 import { computePayslip, loadRecoveries } from '../services/payslip';
 import { payContext } from '../services/payroll';
 import { ratesOn, regimesOn, salaryOn, structureComponents, holidaysBetween } from '../services/rules';
-import { ctcBasisOf, previewSalary, resolveMonthlyGross } from '../services/salary';
+import { ctcBasisOf, insertSalary, previewSalary, resolveMonthlyGross } from '../services/salary';
 import { upsertSettlement } from '../services/settlement';
 
 export const employeesRouter = Router();
@@ -465,27 +465,6 @@ employeesRouter.get(
     });
   }),
 );
-
-/**
- * A revision inserts, never updates: the current record is closed the day
- * before the new effective date and a new one is inserted.
- */
-async function insertSalary(tx: Tx, employeeId: string, validFrom: ISODate, row: { mode: 'CTC' | 'GROSS'; amount: number; monthly_gross: number; structure_id: string; reason: string }, actor: string) {
-  const current = await tx.employeeSalary.findFirst({
-    where: { employee_id: employeeId, deleted_at: null, valid_from: { lte: toDbDate(validFrom) }, OR: [{ valid_to: null }, { valid_to: { gte: toDbDate(validFrom) } }] },
-    orderBy: { valid_from: 'desc' },
-  });
-  const later = await tx.employeeSalary.findFirst({ where: { employee_id: employeeId, deleted_at: null, valid_from: { gt: toDbDate(validFrom) } } });
-  if (later) throw new AppError('SALARY_OVERLAP', `A salary record already starts on ${fromDbDate(later.valid_from)}, after this date. Revise from a later date.`, 409, 'valid_from');
-  if (current && fromDbDate(current.valid_from) === validFrom) {
-    throw new AppError('SALARY_OVERLAP', `A salary record already starts on ${validFrom}. Dated records are never overwritten — pick another effective date.`, 409, 'valid_from');
-  }
-  if (current) await tx.employeeSalary.update({ where: { id: current.id }, data: { valid_to: toDbDate(addDays(validFrom, -1)) } });
-  const created = await tx.employeeSalary.create({
-    data: { employee_id: employeeId, valid_from: toDbDate(validFrom), mode: row.mode, amount: BigInt(row.amount), monthly_gross: BigInt(row.monthly_gross), structure_id: row.structure_id, reason: row.reason, created_by: actor },
-  });
-  return { current, created };
-}
 
 employeesRouter.post(
   '/:id/salary',

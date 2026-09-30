@@ -61,7 +61,7 @@ export function onboardingView(tasks: { task_code: string; done_at: Date | null;
  */
 export async function rulesThatApply(db: Db, payGroupId: string, date: ISODate) {
   const rules = await payGroupRules(db, payGroupId);
-  const structure = await db.salaryStructure.findUnique({ where: { id: rules.structure_id }, select: { id: true, name: true, valid_from: true } });
+  const structure = await db.salaryStructure.findUnique({ where: { id: rules.structure_id }, select: { id: true, name: true } });
   const policies = POLICY_KINDS.map((kind) => {
     const p = pickPolicy(rules.policies, kind, date);
     return p
@@ -73,7 +73,7 @@ export async function rulesThatApply(db: Db, payGroupId: string, date: ISODate) 
     calendar_method: rules.calendar_method,
     weekly_off: rules.weekly_off,
     shift: rules.shift,
-    structure: structure ? { id: structure.id, name: structure.name, valid_from: fromDbDate(structure.valid_from) } : null,
+    structure: structure ? { id: structure.id, name: structure.name } : null,
     policies,
   };
 }

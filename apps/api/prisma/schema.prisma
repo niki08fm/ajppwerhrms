@@ -411,7 +411,6 @@ model Policy {
 model SalaryStructure {
   id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name            String
-  valid_from      DateTime          @db.Date
   duplicated_from String?           @db.Uuid
   created_by      String?
   created_at      DateTime          @default(now()) @db.Timestamptz(6)

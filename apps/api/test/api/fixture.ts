@@ -59,7 +59,6 @@ export async function buildFixture(opts: { noBankFor?: string[] } = {}): Promise
   const structure = await prisma.salaryStructure.create({
     data: {
       name: 'Site staff',
-      valid_from: toDbDate('2025-04-01'),
       components: {
         create: [
           { seq: 1, name: 'Basic', calc_type: 'PCT_GROSS', calc_value: 50, counts_as_wages: true },

@@ -158,10 +158,13 @@ export function withSpecialAllowance<T extends { seq: number; calc_type: CalcTyp
   return [...components, make(seq)];
 }
 
+/**
+ * A structure has no date of its own. It applies to the people of whichever pay
+ * group it is attached to, from the month chosen when it is attached.
+ */
 export const structureCreateSchema = z
   .object({
     name: z.string().min(1).max(100),
-    valid_from: isoDate,
     components: z
       .array(salaryComponentSchema)
       .min(1)
@@ -185,7 +188,16 @@ export const payGroupSchema = z
   })
   .strict();
 
-export const payGroupPatchSchema = payGroupSchema.partial().strict();
+export const payGroupPatchSchema = payGroupSchema
+  .partial()
+  .extend({
+    /**
+     * When the structure changes: the first month everyone in the group is paid
+     * on it. Defaults to the earliest month not yet run.
+     */
+    structure_from: yearMonth.optional(),
+  })
+  .strict();
 
 // ─── Statutory configuration ─────────────────────────────────────────────────
 

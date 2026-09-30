@@ -152,7 +152,7 @@ function ReviseDialog({ e, onClose }: { e: Employee; onClose: () => void }) {
               <Select id={id} value={f.structure_id} onChange={(ev) => setF({ ...f, structure_id: ev.target.value })}>
                 {lk?.structures.map((s) => (
                   <option key={s.id} value={s.id}>
-                    {s.name} (from {s.valid_from})
+                    {s.name}
                   </option>
                 ))}
               </Select>

@@ -36,7 +36,7 @@ miscRouter.get(
       prisma.payGroup.findMany({ where: { deleted_at: null }, select: { id: true, name: true, calendar_method: true, weekly_off: true, structure_id: true }, orderBy: { name: 'asc' } }),
       prisma.site.findMany({ where: { deleted_at: null }, select: { id: true, code: true, name: true, state: true, is_active: true }, orderBy: { name: 'asc' } }),
       prisma.shift.findMany({ where: { deleted_at: null }, select: { id: true, name: true, start_min: true, end_min: true }, orderBy: { start_min: 'asc' } }),
-      prisma.salaryStructure.findMany({ where: { deleted_at: null }, select: { id: true, name: true, valid_from: true }, orderBy: { name: 'asc' } }),
+      prisma.salaryStructure.findMany({ where: { deleted_at: null }, select: { id: true, name: true }, orderBy: { name: 'asc' } }),
       prisma.project.findMany({ where: { deleted_at: null }, select: { id: true, code: true, name: true }, orderBy: { code: 'asc' } }),
       prisma.ptSlab.findMany({ where: { deleted_at: null }, distinct: ['state'], select: { state: true } }),
     ]);
@@ -46,7 +46,7 @@ miscRouter.get(
         pay_groups: payGroups,
         sites,
         shifts,
-        structures: structures.map((s) => ({ ...s, valid_from: fromDbDate(s.valid_from) })),
+        structures,
         projects,
         pt_states: [...new Set([...ptStates.map((p) => p.state), 'Delhi'])].sort(),
         states: INDIAN_STATES,

@@ -112,7 +112,7 @@ export function OverviewTab({ e }: { e: Employee }) {
           </div>
           <div>
             <div className="text-[12px] text-muted-foreground">Salary structure</div>
-            <div>{r.structure ? `${r.structure.name} (from ${r.structure.valid_from})` : '—'}</div>
+            <div>{r.structure ? r.structure.name : '—'}</div>
           </div>
           <div className="border-t pt-3">
             <div className="mb-1 text-[12px] text-muted-foreground">Policies in force today</div>

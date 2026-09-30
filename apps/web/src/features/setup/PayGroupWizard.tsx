@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
 import { toast } from 'sonner';
-import { CALENDAR_METHOD_INFO, CALENDAR_METHODS, DAY_NAMES, formatINR, monthLabelSafe, POLICY_KINDS, POLICY_KIND_LABELS, POLICY_KIND_MISSING_WARNING, type CalendarMethod } from './wizard-deps';
+import { addMonths, CALENDAR_METHOD_INFO, CALENDAR_METHODS, DAY_NAMES, formatINR, formatYearMonth, monthLabelSafe, POLICY_KINDS, POLICY_KIND_LABELS, POLICY_KIND_MISSING_WARNING, type CalendarMethod } from './wizard-deps';
 import { api, errorMessage } from '@/lib/api';
 import { useLookups } from '@/lib/lookups';
 import { cn, hhmm } from '@/lib/utils';
@@ -27,8 +27,18 @@ interface PolicyRow {
 interface StructureRow {
   id: string;
   name: string;
-  valid_from: string;
+  people: number;
   sample: { gross: number; monthly: { name: string; amount: number }[]; yearly: { name: string; amount: number }[] };
+}
+
+/** Who moves when a group with people in it is attached to a different structure. */
+interface MovePlan {
+  from: string;
+  first_open_month: string;
+  structure: { id: string; name: string };
+  move: { employee: { id: string; code: string; name: string }; mode: 'GROSS' | 'CTC'; from_gross: number; to_gross: number; esi_band: boolean }[];
+  skipped: { employee: { id: string; code: string; name: string }; reason: string }[];
+  unchanged: number;
 }
 
 const STEPS = ['Basics', 'Calendar method', 'Weekly off and shift', 'Policies', 'Salary structure', 'Review'];
@@ -56,10 +66,28 @@ export default function PayGroupWizard() {
     queryKey: ['calendar-methods', f.weekly_off.join(',')],
     queryFn: () => api.get<{ data: { method: CalendarMethod; divisor: number; day_rate: number }[]; meta: { month: string; gross: number } }>('/calendar-methods', { weekly_off: f.weekly_off.join(','), gross: 2_600_000 }),
   });
+  // Changing the structure of a group that has people: choose the month they move, and see who moves first.
+  const structureChanged = !!id && !!existing.data && existing.data.headcount > 0 && !!f.structure_id && f.structure_id !== existing.data.structure?.id;
+  const [moveFrom, setMoveFrom] = useState<string | null>(null);
+  const move = useQuery({
+    queryKey: ['structure-move', id, f.structure_id, moveFrom],
+    queryFn: () => api.get<{ data: MovePlan }>(`/pay-groups/${id}/structure-move`, { structure_id: f.structure_id, ...(moveFrom ? { from: moveFrom } : {}) }).then((r) => r.data),
+    enabled: structureChanged,
+    placeholderData: (p) => p,
+    retry: false,
+  });
   const save = useMutation({
-    mutationFn: () => (id ? api.patch(`/pay-groups/${id}`, f) : api.post('/pay-groups', f)),
-    onSuccess: () => {
-      toast.success(id ? 'Pay group updated. Everyone in it now follows these rules.' : 'Pay group created and usable immediately.');
+    mutationFn: () =>
+      id ? api.patch<{ data: { structure_move: { from: string; moved: number; skipped: unknown[] } | null } }>(`/pay-groups/${id}`, { ...f, ...(structureChanged && move.data ? { structure_from: move.data.from } : {}) }) : api.post('/pay-groups', f),
+    onSuccess: (r) => {
+      const moved = id ? (r as { data: { structure_move: { from: string; moved: number; skipped: unknown[] } | null } }).data.structure_move : null;
+      toast.success(
+        moved
+          ? `Pay group updated. ${moved.moved} ${moved.moved === 1 ? 'person moves' : 'people move'} to the new structure from ${formatYearMonth(moved.from)}${moved.skipped.length ? `; ${moved.skipped.length} could not be moved` : ''}.`
+          : id
+            ? 'Pay group updated. Everyone in it now follows these rules.'
+            : 'Pay group created and usable immediately.',
+      );
       qc.invalidateQueries({ queryKey: ['pay-groups'] });
       qc.invalidateQueries({ queryKey: ['lookups'] });
       nav('/setup/pay-groups');
@@ -72,7 +100,7 @@ export default function PayGroupWizard() {
   const today = lk?.today ?? '';
   const missingKinds = POLICY_KINDS.filter((k) => !attached.some((p) => p.kind === k && p.valid_from <= today && (!p.valid_to || p.valid_to >= today)));
   const structure = structures.data?.find((s) => s.id === f.structure_id);
-  const canNext = [!!f.name.trim(), true, !!f.shift_id, true, !!f.structure_id, true][step];
+  const canNext = [!!f.name.trim(), true, !!f.shift_id, true, !!f.structure_id && (!structureChanged || !!move.data), true][step];
 
   return (
     <div className="flex flex-col gap-4">
@@ -196,11 +224,13 @@ export default function PayGroupWizard() {
               <div className="flex flex-col gap-2">
                 {structures.data?.map((s) => (
                   <button key={s.id} onClick={() => setF({ ...f, structure_id: s.id })} className={cn('rounded-md border p-3 text-left text-[13px]', f.structure_id === s.id ? 'border-primary ring-2 ring-primary' : 'hover:bg-accent')}>
-                    <span className="font-medium">{s.name}</span> <span className="text-muted-foreground">from {s.valid_from}</span>
+                    <span className="font-medium">{s.name}</span>
                   </button>
                 ))}
               </div>
               {structure && (
+                <div className="flex flex-col gap-3">
+                {structureChanged && <MovePanel plan={move.data} loading={move.isFetching} error={move.error} onMonth={setMoveFrom} structureName={structure.name} />}
                 <div className="rounded-md border p-3">
                   <div className="mb-2 text-[13px] font-semibold">At ₹24,000 a month</div>
                   <ProportionBar parts={structure.sample.monthly.map((c) => ({ label: c.name, value: c.amount }))} />
@@ -216,6 +246,7 @@ export default function PayGroupWizard() {
                       ))}
                     </tbody>
                   </table>
+                </div>
                 </div>
               )}
             </div>
@@ -270,9 +301,15 @@ export default function PayGroupWizard() {
                   </ul>
                 </Notice>
               )}
+              {structureChanged && move.data && (
+                <Notice tone={move.data.skipped.length ? 'warning' : 'info'}>
+                  {move.data.move.length} {move.data.move.length === 1 ? 'person moves' : 'people move'} to <strong>{move.data.structure.name}</strong> from <strong>{formatYearMonth(move.data.from)}</strong>, each as a dated change in their salary history.
+                  {move.data.skipped.length > 0 && ` ${move.data.skipped.length} cannot be moved (see the structure step).`}
+                </Notice>
+              )}
               {id && existing.data && existing.data.headcount > 0 && (
                 <Notice>
-                  {existing.data.headcount} people are in this group. Their calendar, weekly off, shift, structure and every policy change with it, from today. Locked months are snapshots and do not move.
+                  {existing.data.headcount} people are in this group. Their calendar, weekly off, shift and every policy change with it, from today{structureChanged ? '; the structure from the month above' : ''}. Months already run keep their payslips.
                 </Notice>
               )}
             </div>
@@ -293,6 +330,64 @@ export default function PayGroupWizard() {
           )}
         </div>
       </Card>
+    </div>
+  );
+}
+
+function MovePanel({ plan, loading, error, onMonth, structureName }: { plan: MovePlan | undefined; loading: boolean; error: unknown; onMonth: (ym: string) => void; structureName: string }) {
+  const months = plan ? Array.from({ length: 12 }, (_, i) => addMonths(plan.first_open_month, i)) : [];
+  return (
+    <div className="rounded-md border border-primary/40 bg-primary/5 p-3 text-[13px]">
+      <div className="font-semibold">Move this group to {structureName}</div>
+      <p className="mt-0.5 text-[12px] text-muted-foreground">Everyone in the group is paid on it from the month you pick, as a dated change in their salary history. Agreed pay stays the same: a gross stays the gross, a CTC stays the CTC. Months already run keep their payslips.</p>
+      {error ? (
+        <Notice tone="destructive">{errorMessage(error)}</Notice>
+      ) : !plan ? (
+        <p className="mt-2 text-muted-foreground">Working out who moves…</p>
+      ) : (
+        <div className="mt-2 flex flex-col gap-2">
+          <Field label="Paid on it from">
+            {(i) => (
+              <Select id={i} value={plan.from} onChange={(e) => onMonth(e.target.value)} className="max-w-48">
+                {months.map((m) => (
+                  <option key={m} value={m}>
+                    {formatYearMonth(m)}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+          <div className={cn('flex flex-wrap gap-1.5', loading && 'opacity-60')}>
+            <Chip tone="success">{plan.move.length} move</Chip>
+            {plan.unchanged > 0 && <Chip tone="muted">{plan.unchanged} already on it</Chip>}
+            {plan.skipped.length > 0 && <Chip tone="warning">{plan.skipped.length} cannot move</Chip>}
+          </div>
+          {plan.move.some((m) => m.from_gross !== m.to_gross) && (
+            <ul className="text-[12px] text-muted-foreground">
+              {plan.move
+                .filter((m) => m.from_gross !== m.to_gross)
+                .map((m) => (
+                  <li key={m.employee.id}>
+                    {m.employee.name} ({m.employee.code}) — CTC kept, gross {formatINR(m.from_gross)} → {formatINR(m.to_gross)}
+                    {m.esi_band ? ' (ESI band: kept on their current side)' : ''}
+                  </li>
+                ))}
+            </ul>
+          )}
+          {plan.skipped.length > 0 && (
+            <ul className="list-disc pl-5 text-[12px]">
+              {plan.skipped.map((x) => (
+                <li key={x.employee.id}>
+                  <Link to={`/people/${x.employee.id}?tab=salary`} className="font-medium hover:underline">
+                    {x.employee.name} ({x.employee.code})
+                  </Link>{' '}
+                  — {x.reason}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   );
 }

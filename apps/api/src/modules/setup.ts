@@ -3,6 +3,8 @@ import { z } from 'zod';
 import {
   addDays,
   CALENDAR_METHODS,
+  firstOfMonth,
+  yearMonth,
   departmentSchema,
   holidaySchema,
   istDate,
@@ -21,13 +23,15 @@ import {
   ymOf,
   type PolicyKind,
 } from '@ajpwer/shared';
-import { calendarDivisor, ctcForGross, expandStructure, findOverlaps, validateStructure, workingDaysInMonth, type ComponentDef } from '../engines';
+import { calendarDivisor, computeEsi, computePf, ctcForGross, expandStructure, findOverlaps, validateStructure, workingDaysInMonth, type ComponentDef } from '../engines';
 import { audit, auditReq, who } from '../lib/audit';
 import { requirePerm } from '../lib/auth';
 import { fromDbDate, n, toDbDate } from '../lib/db-dates';
 import { ah, AppError, notFound } from '../lib/errors';
 import { prisma } from '../lib/prisma';
 import { holidaysBetween, ratesOn, toAttachedPolicy, toComponentDefs } from '../services/rules';
+import { insertSalary } from '../services/salary';
+import { firstOpenMonth, planStructureMove } from '../services/structure-move';
 import { randomUUID } from 'node:crypto';
 
 export const setupRouter = Router();
@@ -156,8 +160,24 @@ setupRouter.all(['/policies/:id', '/policies/:key/versions/:v'], (req, _res, nex
  */
 async function sampleAt(components: ComponentDef[], gross: number) {
   const rates = await ratesOn(prisma, today()).catch(() => ({ ...STATUTORY_MINIMUM_RATES }));
-  const ctc = ctcForGross(gross, { components, pf: { pf_enabled: true, pf_restrict_to_ceiling: true, vpf_pct: 0 }, esi_enabled: true, rates: { pf: rates.pf, esi: rates.esi } });
-  return { annual_ctc: ctc.annual_ctc, ctc_basis: ctc.ctc_basis, expanded: expandStructure(components, gross, ctc.ctc_basis) };
+  const pfChoice = { pf_enabled: true, pf_restrict_to_ceiling: true, vpf_pct: 0 };
+  const ctc = ctcForGross(gross, { components, pf: pfChoice, esi_enabled: true, rates: { pf: rates.pf, esi: rates.esi } });
+  const expanded = expandStructure(components, gross, ctc.ctc_basis);
+  // PF and ESI are not components: they are worked out from the rates, the PF-wage components and gross.
+  const pf = computePf(expanded.pf_base, pfChoice, rates.pf);
+  const esi = computeEsi(ctc.esi_applies, gross, rates.esi);
+  return {
+    annual_ctc: ctc.annual_ctc,
+    ctc_basis: ctc.ctc_basis,
+    expanded,
+    statutory: {
+      rates: { pf: rates.pf, esi: rates.esi },
+      pf,
+      esi: { applies: ctc.esi_applies, employee: esi.employee, employer: esi.employer },
+      employer_pf_cost: ctc.employer_pf,
+      monthly_cost: ctc.monthly_cost,
+    },
+  };
 }
 
 async function structureView(id: string) {
@@ -168,15 +188,19 @@ async function structureView(id: string) {
   const components = toComponentDefs(s.components);
   const referenced = await prisma.payslip.count({ where: { employee: { salaries: { some: { structure_id: id } } } }, take: 1 }).catch(() => 0);
   const used = (await prisma.employeeSalary.count({ where: { structure_id: id } })) > 0;
+  const d = toDbDate(today());
+  const people = await prisma.employeeSalary.count({ where: { structure_id: id, deleted_at: null, valid_from: { lte: d }, OR: [{ valid_to: null }, { valid_to: { gte: d } }] } });
   const at = await sampleAt(components, SAMPLE_GROSS);
   const sample = at.expanded;
   return {
     id: s.id,
     name: s.name,
-    valid_from: fromDbDate(s.valid_from),
+    created_at: s.created_at,
     duplicated_from: s.duplicated_from,
     components,
     pay_groups: s.pay_groups,
+    /** People paid on this structure today */
+    people,
     immutable: used || referenced > 0,
     sample: { gross: SAMPLE_GROSS, annual_ctc: at.annual_ctc, monthly: sample.monthly.map((c) => ({ name: c.name, amount: c.amount })), yearly: sample.yearly.map((c) => ({ name: c.name, amount: c.amount })), over_budget: sample.over_budget },
     validation: validateStructure(components, SAMPLE_GROSS, at.ctc_basis),
@@ -187,7 +211,7 @@ setupRouter.get(
   '/structures',
   requirePerm('setup.read'),
   ah(async (_req, res) => {
-    const rows = await prisma.salaryStructure.findMany({ where: { deleted_at: null }, orderBy: [{ name: 'asc' }, { valid_from: 'desc' }], select: { id: true } });
+    const rows = await prisma.salaryStructure.findMany({ where: { deleted_at: null }, orderBy: [{ name: 'asc' }, { created_at: 'desc' }], select: { id: true } });
     res.json({ data: await Promise.all(rows.map((r) => structureView(r.id))) });
   }),
 );
@@ -208,7 +232,7 @@ setupRouter.post(
     const b = z.object({ components: structureCreateSchema.shape.components, sample_gross: z.number().int().min(1) }).strict().parse(req.body);
     const components = b.components.map((c) => ({ ...c }));
     const at = await sampleAt(components, b.sample_gross);
-    res.json({ data: { ...validateStructure(components, b.sample_gross, at.ctc_basis), expanded: at.expanded, annual_ctc: at.annual_ctc } });
+    res.json({ data: { ...validateStructure(components, b.sample_gross, at.ctc_basis), expanded: at.expanded, annual_ctc: at.annual_ctc, statutory: at.statutory } });
   }),
 );
 
@@ -225,7 +249,6 @@ setupRouter.post(
       const created = await tx.salaryStructure.create({
         data: {
           name: b.name,
-          valid_from: toDbDate(b.valid_from),
           duplicated_from: b.duplicated_from ?? null,
           created_by: actor,
           components: { create: b.components.map((c) => ({ ...c, calc_value: c.calc_value })) },
@@ -245,7 +268,7 @@ async function payGroupView(id: string) {
     where: { id },
     include: {
       shift: true,
-      structure: { select: { id: true, name: true, valid_from: true } },
+      structure: { select: { id: true, name: true } },
       policies: { where: { deleted_at: null }, include: { policy: true } },
       _count: { select: { employees: { where: { deleted_at: null, status: { in: ['ACTIVE', 'NOTICE', 'ONBOARDING'] } } } } },
     },
@@ -263,7 +286,7 @@ async function payGroupView(id: string) {
     calendar_method: g.calendar_method,
     weekly_off: g.weekly_off,
     shift: g.shift,
-    structure: g.structure ? { ...g.structure, valid_from: fromDbDate(g.structure.valid_from) } : null,
+    structure: g.structure,
     policies: attached.sort((a, b) => a.kind.localeCompare(b.kind) || b.version - a.version),
     headcount: g._count.employees,
     divisor_this_month: calendarDivisor(g.calendar_method, ym, workingDaysInMonth(ym, g.weekly_off as never, hol)),
@@ -317,13 +340,30 @@ setupRouter.post(
   }),
 );
 
+/**
+ * What attaching a different structure to this group would do: who moves, from
+ * which month, and who cannot be moved (with the reason). Nothing is written.
+ */
+setupRouter.get(
+  '/pay-groups/:id/structure-move',
+  requirePerm('setup.read'),
+  ah(async (req, res) => {
+    const q = z.object({ structure_id: z.string().uuid(), from: yearMonth.optional() }).parse(req.query);
+    const g = await prisma.payGroup.findFirst({ where: { id: req.params.id, deleted_at: null } });
+    if (!g) throw notFound('That pay group');
+    res.json({ data: { ...(await planStructureMove(prisma, g.id, q.structure_id, q.from)), first_open_month: await firstOpenMonth(prisma) } });
+  }),
+);
+
 setupRouter.patch(
   '/pay-groups/:id',
   requirePerm('setup.write'),
   ah(async (req, res) => {
-    const b = payGroupPatchSchema.parse(req.body);
+    const { structure_from, ...b } = payGroupPatchSchema.parse(req.body);
     const before = await prisma.payGroup.findUnique({ where: { id: req.params.id }, include: { policies: { where: { deleted_at: null } } } });
     if (!before) throw notFound('That pay group');
+    // A new structure reaches everyone in the group from the chosen month, as a dated change on each salary.
+    const plan = b.structure_id && b.structure_id !== before.structure_id ? await planStructureMove(prisma, before.id, b.structure_id, structure_from) : null;
     const { actor, ip } = who(req);
     await prisma.$transaction(async (tx) => {
       const { policy_ids, ...core } = b;
@@ -342,16 +382,39 @@ setupRouter.patch(
           });
         }
       }
+      if (plan) {
+        const from = firstOfMonth(plan.from);
+        for (const m of plan.move) {
+          await insertSalary(tx, m.employee.id, from, { mode: m.mode, amount: m.amount, monthly_gross: m.to_gross, structure_id: plan.structure.id, reason: `Pay group ${before.name} moved to ${plan.structure.name}` }, actor);
+          await audit(tx, {
+            actor,
+            ip,
+            action: 'salary.structure_change',
+            entity_type: 'employee',
+            entity_id: m.employee.id,
+            detail: { pay_group_id: before.id, from: plan.from, from_structure_id: m.from_structure_id, to_structure_id: plan.structure.id, mode: m.mode, amount: m.amount, monthly_gross: { before: m.from_gross, after: m.to_gross } },
+          });
+        }
+      }
       await audit(tx, {
         actor,
         ip,
         action: 'pay_group.update',
         entity_type: 'pay_group',
         entity_id: before.id,
-        detail: { before: { ...before, policies: before.policies.map((p) => p.policy_id) }, after: b },
+        detail: {
+          before: { ...before, policies: before.policies.map((p) => p.policy_id) },
+          after: b,
+          ...(plan ? { structure_move: { from: plan.from, moved: plan.move.length, unchanged: plan.unchanged, skipped: plan.skipped } } : {}),
+        },
       });
     });
-    res.json({ data: await payGroupView(before.id) });
+    res.json({
+      data: {
+        ...(await payGroupView(before.id)),
+        structure_move: plan ? { from: plan.from, moved: plan.move.length, unchanged: plan.unchanged, skipped: plan.skipped } : null,
+      },
+    });
   }),
 );
 

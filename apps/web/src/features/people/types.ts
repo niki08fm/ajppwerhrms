@@ -55,7 +55,7 @@ export interface Employee {
     calendar_method: string;
     weekly_off: string[];
     shift: { name: string; start_min: number; end_min: number; break_min: number };
-    structure: { id: string; name: string; valid_from: string } | null;
+    structure: { id: string; name: string } | null;
     policies: { kind: string; label: string; id: string | null; name: string | null; version: number | null; valid_from: string | null; valid_to: string | null; rules: Record<string, unknown> | null; missing: string | null }[];
   };
 }

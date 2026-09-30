@@ -160,7 +160,6 @@ async function main() {
   const site = await prisma.salaryStructure.create({
     data: {
       name: 'Site staff',
-      valid_from: toDbDate('2025-04-01'),
       components: {
         create: [
           { seq: 1, name: 'Basic', calc_type: 'PCT_GROSS', calc_value: 50, is_taxable: true, counts_as_wages: true, colour: 'chart-1' },
@@ -174,7 +173,6 @@ async function main() {
   const office = await prisma.salaryStructure.create({
     data: {
       name: 'Office staff',
-      valid_from: toDbDate('2025-04-01'),
       components: {
         create: [
           { seq: 1, name: 'Basic', calc_type: 'PCT_GROSS', calc_value: 40, is_taxable: true, counts_as_wages: true, colour: 'chart-1' },
@@ -192,7 +190,6 @@ async function main() {
   await prisma.salaryStructure.create({
     data: {
       name: 'Managers (CTC based)',
-      valid_from: toDbDate('2025-04-01'),
       components: {
         create: [
           { seq: 1, name: 'Basic', calc_type: 'PCT_CTC', calc_value: 40, is_taxable: true, counts_as_wages: true, colour: 'chart-1' },

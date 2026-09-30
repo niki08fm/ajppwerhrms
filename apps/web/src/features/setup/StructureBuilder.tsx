@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowDown, ArrowUp, Lock, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { formatINR, isPercentCalc, MONTH_NAMES, PERCENT_OF, SPECIAL_ALLOWANCE, type CalcType } from '@ajpwer/shared';
+import { formatINR, isPercentCalc, MONTH_NAMES, PERCENT_OF, SPECIAL_ALLOWANCE, type CalcType, type EsiRates, type PfRates } from '@ajpwer/shared';
 import { api, errorMessage } from '@/lib/api';
 import { useDebounced } from '@/lib/hooks';
 import { cn, toPaise } from '@/lib/utils';
@@ -95,10 +95,20 @@ function KindToggle({ value, onChange, label }: { value: Row['kind']; onChange: 
   );
 }
 
+/** PF and ESI at the sample gross, for someone on PF (restricted to the ceiling) with ESI where it applies. */
+interface Statutory {
+  rates: { pf: PfRates; esi: EsiRates };
+  pf: { pf_wage: number; employee: number; employer_total: number; eps: number; employer_epf: number; edli: number; admin: number };
+  esi: { applies: boolean; employee: number; employer: number };
+  employer_pf_cost: number;
+  monthly_cost: number;
+}
+
 interface Validation {
   errors: string[];
   warnings: string[];
   annual_ctc: number;
+  statutory: Statutory;
   expanded: { monthly: { name: string; amount: number; colour: string; max_amount: number | null; calc_type: CalcType }[]; yearly: { name: string; amount: number }[]; gross: number; yearly_total: number };
 }
 
@@ -109,7 +119,6 @@ export default function StructureBuilder() {
   const from = sp.get('from');
   const src = useQuery({ queryKey: ['structure', from], queryFn: () => api.get<{ data: Structure }>(`/structures/${from}`).then((r) => r.data), enabled: !!from });
   const [name, setName] = useState('');
-  const [validFrom, setValidFrom] = useState(new Date().toISOString().slice(0, 10));
   const [rows, setRows] = useState<Row[]>(DEFAULT_ROWS);
   const [special, setSpecial] = useState<Special>(DEFAULT_SPECIAL);
   const [sample, setSample] = useState('24000');
@@ -148,7 +157,7 @@ export default function StructureBuilder() {
     retry: false,
   });
   const save = useMutation({
-    mutationFn: () => api.post('/structures', { name, valid_from: validFrom, components: comps, ...(from ? { duplicated_from: from } : {}) }),
+    mutationFn: () => api.post('/structures', { name, components: comps, ...(from ? { duplicated_from: from } : {}) }),
     onSuccess: () => {
       toast.success('Structure created');
       qc.invalidateQueries({ queryKey: ['structures'] });
@@ -173,17 +182,15 @@ export default function StructureBuilder() {
 
   return (
     <div className="flex flex-col gap-4">
-      <PageHeader crumbs={[{ label: 'Salary structures', to: '/setup/structures' }, { label: from ? 'Duplicate and edit' : 'New structure' }]} title={from ? 'Duplicate and edit' : 'New salary structure'} description="A new structure with its own effective date. The original is untouched." />
+      <PageHeader crumbs={[{ label: 'Salary structures', to: '/setup/structures' }, { label: from ? 'Duplicate and edit' : 'New structure' }]} title={from ? 'Duplicate and edit' : 'New salary structure'} description={from ? 'A new structure built from a copy. The original is untouched, and so is everyone paid on it.' : 'Build it here, then attach it to a pay group: that decides who is paid on it and from which month.'} />
       <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="flex min-w-0 flex-col gap-4">
         <Card className="min-w-0">
           <CardHeader title="Components" description="For each one: its name, then percentage or fixed, then what the percentage is of. Basic is worked out first; whatever is left of gross is the Special Allowance." />
           <CardBody className="flex flex-col gap-3">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Structure name" required>
-                {(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Site staff 2027" />}
-              </Field>
-              <Field label="Effective from">{(id) => <Input id={id} type="date" value={validFrom} onChange={(e) => setValidFrom(e.target.value)} />}</Field>
-            </div>
+            <Field label="Structure name" required hint="No date here: it applies to the people of whichever pay group you attach it to, from the month you choose there." className="max-w-xl">
+              {(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Site staff 2027" />}
+            </Field>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[920px] text-[13px]">
                 <thead className="text-left text-[12px] text-muted-foreground">
@@ -310,13 +317,15 @@ export default function StructureBuilder() {
             </div>
           </CardBody>
         </Card>
+        <StatutoryCard st={p?.statutory} sampleGross={toPaise(sample)} />
+        </div>
         <Card className="h-fit 2xl:sticky 2xl:top-4">
           <CardHeader title="Preview" description="Updates as you type." />
           <CardBody className="flex flex-col gap-3">
             <Field label="Sample monthly gross">{(id) => <MoneyInput id={id} value={sample} onChange={(e) => setSample(e.target.value)} />}</Field>
             {usesCtc && p && (
               <p className="text-[12px] text-muted-foreground">
-                At this gross the CTC is <span className="num font-medium text-foreground">{formatINR(p.annual_ctc)}</span> a year (PF on, ESI where it applies). “% of CTC” is a share of that, spread over twelve months.
+                “% of CTC” is a share of the annual CTC at this gross, <span className="num font-medium text-foreground">{formatINR(p.annual_ctc)}</span>, spread over twelve months.
               </p>
             )}
             {blankNames && <Notice tone="warning">Every component needs a name.</Notice>}
@@ -358,6 +367,42 @@ export default function StructureBuilder() {
                         <Money value={p.expanded.gross} />
                       </td>
                     </tr>
+                    <tr className="border-t text-muted-foreground">
+                      <td className="py-1">PF (employee)</td>
+                      <td className="text-right">
+                        −<Money value={p.statutory.pf.employee} />
+                      </td>
+                    </tr>
+                    <tr className="border-t text-muted-foreground">
+                      <td className="py-1">ESI (employee)</td>
+                      <td className="text-right">{p.statutory.esi.applies ? <>−<Money value={p.statutory.esi.employee} /></> : 'Not at this gross'}</td>
+                    </tr>
+                    <tr className="border-t font-medium">
+                      <td className="py-1">Take-home before PT and TDS</td>
+                      <td className="text-right">
+                        <Money value={p.expanded.gross - p.statutory.pf.employee - p.statutory.esi.employee} />
+                      </td>
+                    </tr>
+                    <tr className="border-t text-muted-foreground">
+                      <td className="py-1">Company PF, EDLI and admin</td>
+                      <td className="text-right">
+                        +<Money value={p.statutory.employer_pf_cost} />
+                      </td>
+                    </tr>
+                    {p.statutory.esi.applies && (
+                      <tr className="border-t text-muted-foreground">
+                        <td className="py-1">Company ESI</td>
+                        <td className="text-right">
+                          +<Money value={p.statutory.esi.employer} />
+                        </td>
+                      </tr>
+                    )}
+                    <tr className="border-t font-medium">
+                      <td className="py-1">Cost to company a month</td>
+                      <td className="text-right">
+                        <Money value={p.statutory.monthly_cost} />
+                      </td>
+                    </tr>
                     {p.expanded.yearly.map((c) => (
                       <tr key={c.name} className="border-t text-muted-foreground">
                         <td className="py-1">{c.name} (yearly)</td>
@@ -366,6 +411,12 @@ export default function StructureBuilder() {
                         </td>
                       </tr>
                     ))}
+                    <tr className="border-t font-semibold">
+                      <td className="py-1">Annual CTC</td>
+                      <td className="text-right">
+                        <Money value={p.annual_ctc} />
+                      </td>
+                    </tr>
                   </tbody>
                 </table>
               </>
@@ -377,5 +428,77 @@ export default function StructureBuilder() {
         </Card>
       </div>
     </div>
+  );
+}
+
+/**
+ * PF and ESI are not components anyone types in: they are worked out from the
+ * statutory rates, the components ticked as PF wage, and gross. This shows how,
+ * at the sample gross, and where each part is set.
+ */
+function StatutoryCard({ st, sampleGross }: { st: Statutory | undefined; sampleGross: number }) {
+  const pf = st?.rates.pf;
+  const esi = st?.rates.esi;
+  const amount = (v: number | undefined, applies = true) => (!st ? '—' : applies ? <Money value={v ?? 0} /> : <span className="text-muted-foreground">Not at this gross</span>);
+  const rows: [string, ReactNode, string, ReactNode][] = [
+    ['PF — employee', pf ? `${pf.employee_pct}% of the PF wage (the components switched on as PF wage), on at most ${formatINR(pf.ceiling)}` : '—', 'Deducted from pay', amount(st?.pf.employee)],
+    [
+      'PF — company',
+      pf ? `${pf.employer_pct}% of the same wage (pension ${pf.eps_pct}% on up to ${formatINR(pf.eps_wage_ceiling)}, the rest to EPF), plus EDLI ${pf.edli_pct}% and admin ${pf.admin_pct}%` : '—',
+      'Company, part of CTC',
+      amount(st?.employer_pf_cost),
+    ],
+    ['ESI — employee', esi ? `${esi.employee_pct}% of gross, while gross is ${formatINR(esi.ceiling)} or less` : '—', 'Deducted from pay', amount(st?.esi.employee, st?.esi.applies)],
+    ['ESI — company', esi ? `${esi.employer_pct}% of gross, same condition` : '—', 'Company, part of CTC', amount(st?.esi.employer, st?.esi.applies)],
+    ['Professional tax', "From the slabs for the person's work state", 'Deducted from pay', <span className="text-muted-foreground">By state</span>],
+  ];
+  return (
+    <Card className="min-w-0">
+      <CardHeader title="PF, ESI and professional tax" description="Not components you type in: they are worked out automatically for everyone on this structure. Shown at the sample gross, for someone on PF (restricted to the ceiling) with ESI where it applies." />
+      <CardBody className="flex flex-col gap-3">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px] text-[13px]">
+            <thead className="text-left text-[12px] text-muted-foreground">
+              <tr>
+                <th className="py-1">Contribution</th>
+                <th>How it is worked out</th>
+                <th>Paid by</th>
+                <th className="text-right">At {formatINR(sampleGross)}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(([name, how, who, value]) => (
+                <tr key={name} className="border-t align-top">
+                  <td className="py-1.5 pr-3 font-medium whitespace-nowrap">{name}</td>
+                  <td className="py-1.5 pr-3 text-muted-foreground">{how}</td>
+                  <td className="py-1.5 pr-3 whitespace-nowrap">{who}</td>
+                  <td className="py-1.5 text-right whitespace-nowrap">{value}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="grid gap-2 rounded-md bg-muted/50 p-3 text-[12px] sm:grid-cols-3">
+          <div>
+            <div className="font-semibold text-foreground">The rates</div>
+            <p className="text-muted-foreground">
+              12%, the {pf ? formatINR(pf.ceiling) : 'PF'} ceiling, ESI percentages and its ceiling:{' '}
+              <Link to="/setup/statutory" className="font-medium text-primary hover:underline">
+                Setup → Statutory rules
+              </Link>
+              . One set for the whole company, with an effective date.
+            </p>
+          </div>
+          <div>
+            <div className="font-semibold text-foreground">What counts as PF wage</div>
+            <p className="text-muted-foreground">The PF wage switch on each component above — normally Basic alone.</p>
+          </div>
+          <div>
+            <div className="font-semibold text-foreground">For one person</div>
+            <p className="text-muted-foreground">PF on or off, restrict to the ceiling, voluntary PF, ESI on or off and PT state: their profile → Pay tab. It is per person because two people in one crew can differ.</p>
+          </div>
+        </div>
+      </CardBody>
+    </Card>
   );
 }

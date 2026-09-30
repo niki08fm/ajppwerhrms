@@ -16,7 +16,7 @@ export interface PayGroup {
   calendar_method: CalendarMethod;
   weekly_off: string[];
   shift: { id: string; name: string; start_min: number; end_min: number };
-  structure: { id: string; name: string; valid_from: string } | null;
+  structure: { id: string; name: string } | null;
   policies: { id: string; policy_key: string; kind: PolicyKind; name: string; version: number; valid_from: string; valid_to: string | null }[];
   headcount: number;
   divisor_this_month: number;

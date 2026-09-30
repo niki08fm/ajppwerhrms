@@ -25,10 +25,12 @@ export interface Component {
 export interface Structure {
   id: string;
   name: string;
-  valid_from: string;
+  created_at: string;
   duplicated_from: string | null;
   components: Component[];
   pay_groups: { id: string; name: string }[];
+  /** People paid on this structure today */
+  people: number;
   immutable: boolean;
   sample: { gross: number; annual_ctc: number; monthly: { name: string; amount: number }[]; yearly: { name: string; amount: number }[]; over_budget: boolean };
   validation: { errors: string[]; warnings: string[] };
@@ -43,7 +45,7 @@ export default function Structures() {
     <div>
       <PageHeader
         title="Salary structures"
-        description="Component templates. Structures are never edited in place: duplicate and edit creates a new one with its own effective date. A structure referenced by a salary or payslip is immutable."
+        description="Component templates. A structure has no date of its own: attach it to a pay group, and the month you choose there is when that group is paid on it. Structures are never edited in place; duplicate and edit makes a new one, and the people on the original stay on it until their pay group moves."
         actions={
           <Button onClick={() => nav('/setup/structures/new')}>
             <Plus /> New structure
@@ -64,7 +66,7 @@ export default function Structures() {
             <Card key={s.id}>
               <CardHeader
                 title={s.name}
-                description={`From ${s.valid_from}${s.pay_groups.length ? ` · used by ${s.pay_groups.map((g) => g.name).join(', ')}` : ''}`}
+                description={s.pay_groups.length ? `Pay groups: ${s.pay_groups.map((g) => g.name).join(', ')} · ${s.people} ${s.people === 1 ? 'person' : 'people'} paid on it` : s.people ? `${s.people} ${s.people === 1 ? 'person' : 'people'} paid on it · not attached to a pay group` : 'Not attached to a pay group yet'}
                 actions={
                   <>
                     {s.immutable && (

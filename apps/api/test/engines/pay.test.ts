@@ -120,14 +120,13 @@ describe('Components: a percentage of gross, CTC or basic, with an optional maxi
   it('a structure saved without a Special Allowance gets one, last, so gross always adds up', () => {
     const parsed = structureCreateSchema.parse({
       name: 'No balance',
-      valid_from: '2026-10-01',
       components: STANDARD_STRUCTURE.filter((c) => c.calc_type !== 'BALANCE').map((c) => ({ ...c, colour: 'chart-1' })),
     });
     const last = parsed.components.at(-1)!;
     expect(last).toMatchObject({ name: 'Special Allowance', calc_type: 'BALANCE', frequency: 'MONTHLY', seq: 4 });
-    const withOne = structureCreateSchema.parse({ name: 'Has one', valid_from: '2026-10-01', components: STANDARD_STRUCTURE.map((c) => ({ ...c, colour: 'chart-1' })) });
+    const withOne = structureCreateSchema.parse({ name: 'Has one', components: STANDARD_STRUCTURE.map((c) => ({ ...c, colour: 'chart-1' })) });
     expect(withOne.components.filter((c) => c.calc_type === 'BALANCE')).toHaveLength(1);
-    expect(() => structureCreateSchema.parse({ name: 'x', valid_from: '2026-10-01', components: [{ ...STANDARD_STRUCTURE[2], max_amount: R(100) }] })).toThrow(/maximum only applies/);
+    expect(() => structureCreateSchema.parse({ name: 'x', components: [{ ...STANDARD_STRUCTURE[2], max_amount: R(100) }] })).toThrow(/maximum only applies/);
   });
 
   const ctx: CtcContext = { components: CTC_STRUCTURE, pf: { pf_enabled: true, pf_restrict_to_ceiling: true, vpf_pct: 0 }, esi_enabled: true, rates: { pf: RATES.pf, esi: RATES.esi } };

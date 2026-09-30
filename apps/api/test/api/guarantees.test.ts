@@ -170,7 +170,7 @@ describe('Salary structures: name, percentage or fixed, % of gross, CTC or basic
   const comp = (seq: number, name: string, calc_type: string, calc_value: number, extra: object = {}) => ({ seq, name, calc_type, calc_value, max_amount: null, frequency: 'MONTHLY', pay_month: null, is_taxable: true, counts_as_wages: name === 'Basic', colour: 'chart-1', ...extra });
 
   it('a structure sent without a Special Allowance gets one, last', async () => {
-    const r = await f.agent.post('/api/v1/structures').send({ name: 'No balance sent', valid_from: '2026-10-01', components: [comp(1, 'Basic', 'PCT_GROSS', 50), comp(2, 'HRA', 'PCT_BASIC', 40)] });
+    const r = await f.agent.post('/api/v1/structures').send({ name: 'No balance sent', components: [comp(1, 'Basic', 'PCT_GROSS', 50), comp(2, 'HRA', 'PCT_BASIC', 40)] });
     expect(r.status).toBe(201);
     const last = r.body.data.components.at(-1);
     expect(last).toMatchObject({ name: 'Special Allowance', calc_type: 'BALANCE', frequency: 'MONTHLY' });
@@ -178,7 +178,7 @@ describe('Salary structures: name, percentage or fixed, % of gross, CTC or basic
   });
 
   it('a maximum is refused on a fixed amount, by the API and by the database', async () => {
-    const r = await f.agent.post('/api/v1/structures').send({ name: 'Bad max', valid_from: '2026-10-01', components: [comp(1, 'Basic', 'PCT_GROSS', 50), comp(2, 'Conveyance', 'FIXED', R(1600), { max_amount: R(1000) })] });
+    const r = await f.agent.post('/api/v1/structures').send({ name: 'Bad max', components: [comp(1, 'Basic', 'PCT_GROSS', 50), comp(2, 'Conveyance', 'FIXED', R(1600), { max_amount: R(1000) })] });
     expect(r.status).toBe(422);
     const s = await prisma.salaryStructure.findFirstOrThrow();
     await expect(prisma.salaryComponent.create({ data: { structure_id: s.id, seq: 99, name: 'Bad', calc_type: 'FIXED', calc_value: R(100), max_amount: BigInt(R(50)) } })).rejects.toThrow();
@@ -187,7 +187,6 @@ describe('Salary structures: name, percentage or fixed, % of gross, CTC or basic
   it('% of CTC runs on the agreed CTC, a capped HRA sends the excess to the Special Allowance, and PF uses the ₹25,000 ceiling', async () => {
     const created = await f.agent.post('/api/v1/structures').send({
       name: 'Managers (CTC based)',
-      valid_from: '2025-04-01',
       components: [comp(1, 'Basic', 'PCT_CTC', 40), comp(2, 'HRA', 'PCT_BASIC', 50, { max_amount: R(8000) }), comp(3, 'Conveyance', 'FIXED', R(1600))],
     });
     expect(created.status).toBe(201);
@@ -211,5 +210,57 @@ describe('PF has one limit: the ceiling', () => {
     expect(cur.pf).not.toHaveProperty('max_contribution');
     const r = await f.agent.patch('/api/v1/statutory-rates').send({ valid_from: '2027-04-01', pf: { ...cur.pf, max_contribution: R(6000) }, esi: cur.esi, gratuity: cur.gratuity, recovery_cap_pct: 40 });
     expect(r.status).toBe(422);
+  });
+});
+
+describe('A structure has no date: attaching it to a pay group decides who is paid on it, and from when', () => {
+  const comp = (seq: number, name: string, calc_type: string, calc_value: number) => ({ seq, name, calc_type, calc_value, max_amount: null, frequency: 'MONTHLY', pay_month: null, is_taxable: true, counts_as_wages: name === 'Basic', colour: 'chart-1' });
+
+  it('a structure sent with a date of its own is refused', async () => {
+    const r = await f.agent.post('/api/v1/structures').send({ name: 'Dated', valid_from: '2026-10-01', components: [comp(1, 'Basic', 'PCT_GROSS', 50)] });
+    expect(r.status).toBe(422);
+  });
+
+  it('moves everyone in the group from the chosen month, keeps their agreed pay, and reports who it cannot move', async () => {
+    const created = await f.agent.post('/api/v1/structures').send({ name: 'Site staff v2', components: [comp(1, 'Basic', 'PCT_GROSS', 60), comp(2, 'HRA', 'PCT_BASIC', 30)] });
+    expect(created.status).toBe(201);
+    const sid = created.body.data.id;
+    const group = await prisma.payGroup.findFirstOrThrow({ where: { employees: { some: { id: f.employees.A } } } });
+
+    const plan = await f.agent.get(`/api/v1/pay-groups/${group.id}/structure-move?structure_id=${sid}&from=2026-10`);
+    expect(plan.status).toBe(200);
+    const moving = plan.body.data.move.map((m: { employee: { id: string } }) => m.employee.id);
+    expect(moving).toContain(f.employees.A);
+    // B already has a revision starting 1 October (an earlier test): moved on that change instead, never overwritten.
+    expect(plan.body.data.skipped.find((x: { employee: { id: string } }) => x.employee.id === f.employees.B)?.reason).toMatch(/Already has a salary change on 2026-10-01/);
+
+    const before = await prisma.employeeSalary.findFirstOrThrow({ where: { employee_id: f.employees.A, valid_to: null } });
+    const r = await f.agent.patch(`/api/v1/pay-groups/${group.id}`).send({ structure_id: sid, structure_from: '2026-10' });
+    expect(r.status).toBe(200);
+    expect(r.body.data.structure.id).toBe(sid);
+    expect(r.body.data.structure_move.moved).toBe(moving.length);
+
+    const rows = await prisma.employeeSalary.findMany({ where: { employee_id: f.employees.A }, orderBy: { valid_from: 'asc' } });
+    const [old, now] = rows.slice(-2);
+    expect(old.id).toBe(before.id);
+    expect(old.valid_to?.toISOString().slice(0, 10)).toBe('2026-09-30');
+    expect(now.valid_from.toISOString().slice(0, 10)).toBe('2026-10-01');
+    expect(now.structure_id).toBe(sid);
+    expect(now.monthly_gross).toBe(before.monthly_gross);
+    expect(await prisma.auditLog.count({ where: { action: 'salary.structure_change', entity_id: f.employees.A } })).toBe(1);
+  });
+
+  it('never reaches a month that has already been run', async () => {
+    const group = await prisma.payGroup.findFirstOrThrow({ where: { employees: { some: { id: f.employees.A } } } });
+    const other = await prisma.salaryStructure.findFirstOrThrow({ where: { name: 'Site staff' } });
+    await prisma.payrollPeriod.create({ data: { period_ym: '2026-11', state: 'LOCKED' } });
+    const r = await f.agent.patch(`/api/v1/pay-groups/${group.id}`).send({ structure_id: other.id, structure_from: '2026-11' });
+    expect(r.status).toBe(409);
+    expect(r.body.error.message).toMatch(/November 2026 has already been run/);
+    const plan = await f.agent.get(`/api/v1/pay-groups/${group.id}/structure-move?structure_id=${other.id}`);
+    // With no month given, the default is the earliest one not yet run: after November here, or the current month if later.
+    const nowYm = new Date().toISOString().slice(0, 7);
+    expect(plan.body.data.from).toBe(nowYm <= '2026-11' ? '2026-12' : nowYm);
+    await prisma.payrollPeriod.delete({ where: { period_ym: '2026-11' } });
   });
 });
