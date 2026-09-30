@@ -138,14 +138,14 @@ describe('Components: a percentage of gross, CTC or basic, with an optional maxi
     expect(sol.breakdown.ctc_basis).toBe(R(600000));
     const s = expandStructure(CTC_STRUCTURE, sol.gross, R(600000));
     expect(s.basic).toBe(R(20000));
-    // PF ₹1,800 + EDLI ₹75 + admin ₹75 on the ₹15,000 ceiling; ESI off above ₹21,000.
-    expect(sol.gross).toBe(R(50000 - 1950));
+    // Company PF is the 12% only: ₹1,800 on the ₹15,000 ceiling (EDLI and admin are not in CTC); ESI off above ₹21,000.
+    expect(sol.gross).toBe(R(50000 - 1800));
   });
 
   it('agreed on gross: the CTC the % of CTC components run on is the CTC the gross works out to', () => {
     const b = ctcForGross(R(45000), ctx);
     expect(b.ctc_basis).toBe(b.annual_ctc);
-    expect(b.annual_ctc).toBe(R((45000 + 1950) * 12));
+    expect(b.annual_ctc).toBe(R((45000 + 1800) * 12));
     // Round trip: that CTC solves back to the same gross.
     expect(solveGrossFromCtc(b.annual_ctc, ctx).gross).toBe(R(45000));
   });
@@ -154,9 +154,9 @@ describe('Components: a percentage of gross, CTC or basic, with an optional maxi
     const noCeiling: CtcContext = { ...ctx, pf: { ...ctx.pf, pf_restrict_to_ceiling: false } };
     const b = ctcForGross(R(45000), noCeiling);
     const s = expandStructure(CTC_STRUCTURE, R(45000), b.ctc_basis);
-    // basic = CTC ÷ 30 (40% ÷ 12); CTC = 12 × (gross + 12.5% of basic for PF and admin + ₹75 EDLI on the ₹15,000 cap).
-    // Solved exactly: CTC = 12 × 45,075 ÷ (1 − 0.4 × 0.125). PF rounds to the rupee, so within ₹2 a month.
-    const exact = (45075 * 12) / (1 - 0.4 * 0.125);
+    // basic = CTC ÷ 30 (40% ÷ 12); CTC = 12 × (gross + company PF 12% of basic). EDLI and admin are not in CTC.
+    // Solved exactly: CTC = 12 × 45,000 ÷ (1 − 0.4 × 0.12). PF rounds to the rupee, so within ₹2 a month.
+    const exact = (45000 * 12) / (1 - 0.4 * 0.12);
     expect(Math.abs(b.annual_ctc - R(exact))).toBeLessThanOrEqual(R(24));
     expect(Math.abs(b.annual_ctc - b.ctc_basis)).toBeLessThanOrEqual(R(24));
     expect(s.gross).toBe(R(45000));
@@ -414,5 +414,23 @@ describe('Weekly off / holiday pay flows into paid days', () => {
     });
     expect(month.totals.paid_days).toBe(30);
     expect(month.totals.lop_days).toBe(0);
+  });
+});
+
+describe('Company contributions are employer PF 12% and, when eligible, employer ESI', () => {
+  it('EDLI and admin charges are worked out for the PF challan but are not in CTC or on the payslip as contributions', () => {
+    const r = assemblePayslip(payslipInput({ monthly_gross: R(40000) }));
+    const employer = r.lines.filter((l) => l.kind === 'EMPLOYER').map((l) => l.code);
+    expect(employer).toEqual(['ER_EPF', 'ER_EPS']); // ESI not eligible above ₹21,000
+    expect(r.employer_total).toBe(R(1800)); // 12% of the ₹15,000 ceiling
+    expect(r.ctc_month).toBe(R(40000 + 1800));
+    expect(r.pf_charges).toEqual({ edli: R(75), admin: R(75) });
+    const esi = assemblePayslip(payslipInput({ monthly_gross: R(18000), statutory: { ...PF_ON, esi_applicable: true, pt_applicable: true, pt_state: 'Andhra Pradesh' } }));
+    expect(esi.lines.filter((l) => l.kind === 'EMPLOYER').map((l) => l.code)).toEqual(['ER_EPF', 'ER_EPS', 'ER_ESI']);
+    expect(esi.employer_total).toBe(R(1080) + R(585));
+  });
+  it('CTC for a gross is gross plus the 12% plus ESI when eligible', () => {
+    expect(ctcForGross(R(40000), ctx).annual_ctc).toBe(R((40000 + 1800) * 12));
+    expect(ctcForGross(R(18000), ctx).annual_ctc).toBe(R((18000 + 1080 + 585) * 12));
   });
 });

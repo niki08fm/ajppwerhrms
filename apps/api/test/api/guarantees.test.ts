@@ -196,8 +196,8 @@ describe('Salary structures: name, percentage or fixed, % of gross, CTC or basic
     const amt = (name: string) => p.structure.monthly.find((c: { name: string }) => c.name === name).amount;
     expect(amt('Basic')).toBe(R(20000)); // 40% of ₹6,00,000 ÷ 12
     expect(amt('HRA')).toBe(R(8000)); // 50% of basic would be ₹10,000; capped
-    // Basic ₹20,000 is under the ₹25,000 ceiling: employer PF ₹2,400 + admin ₹100 + EDLI ₹75 (on the statutory ₹15,000).
-    expect(p.gross).toBe(R(50000 - 2575));
+    // Basic ₹20,000 is under the ₹25,000 ceiling: company PF is 12% of it, ₹2,400 (EDLI and admin are not in CTC).
+    expect(p.gross).toBe(R(50000 - 2400));
     expect(amt('Special Allowance')).toBe(p.gross - R(20000 + 8000 + 1600));
     expect(p.ctc.annual_ctc).toBe(R(600000));
   });
@@ -277,11 +277,12 @@ describe('Structure preview reads as a salary breakup: earnings → gross, compa
     expect(off.ctc.employer_pf).toBe(0);
     expect(off.take_home).toBe(R(33333 - 200));
     const on = (await at({ mode: 'CTC', amount: R(400000), pf_enabled: true, esi_enabled: true })).body.data.breakup;
-    expect(on.gross).toBe(R(31302));
-    expect(on.pf.employee).toBe(R(1878));
-    expect(on.ctc.employer_pf).toBe(R(1878 + 153));
+    // Company contributions are the 12% PF only (EDLI and admin are not in CTC): gross + 12% of basic = ₹33,333.
+    expect(on.gross).toBe(R(31446));
+    expect(on.pf.employee).toBe(R(1887));
+    expect(on.ctc.employer_pf).toBe(R(1887));
     expect(on.ctc.monthly_cost).toBe(R(33333));
-    expect(on.take_home).toBe(R(31302 - 1878 - 200));
+    expect(on.take_home).toBe(R(31446 - 1887 - 200));
   });
 
   it('gross ₹4,00,000 a year: gross stays; with PF on the company share is paid on top', async () => {
@@ -289,13 +290,14 @@ describe('Structure preview reads as a salary breakup: earnings → gross, compa
     const on = (await at({ mode: 'GROSS', amount: monthly, pf_enabled: true, esi_enabled: true })).body.data.breakup;
     expect(on.gross).toBe(monthly);
     expect(on.pf.employee).toBe(R(2000));
-    expect(on.ctc.employer_pf).toBe(R(2158));
+    expect(on.ctc.employer_pf).toBe(R(2000));
     expect(on.take_home).toBe(monthly - R(2000) - R(200));
   });
 
   it('ESI applies only at ₹21,000 gross or less, and switching it off removes both shares', async () => {
     const esi = (await at({ mode: 'GROSS', amount: R(18000), pf_enabled: true, esi_enabled: true })).body.data.breakup;
     expect(esi.esi).toMatchObject({ applicable: true, employee: R(135), employer: R(585) });
+    expect(esi.ctc.monthly_cost).toBe(R(18000 + 1080 + 585));
     expect(esi.take_home).toBe(R(18000 - 1080 - 135 - 150));
     const none = (await at({ mode: 'GROSS', amount: R(18000), pf_enabled: true, esi_enabled: false })).body.data.breakup;
     expect(none.esi.employee).toBe(0);

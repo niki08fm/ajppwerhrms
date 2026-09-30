@@ -64,6 +64,8 @@ interface Meta {
   settling: boolean;
   recovery: { carry_forward: number };
   ot: { amount: number } | null;
+  /** EDLI and PF admin charges, for the challan (engine 1.2.0 on) */
+  pf_charges?: { edli: number; admin: number };
 }
 
 const meta = (s: SlipWithLines) => s.meta as unknown as Meta;
@@ -233,8 +235,10 @@ export async function buildReport(db: Db, ym: string, key: ReportKey, opts: { pi
             employee: line(s, 'PF') + line(s, 'VPF'),
             employer_epf: line(s, 'ER_EPF'),
             eps: line(s, 'ER_EPS'),
-            edli: line(s, 'ER_EDLI'),
-            admin: line(s, 'ER_ADMIN'),
+            // EDLI and admin are paid with the challan but are not company contributions on the payslip
+            // (engine 1.2.0 on); payslips from earlier engines carry them as lines.
+            edli: meta(s).pf_charges?.edli ?? line(s, 'ER_EDLI'),
+            admin: meta(s).pf_charges?.admin ?? line(s, 'ER_ADMIN'),
             ncp_days: Number(s.lop_days),
           };
         });

@@ -100,7 +100,6 @@ export function SalaryBreakup({ p, rates, rules, capped, className }: { p: Previ
 
         <Section>Company contributions</Section>
         <Line label={`PF — company share${pct(rates?.pf?.employer_pct)}`} sub={p.pf.employer_total ? `Pension ₹${(p.pf.eps / 100).toLocaleString('en-IN')} + EPF ₹${(p.pf.employer_epf / 100).toLocaleString('en-IN')}` : 'PF is off'} monthly={p.pf.employer_total ? <Money value={p.pf.employer_total} /> : NA} yearly={p.pf.employer_total ? <Money value={p.pf.employer_total * 12} /> : NA} />
-        {p.pf.edli + p.pf.admin > 0 && <Line label="EDLI and PF admin charges" monthly={<Money value={p.pf.edli + p.pf.admin} />} yearly={<Money value={(p.pf.edli + p.pf.admin) * 12} />} />}
         <Line label={`ESI — company share${pct(rates?.esi?.employer_pct)}`} sub={esiNote} monthly={esiOn ? <Money value={p.esi.employer} /> : NA} yearly={esiOn ? <Money value={p.esi.employer * 12} /> : NA} />
         <Total label="Total company contributions" monthly={contributions} yearly={contributions * 12} />
         <Total label="Cost to company (CTC)" monthly={p.ctc.monthly_cost} yearly={p.ctc.annual_ctc} tone="ctc" />

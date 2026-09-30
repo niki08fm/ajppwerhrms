@@ -358,6 +358,7 @@ export async function executeRun(ym: string, actor: string, onProgress?: (done: 
                 lop_rule_text: r.lop_rule_text,
                 ot: r.ot,
                 tds: r.tds,
+                pf_charges: r.pf_charges,
                 regime: ps.regime,
                 pt_state: ps.pt_state,
                 pt_basis: r.pt_basis,

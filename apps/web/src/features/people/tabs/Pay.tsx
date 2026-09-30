@@ -69,7 +69,7 @@ export function PayTab({ e }: { e: Employee }) {
   const donut = [
     { name: 'Take-home', value: Math.max(0, p.take_home) },
     { name: 'Employee statutory', value: p.employee_statutory },
-    { name: 'Employer statutory', value: p.employer_statutory },
+    { name: 'Company contributions', value: p.employer_statutory },
   ];
 
   return (
@@ -143,8 +143,8 @@ export function PayTab({ e }: { e: Employee }) {
                   ['Voluntary PF', <Money value={p.pf.vpf} />],
                   ['Employer EPF', <Money value={p.pf.employer_epf} />],
                   ['Pension (EPS)', <Money value={p.pf.eps} />],
-                  ['EDLI', <Money value={p.pf.edli} />],
-                  ['Admin', <Money value={p.pf.admin} />],
+                  ['EDLI (PF challan only, not in CTC)', <Money value={p.pf.edli} />],
+                  ['Admin (PF challan only, not in CTC)', <Money value={p.pf.admin} />],
                 ]}
               />
               <p className="text-[12px] text-muted-foreground">
@@ -233,7 +233,7 @@ export function PayTab({ e }: { e: Employee }) {
               items={[
                 ['Take-home', <Money value={p.take_home} className="font-semibold text-success" />],
                 ['Employee statutory (PF, ESI, PT, TDS)', <Money value={p.employee_statutory} />],
-                ['Employer statutory (PF, EDLI, admin, ESI)', <Money value={p.employer_statutory} />],
+                ['Company contributions (PF 12%, ESI)', <Money value={p.employer_statutory} />],
                 ['Cost to company per month', <Money value={p.ctc.monthly_cost} />],
                 ['Annual CTC', <Money value={p.ctc.annual_ctc} />],
               ]}

@@ -419,9 +419,9 @@ function StatutoryCard({ rates }: { rates: { pf: PfRates; esi: EsiRates } | unde
   const esi = rates?.esi;
   const rows: [string, ReactNode, string][] = [
     ['PF — employee', pf ? `${pf.employee_pct}% of the PF wage (the components switched on as PF wage), on at most ${formatINR(pf.ceiling)}` : '—', 'Deduction'],
-    ['PF — company', pf ? `${pf.employer_pct}% of the same wage (pension ${pf.eps_pct}% on up to ${formatINR(pf.eps_wage_ceiling)}, the rest to EPF), plus EDLI ${pf.edli_pct}% and admin ${pf.admin_pct}%` : '—', 'Company contribution'],
+    ['PF — company', pf ? `${pf.employer_pct}% of the same wage (pension ${pf.eps_pct}% on up to ${formatINR(pf.eps_wage_ceiling)}, the rest to EPF). EDLI and admin charges are paid with the PF challan and are not part of CTC.` : '—', 'Company contribution'],
     ['ESI — employee', esi ? `${esi.employee_pct}% of gross, while gross is ${formatINR(esi.ceiling)} or less` : '—', 'Deduction'],
-    ['ESI — company', esi ? `${esi.employer_pct}% of gross, same condition` : '—', 'Company contribution'],
+    ['ESI — company', esi ? `${esi.employer_pct}% of gross, only when the person is eligible (gross ${formatINR(esi.ceiling)} or less)` : '—', 'Company contribution'],
     ['Professional tax', "From the slabs for the person's work state", 'Deduction'],
     ['Income tax (TDS)', "From the person's tax regime and declarations", 'Deduction'],
   ];

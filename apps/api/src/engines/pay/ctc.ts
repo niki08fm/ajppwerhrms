@@ -41,7 +41,8 @@ function costAt(gross: Paise, ctx: CtcContext, esiApplies: boolean, ctcBasis: Pa
 }
 
 /**
- * Annual CTC for a monthly gross: 12 × (gross + employer PF cost + employer ESI) + yearly components.
+ * Annual CTC for a monthly gross: 12 × (gross + employer PF 12% + employer ESI) + yearly components.
+ * EDLI and PF admin charges are not part of CTC.
  * `forceEsi` lets the solver evaluate one side of the ceiling explicitly.
  *
  * `agreedCtc` is the CTC in the salary agreement, when there is one: "% of CTC"

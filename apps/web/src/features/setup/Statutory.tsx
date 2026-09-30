@@ -77,7 +77,7 @@ export default function Statutory() {
                     ['Wage ceiling', formatINR(c.pf.ceiling)],
                     ['Largest contribution', `${formatINR(pfMaxContribution(c.pf).employee)} + ${formatINR(pfMaxContribution(c.pf).employer)} a month`],
                     ['Pension (EPS) share', `${c.pf.eps_pct}% on wages up to ${formatINR(c.pf.eps_wage_ceiling)}`],
-                    ['EDLI / admin', `${c.pf.edli_pct}% / ${c.pf.admin_pct}%`],
+                    ['EDLI / admin (challan only, not in CTC)', `${c.pf.edli_pct}% / ${c.pf.admin_pct}%`],
                   ].map(([k, v]) => (
                     <tr key={k} className="border-b last:border-0">
                       <td className="py-1.5 text-muted-foreground">{k}</td>

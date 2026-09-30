@@ -49,7 +49,18 @@ export function computePf(pfBaseEarned: Paise, choice: PfChoice, rates: PfRates)
   return { pf_wage, employee, vpf, employer_total, employer_epf, eps, edli, admin };
 }
 
-/** Employer PF cost the company bears on top of gross: employer 12% + EDLI + admin. */
+/**
+ * The company's PF contribution, as it counts in CTC and on the payslip: the
+ * employer 12% (EPF + pension). EDLI and admin charges are not part of it.
+ */
 export function pfEmployerCost(r: PfResult): Paise {
-  return r.employer_total + r.edli + r.admin;
+  return r.employer_total;
+}
+
+/**
+ * EDLI and PF admin charges: the company pays them to EPFO with the monthly PF
+ * challan, but they are not counted in anyone's CTC or company contributions.
+ */
+export function pfChallanCharges(r: PfResult): { edli: Paise; admin: Paise } {
+  return { edli: r.edli, admin: r.admin };
 }

@@ -14,7 +14,7 @@ import {
 import type { MonthTotals, OffDayWorkEntry } from '../attendance/types';
 import type { OvertimeRules } from '@ajpwer/shared';
 import { computeEsi } from '../statutory/esi';
-import { computePf, pfEmployerCost, type PfChoice } from '../statutory/pf';
+import { computePf, pfChallanCharges, pfEmployerCost, type PfChoice } from '../statutory/pf';
 import { computePt } from '../statutory/pt';
 import { monthlyTds, type TaxDeclarations } from '../statutory/incomeTax';
 import { earnedAfterLop, LOP_RULE_TEXT, type LopRule } from './lop';
@@ -23,7 +23,7 @@ import { expandStructure, type ComponentDef } from './structure';
 import { applyRecoveryCap, type RecoveryItem, type RecoveryResult } from './recovery';
 
 /** Stored on every payslip. Bump when a computation changes so old months stay explainable. */
-export const ENGINE_VERSION = '1.1.0';
+export const ENGINE_VERSION = '1.2.0';
 
 export interface PayslipLine {
   seq: number;
@@ -93,8 +93,12 @@ export interface PayslipResult {
   total_deductions: Paise;
   reimbursements: Paise;
   net: Paise;
+  /** Company contributions: employer PF 12% + employer ESI */
   employer_total: Paise;
+  /** salary gross + company contributions */
   ctc_month: Paise;
+  /** EDLI and PF admin charges: paid with the PF challan, not part of CTC */
+  pf_charges: { edli: Paise; admin: Paise };
   pf_wage: Paise;
   esi_applicable: boolean;
   paid_days: number;
@@ -262,12 +266,11 @@ export function assemblePayslip(input: PayslipInput): PayslipResult {
     push({ kind: 'REIMBURSEMENT', code: `REIMB:${a.id}`, name: a.name, full_amount: a.amount, amount: a.amount, is_taxable: false, counts_as_wages: false });
   }
 
-  // Employer contributions — shown, not deducted.
+  // Company contributions — shown, not deducted: employer PF 12% (EPF + pension) and employer ESI when eligible.
+  // EDLI and admin charges go to EPFO with the PF challan (pf_charges) and are not part of CTC.
   const employerLines: [string, string, Paise][] = [
     ['ER_EPF', 'Employer PF (EPF)', pf.employer_epf],
     ['ER_EPS', 'Employer pension (EPS)', pf.eps],
-    ['ER_EDLI', 'EDLI', pf.edli],
-    ['ER_ADMIN', 'PF admin charges', pf.admin],
     ['ER_ESI', 'Employer ESI', esi.employer],
   ];
   let employer_total = 0;
@@ -304,6 +307,7 @@ export function assemblePayslip(input: PayslipInput): PayslipResult {
     net,
     employer_total,
     ctc_month: salary_gross + employer_total,
+    pf_charges: pfChallanCharges(pf),
     pf_wage: pf.pf_wage,
     esi_applicable: esi.applicable,
     paid_days: att.paid_days,
