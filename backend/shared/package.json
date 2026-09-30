@@ -3,20 +3,11 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "main": "src/index.ts",
-  "types": "src/index.ts",
+  "main": "src/index.js",
   "exports": {
-    ".": "./src/index.ts"
-  },
-  "scripts": {
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    ".": "./src/index.js"
   },
   "dependencies": {
     "zod": "^3.23.8"
-  },
-  "devDependencies": {
-    "typescript": "^5.6.3",
-    "vitest": "^2.1.8"
   }
 }

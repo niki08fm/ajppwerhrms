@@ -41,8 +41,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx prisma generate --schema backend/prisma/schema.prisma
-      - name: Typecheck
-        run: npm run typecheck
       - name: Engine acceptance tests (spec §20)
         run: npm run test:engines
       - name: API integration tests (spec §20.25–31)
@@ -109,7 +107,7 @@ jobs:
       - run: npm run db:seed
       - name: Start API and web
         run: |
-          (cd backend && npx tsx src/server.ts > ../api.log 2>&1 &)
+          (cd backend && node src/server.js > ../api.log 2>&1 &)
           (cd frontend && npx vite --port 5173 > ../web.log 2>&1 &)
           npx wait-on -t 60000 http://localhost:4000/api/v1/health http://localhost:5173
       - run: npm run test:e2e

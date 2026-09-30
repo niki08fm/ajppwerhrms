@@ -2,7 +2,7 @@
   "name": "ajpwer-workforce",
   "private": true,
   "version": "1.0.0",
-  "description": "AJPWER Workforce \u2014 attendance, payroll and settlement for AJ Power Engineering",
+  "description": "AJPWER Workforce — attendance, payroll and settlement for AJ Power Engineering",
   "type": "module",
   "workspaces": [
     "frontend",
@@ -15,7 +15,6 @@
     "dev:backend": "npm run dev --workspace=@ajpwer/backend",
     "dev:frontend": "npm run dev --workspace=@ajpwer/frontend",
     "build": "npm run build --workspace=@ajpwer/backend && npm run build --workspace=@ajpwer/frontend",
-    "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspace=@ajpwer/backend",
     "test:engines": "npm run test:engines --workspace=@ajpwer/backend",
     "db:migrate": "npm run db:migrate --workspace=@ajpwer/backend",
@@ -30,6 +29,6 @@
     "start": "npm run start --workspace=@ajpwer/backend"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.9"
   }
 }

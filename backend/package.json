@@ -4,26 +4,25 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch --env-file-if-exists=../.env src/server.ts",
-    "build": "prisma generate && tsup",
-    "start": "node --env-file-if-exists=../.env dist/server.js",
-    "worker": "node --env-file-if-exists=../.env dist/worker.js",
-    "typecheck": "tsc --noEmit",
+    "dev": "node --watch --env-file-if-exists=../.env src/server.js",
+    "start": "node --env-file-if-exists=../.env src/server.js",
+    "worker": "node --env-file-if-exists=../.env src/worker.js",
+    "build": "prisma generate",
     "test": "vitest run",
-    "test:engines": "vitest run test/engines",
-    "test:api": "vitest run test/api",
-    "test:load": "tsx --env-file-if-exists=../.env test/load/budgets.ts",
+    "test:engines": "vitest run tests/engines",
+    "test:api": "vitest run tests/api",
+    "test:load": "node --env-file-if-exists=../.env tests/load/budgets.js",
     "db:migrate": "dotenv -e ../.env -- prisma migrate deploy",
     "db:reset": "dotenv -e ../.env -- prisma migrate reset --force --skip-seed",
-    "db:seed": "tsx --env-file-if-exists=../.env prisma/seed.ts",
-    "db:seed:load": "tsx --env-file-if-exists=../.env prisma/seed-load.ts",
+    "db:seed": "node --env-file-if-exists=../.env prisma/seed.js",
+    "db:seed:load": "node --env-file-if-exists=../.env prisma/seed-load.js",
     "db:studio": "dotenv -e ../.env -- prisma studio",
-    "jobs:retention": "tsx --env-file-if-exists=../.env src/jobs/retention.ts",
+    "jobs:retention": "node --env-file-if-exists=../.env src/jobs/retention.js",
     "db:migration:new": "dotenv -e ../.env -- prisma migrate dev --create-only",
     "db:deploy": "prisma migrate deploy"
   },
   "prisma": {
-    "seed": "tsx prisma/seed.ts"
+    "seed": "node prisma/seed.js"
   },
   "dependencies": {
     "@ajpwer/face": "*",
@@ -46,21 +45,11 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@types/compression": "^1.7.5",
-    "@types/cookie-parser": "^1.4.8",
-    "@types/cors": "^2.8.17",
-    "@types/express": "^4.17.21",
-    "@types/jsonwebtoken": "^9.0.7",
-    "@types/multer": "^1.4.12",
-    "@types/node": "^22.10.2",
-    "@types/supertest": "^6.0.2",
     "dotenv-cli": "^7.4.4",
     "pino-pretty": "^13.0.0",
     "prisma": "^5.22.0",
     "supertest": "^7.0.0",
-    "tsup": "^8.3.5",
-    "tsx": "^4.19.2",
-    "typescript": "^5.6.3",
     "vitest": "^2.1.8"
-  }
+  },
+  "main": "src/server.js"
 }

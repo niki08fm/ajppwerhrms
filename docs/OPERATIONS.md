@@ -12,10 +12,10 @@ One Node process serves the backend API and the built frontend; a second process
 
 ```bash
 npm ci
-npm run build                                   # → backend/dist and frontend/dist
+npm run build                                   # database client + frontend/dist
 npx prisma migrate deploy --schema backend/prisma/schema.prisma
-SERVE_WEB_DIR=frontend/dist node backend/dist/server.js     # API + web app on API_PORT
-node backend/dist/worker.js                                 # job worker (when REDIS_URL is set)
+SERVE_WEB_DIR=frontend/dist node backend/src/server.js      # API + web app on API_PORT
+node backend/src/worker.js                                  # job worker (when REDIS_URL is set)
 ```
 
 Run both under a process manager (systemd or pm2) so they restart on failure and on boot. The backend also serves the face model files from `face/models` at `/face-models`; keep that folder next to `backend/` (or set `FACE_MODELS_DIR`).
@@ -68,7 +68,7 @@ An untested backup is not a backup.
 Run nightly (for example 01:30 IST):
 
 ```bash
-npm run jobs:retention        # or: node backend/dist/jobs/retention.js
+npm run jobs:retention        # or: node backend/src/jobs/retention.js
 ```
 
 It deletes gate snapshots older than 30 days, deletes the face embedding of anyone who has exited, deletes punches older than three years (the only deletion the append-only trigger allows), prunes login attempts and idempotency keys, rebuilds the cached daily aggregates, and writes one audit entry with what it did. Payroll records are kept seven years and are never deleted by this job.

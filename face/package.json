@@ -5,16 +5,10 @@
   "type": "module",
   "description": "Face detection and recognition for AJPWER Workforce: the model files, detection in the browser, matching on the server",
   "exports": {
-    "./browser": "./src/browser.ts",
-    "./match": "./src/match.ts"
-  },
-  "scripts": {
-    "typecheck": "tsc --noEmit"
+    "./browser": "./src/browser.js",
+    "./match": "./src/match.js"
   },
   "dependencies": {
     "@vladmandic/face-api": "^1.7.14"
-  },
-  "devDependencies": {
-    "typescript": "^5.6.3"
   }
 }

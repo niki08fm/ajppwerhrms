@@ -4,13 +4,13 @@ Attendance, payroll and settlement for AJ Power Engineering — built to the *AJ
 
 It records attendance from face punches at geofenced sites, turns punches into paid days under each pay group's policies, runs monthly payroll with full Indian statutory deduction (PF, ESI, professional tax, income tax), settles people who leave, and reports labour cost per project.
 
-**Stack:** React 18 + Vite (frontend) · Node + Express 4 (backend) · PostgreSQL 16 + Prisma · face-api models (face) · all written in TypeScript · TanStack Query / Table / Virtual · Tailwind CSS v4 · Zod · BullMQ + Redis · Vitest, Supertest, Playwright.
+**Stack:** React 18 + Vite (frontend) · Node + Express 4 (backend) · PostgreSQL 16 + Prisma · face-api models (face) · plain JavaScript (ES modules) throughout · TanStack Query / Table / Virtual · Tailwind CSS v4 · Zod · BullMQ + Redis · Vitest, Supertest, Playwright.
 
 ---
 
 ## Quick start
 
-Prerequisites: **Node 20+** (22 recommended) and **PostgreSQL 16**. Redis is optional (without it, jobs run inside the backend).
+Prerequisites: **Node 22.9 or newer** and **PostgreSQL 16**. Redis is optional (without it, jobs run inside the backend).
 
 ```bash
 # 1. Configuration — fill in your own values (see "Environment" below)
@@ -52,14 +52,13 @@ The API refuses to start with a clear list of what is missing or malformed.
 
 | Command | Does |
 | --- | --- |
-| `npm run dev` | Backend (tsx watch) and frontend (Vite) together; `dev:backend` / `dev:frontend` run one |
-| `npm run build` | Production build of both (`backend/dist`, `frontend/dist`) |
+| `npm run dev` | Backend (`node --watch`) and frontend (Vite) together; `dev:backend` / `dev:frontend` run one |
+| `npm run build` | Generates the database client and builds the frontend (`frontend/dist`); the backend runs as it is |
 | `npm start` | Start the built backend; with `SERVE_WEB_DIR=frontend/dist` it also serves the frontend |
 | `npm run db:migrate` | Apply migrations (`prisma migrate deploy`) |
 | `npm run db:seed` | Development seed |
 | `npm run db:reset` | Drop and re-create the schema (development only) |
 | `npm run db:seed:load` | Add 200 employees and three years of punches (load testing) |
-| `npm run typecheck` | TypeScript across all packages |
 | `npm test` | Engine acceptance tests and API integration tests |
 | `npm run test:engines` | Spec §20 acceptance tests against the pure engines (no database) |
 | `npm run test:api` | Spec §20.25–31 and the database guarantees, against `TEST_DATABASE_URL` |
@@ -80,28 +79,31 @@ face/         Face detection and recognition — the model files, detection in t
 In more detail:
 
 ```
-frontend/                   React 18 + Vite + Tailwind
+frontend/                   React 18 + Vite + Tailwind (.jsx)
   src/features/<area>/      one folder per area: people, attendance, payroll, sites, setup, tablet…
   src/components/           shell, data table, list toolbar, states, charts; ui/ holds the primitives (Radix)
-  src/lib/                  API client, session, lookups, hooks; face.ts points at the face models
+  src/lib/                  API client, session, lookups, hooks; face.js points at the face models
   e2e/                      Playwright browser flows
 
 backend/                    Node + Express 4 + Prisma (PostgreSQL 16)
-  prisma/                   schema.prisma, migrations (incl. raw-SQL constraints), seed.ts, seed-load.ts
-  src/modules/              HTTP routes (auth, employees, offers, attendance, tablet, leave, setup,
-                            sites, payroll, money, audit, dashboard, misc)
-  src/services/             load data for the engines; payroll run, reports, settlement, register
-  src/engines/              attendance, pay, statutory, settlement — pure functions, no I/O, no clock
-  src/lib/                  auth, audit, PII crypto, list contract, idempotency, jobs, errors
+  src/server.js             starts the HTTP server;  src/app.js  builds the Express app
+  src/config/               env.js (settings), db.js (Prisma client), logger.js
+  src/routes/               one Express router per area: URL → middleware → controller
+  src/controllers/          request handlers: read the request, call services, send the response
+  src/services/             business logic and database access (*.service.js)
+  src/middleware/           auth (who is signed in, permissions), errorHandler, upload, idempotency
+  src/calculations/         attendance, pay, statutory (PF, ESI, PT, TDS), settlement — pure functions
+  src/jobs/                 job queue, payroll-run handlers, nightly retention
+  src/utils/                errors, asyncHandler, audit, crypto, dates, geo, list paging
   shared/                   the business rules both sides use: money in integer paise, IST dates,
-                            validation schemas, statutory tables — owned by the backend, reused by
-                            the frontend for live previews (package @ajpwer/shared)
-  test/                     engines/ (spec §20 acceptance), api/ (integration), load/ (budgets)
+                            validation schemas, statutory tables (package @ajpwer/shared)
+  prisma/                   schema.prisma (the database), migrations, seed.js, seed-load.js
+  tests/                    engines/ (spec §20 acceptance), api/ (integration), load/ (budgets)
 
 face/                       Face detection and recognition (package @ajpwer/face)
   models/                   the model files, served by the backend at /face-models (no outside CDN)
-  src/browser.ts            detection and the 128-number embedding, in the browser (tablet, enrolment)
-  src/match.ts              matching an embedding against enrolled people, on the server
+  src/browser.js            detection and the 128-number embedding, in the browser (tablet, enrolment)
+  src/match.js              matching an embedding against enrolled people, on the server
 
 docs/OPERATIONS.md          production setup, backups and a restore rehearsal, retention, hosting
 ```
@@ -120,7 +122,7 @@ Each folder has its own README. The root `package.json` ties them together (npm 
 
 **Money is integer paise** end to end (`bigint` in the database). Percentages are converted once to integer micro-percent and multiplied in `BigInt` with explicit rounding (PF to the nearest rupee, ESI up, TDS to the nearest rupee).
 
-**The engines are pure** (`backend/src/engines`): data in, data out, no database, no clock. That is what makes the acceptance tests possible and a disputed payslip reproducible.
+**The calculations are pure** (`backend/src/calculations`): data in, data out, no database, no clock. That is what makes the acceptance tests possible and a disputed payslip reproducible.
 
 **Guarantees in the database, not just the code** (`prisma/migrations/*_constraints`): the punch ledger and audit log are append-only (triggers, plus revoked grants for the application role); payslips in a LOCKED or PAID month cannot be updated (trigger); salary rows cannot overlap (exclusion constraint); weekly-off values are checked; trigram and partial indexes back search and audit.
 

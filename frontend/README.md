@@ -8,8 +8,8 @@ Every screen of AJPWER Workforce: the HR admin app and the site tablet (`/tablet
 src/
   features/<area>/   one folder per area — people, attendance, payroll, sites, setup, dashboard, tablet
   components/        shell (navigation), data table, list toolbar, states, charts; ui/ holds buttons, forms, dialogs
-  lib/               API client, session, lookups, hooks; face.ts points the tablet at the face models
-  App.tsx            the routes
+  lib/               API client, session, lookups, hooks; face.js points the tablet at the face models
+  App.jsx            the routes; main.jsx starts the app
 e2e/                 Playwright browser tests
 ```
 
