@@ -86,22 +86,63 @@ export const projectSchema = z
   })
   .strict();
 
+// ─── Sites ───────────────────────────────────────────────────────────────────
+
+export const SITE_RADIUS_MIN_M = 50;
+export const SITE_RADIUS_MAX_M = 2000;
+export const SITE_RADIUS_DEFAULT_M = 200;
+
+/** Tablet login ID: 4–32 letters, digits or dashes, stored lower-case. */
+export const siteLoginId = z
+  .string()
+  .trim()
+  .min(4, 'The login ID needs at least 4 characters')
+  .max(32, 'The login ID can be at most 32 characters')
+  .regex(/^[A-Za-z0-9-]+$/, 'Use only letters, numbers and dashes in the login ID')
+  .transform((v) => v.toLowerCase());
+
+/** Tablet password: at least 8 characters, with a letter and a number. */
+export const sitePassword = z
+  .string()
+  .min(8, 'The password needs at least 8 characters')
+  .max(128, 'The password can be at most 128 characters')
+  .refine((v) => /[A-Za-z]/.test(v) && /[0-9]/.test(v), 'The password must include a letter and a number');
+
+const siteFields = {
+  code: z
+    .string()
+    .min(1)
+    .max(20)
+    .regex(/^[A-Z0-9-]+$/, 'Upper-case letters, digits and dashes'),
+  name: z.string().trim().min(1, 'Give the site a name').max(120),
+  address: z.string().trim().max(300).nullable().optional(),
+  state: z.string().min(1).max(60),
+  lat: z.number().min(-90).max(90),
+  lng: z.number().min(-180).max(180),
+  radius_m: z
+    .number()
+    .int()
+    .min(SITE_RADIUS_MIN_M, `The boundary must be at least ${SITE_RADIUS_MIN_M} m`)
+    .max(SITE_RADIUS_MAX_M, `The boundary can be at most ${SITE_RADIUS_MAX_M} m`),
+  project_id: uuid.nullable().optional(),
+  is_active: z.boolean().optional(),
+  login: siteLoginId,
+};
+
+/** Create: the tablet login is set here. No password means the server generates one. */
 export const siteSchema = z
-  .object({
-    code: z
-      .string()
-      .min(1)
-      .max(20)
-      .regex(/^[A-Z0-9-]+$/, 'Upper-case letters, digits and dashes'),
-    name: z.string().min(1).max(120),
-    state: z.string().min(1).max(60),
-    lat: z.number().min(-90).max(90),
-    lng: z.number().min(-180).max(180),
-    radius_m: z.number().int().min(20).max(5000),
-    project_id: uuid.nullable().optional(),
-    is_active: z.boolean().optional(),
-  })
+  .object({ ...siteFields, radius_m: siteFields.radius_m.default(SITE_RADIUS_DEFAULT_M), password: sitePassword.optional() })
   .strict();
+
+/** Edit: any field except the password, which has its own reset. */
+export const siteUpdateSchema = z.object(siteFields).partial().strict();
+
+/** Reset: type a password, or send none and the server generates one. */
+export const sitePasswordSchema = z.object({ password: sitePassword.optional() }).strict();
+
+export const siteLoginEnabledSchema = z.object({ enabled: z.boolean() }).strict();
+
+export const geoSearchSchema = z.object({ q: z.string().trim().min(3, 'Type at least 3 characters to search').max(200) }).strict();
 
 // ─── Policies, structures, pay groups ────────────────────────────────────────
 

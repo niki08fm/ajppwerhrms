@@ -1,21 +1,29 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { KeyRound, Pencil, Power } from 'lucide-react';
+import { toast } from 'sonner';
 import { Bar, BarChart, CartesianGrid, Pie, PieChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { api } from '@/services/api';
+import { api, errorMessage } from '@/services/api';
+import { useSession } from '@/context/SessionContext';
 import { useLookups } from '@/hooks/useLookups';
 import { istTime, mins } from '@/utils';
 import { Mono, PageHeader, PersonLink, Stat } from '@/components/bits';
 import { axis, CHART, grid, tooltipStyle } from '@/components/charts';
 import { Chip, EmptyState, ErrorState, SkeletonBlock } from '@/components/states';
+import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
 import { Input } from '@/components/ui/form';
+import { Dialog } from '@/components/ui/overlay';
+import { PasswordOnceDialog, ResetPasswordDialog, SiteFormDialog } from '@/components/sites/SiteForm';
 
 export default function SiteDetail() {
   const { id } = useParams();
   const { data: lk } = useLookups();
   const [date, setDate] = useState(lk?.today ?? new Date().toISOString().slice(0, 10));
   const q = useQuery({ queryKey: ['site-day', id, date], queryFn: () => api.get(`/sites/${id}/day`, { date }).then((r) => r.data) });
+  const { can } = useSession();
+  const [editing, setEditing] = useState(false);
   if (q.isLoading) return <SkeletonBlock className="h-96" />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   const d = q.data;
@@ -24,9 +32,17 @@ export default function SiteDetail() {
       <PageHeader
         crumbs={[{ label: 'Sites', to: '/sites' }, { label: d.site.name }]}
         title={d.site.name}
-        description={`${d.site.state} · ${d.site.radius_m} m boundary${d.site.project ? ` · project ${d.site.project.name}` : ''}`}
+        description={`${d.site.address ? `${d.site.address} · ` : ''}${d.site.state} · ${d.site.radius_m} m boundary${d.site.project ? ` · project ${d.site.project.name}` : ''}`}
         meta={<Input type="date" className="w-40" value={date} onChange={(e) => setDate(e.target.value)} aria-label="Date" />}
+        actions={
+          can('sites.manage') && (
+            <Button variant="outline" onClick={() => setEditing(true)}>
+              <Pencil /> Edit site
+            </Button>
+          )
+        }
       />
+      {editing && <SiteFormDialog site={d.site} onClose={() => setEditing(false)} />}
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Stat label="Punched in" value={d.today.punched_in} sub="different people" />
@@ -158,9 +174,103 @@ export default function SiteDetail() {
           </table>
         )}
       </Card>
+      <TabletLogin site={d.site} manage={can('sites.manage')} />
       <p className="text-[12px] text-muted-foreground">
-        Tablet login <Mono>{`site-${d.site.code.toLowerCase()}`}</Mono>. Distances are stored as metres from the centre — never a coordinate trail.
+        Centre <span className="num">{d.site.lat.toFixed(6)}, {d.site.lng.toFixed(6)}</span>. Distances are stored as metres from the centre — never a coordinate trail.
       </p>
     </div>
+  );
+}
+
+/** Login ID, last sign-in, whether a tablet is signed in; reset the password, disable or enable the login. */
+function TabletLogin({ site, manage }) {
+  const qc = useQueryClient();
+  const [resetting, setResetting] = useState(false);
+  const [creds, setCreds] = useState(null);
+  const [confirmOff, setConfirmOff] = useState(false);
+  const toggle = useMutation({
+    mutationFn: (enabled) => api.post(`/sites/${site.id}/login-enabled`, { enabled }),
+    onSuccess: (r) => {
+      setConfirmOff(false);
+      qc.invalidateQueries({ queryKey: ['site-day', site.id] });
+      qc.invalidateQueries({ queryKey: ['sites'] });
+      toast.success(r.data.login_enabled ? 'Login enabled. The current password works again.' : 'Login disabled. Every tablet at this site has been signed out.');
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+  return (
+    <Card>
+      <CardHeader
+        title="Tablet login"
+        description="The tablet signs in at /tablet with this login ID, only inside the site's boundary. Forgotten passwords are reset here; the tablet cannot change its own."
+        actions={
+          manage && (
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={() => setResetting(true)}>
+                <KeyRound /> Reset password
+              </Button>
+              {site.login_enabled ? (
+                <Button size="sm" variant="outline" onClick={() => setConfirmOff(true)}>
+                  <Power /> Disable login
+                </Button>
+              ) : (
+                <Button size="sm" variant="outline" loading={toggle.isPending} onClick={() => toggle.mutate(true)}>
+                  <Power /> Enable login
+                </Button>
+              )}
+            </div>
+          )
+        }
+      />
+      <dl className="grid grid-cols-2 gap-3 p-4 text-[13px] md:grid-cols-4">
+        <div>
+          <dt className="text-[12px] text-muted-foreground">Login ID</dt>
+          <dd>
+            <Mono>{site.login}</Mono>
+          </dd>
+        </div>
+        <div>
+          <dt className="text-[12px] text-muted-foreground">Login</dt>
+          <dd>{site.login_enabled ? <Chip tone="success">Enabled</Chip> : <Chip tone="warning">Disabled</Chip>}</dd>
+        </div>
+        <div>
+          <dt className="text-[12px] text-muted-foreground">Last sign-in</dt>
+          <dd className="num">{site.last_login_at ? istTime(site.last_login_at, true) : 'Never'}</dd>
+        </div>
+        <div>
+          <dt className="text-[12px] text-muted-foreground">Tablet signed in now</dt>
+          <dd>{site.tablet_signed_in ? <Chip tone="success">Yes</Chip> : <Chip tone="muted">No</Chip>}</dd>
+        </div>
+      </dl>
+      {resetting && (
+        <ResetPasswordDialog
+          site={site}
+          onClose={() => setResetting(false)}
+          onDone={(c) => {
+            setResetting(false);
+            setCreds(c);
+          }}
+        />
+      )}
+      {creds && <PasswordOnceDialog creds={creds} onClose={() => setCreds(null)} />}
+      {confirmOff && (
+        <Dialog
+          open
+          onOpenChange={(o) => !o && setConfirmOff(false)}
+          title={`Disable the login for ${site.name}?`}
+          description="Every tablet signed in to this site is signed out, and none can sign in until you enable the login again."
+          footer={
+            <>
+              <Button variant="outline" onClick={() => setConfirmOff(false)}>
+                Cancel
+              </Button>
+              <Button variant="destructive" loading={toggle.isPending} onClick={() => toggle.mutate(false)}>
+                Disable login
+              </Button>
+            </>
+          }
+        />
+      )}
+    </Card>
   );
 }

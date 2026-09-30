@@ -50,10 +50,14 @@ export async function attachSite(req, _res, next) {
   try {
     const payload = jwt.verify(token, env.SITE_JWT_SECRET);
     if (payload.typ !== 'site') return next();
-    const site = await prisma.site.findFirst({ where: { id: payload.sid, deleted_at: null, is_active: true } });
-    // Rotation bumps token_version, invalidating every tablet token for the site.
+    const site = await prisma.site.findFirst({ where: { id: payload.sid, deleted_at: null, is_active: true, login_enabled: true } });
+    // A password reset or disabling the login bumps token_version, invalidating every tablet token for the site.
     if (site && site.token_version === payload.tv) {
       req.site = { id: site.id, code: site.code, name: site.name, lat: Number(site.lat), lng: Number(site.lng), radius_m: site.radius_m };
+      // "Tablet signed in" on the site screen: at most one write a minute.
+      if (!site.last_seen_at || Date.now() - site.last_seen_at.getTime() > 60_000) {
+        prisma.site.update({ where: { id: site.id }, data: { last_seen_at: new Date() } }).catch(() => undefined);
+      }
     }
   } catch {
     // ignore

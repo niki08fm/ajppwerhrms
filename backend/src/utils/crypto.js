@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes, randomInt } from 'node:crypto';
+import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { env } from '../config/env.js';
 
 /**
@@ -43,12 +43,4 @@ export function maskPan(pan) {
 
 export function maskAccount(last4) {
   return last4 ? `XXXXXX${last4}` : null;
-}
-
-/** A readable one-time password for site tablets: no ambiguous characters. */
-export function generatePassword(length = 12) {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
-  let out = '';
-  for (let i = 0; i < length; i++) out += alphabet[randomInt(alphabet.length)];
-  return out;
 }

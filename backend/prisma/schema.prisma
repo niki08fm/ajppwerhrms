@@ -320,17 +320,26 @@ model Project {
 model Site {
   id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   code            String          @unique
+  /// Unique among sites not deleted, ignoring case (partial index in the site_login migration)
   name            String
+  address         String?
   state           String
   lat             Decimal         @db.Decimal(9, 6)
   lng             Decimal         @db.Decimal(9, 6)
+  /// Geofence radius, 50–2000 m (CHECK constraint). A change applies to the next sign-in and punch.
   radius_m        Int
   project_id      String?         @db.Uuid
   project         Project?        @relation(fields: [project_id], references: [id])
+  /// Tablet login ID, set by HR, stored lower-case
   login           String          @unique
+  /// argon2id. The plain password is shown to HR once and never stored or logged.
   password_hash   String
-  /// Bumped on password rotation: invalidates every tablet token for this site
+  /// Bumped on password reset and on disabling the login: invalidates every tablet token for this site
   token_version   Int             @default(1)
+  login_enabled   Boolean         @default(true)
+  last_login_at   DateTime?       @db.Timestamptz(6)
+  /// Last request from a signed-in tablet (updated at most once a minute); cleared on sign-out, reset and disable
+  last_seen_at    DateTime?       @db.Timestamptz(6)
   is_active       Boolean         @default(true)
   created_on      DateTime        @default(now()) @db.Date
   created_at      DateTime        @default(now()) @db.Timestamptz(6)

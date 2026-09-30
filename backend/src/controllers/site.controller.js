@@ -1,11 +1,26 @@
-import { addDays, firstOfMonth, isoDate, istDate, istMinuteOfDay, lastOfMonth, projectSchema, siteSchema, yearMonth, ymOf } from '@ajpwer/shared';
+import {
+  addDays,
+  firstOfMonth,
+  generateSitePassword,
+  isoDate,
+  istDate,
+  istMinuteOfDay,
+  lastOfMonth,
+  projectSchema,
+  siteLoginEnabledSchema,
+  sitePasswordSchema,
+  siteSchema,
+  siteUpdateSchema,
+  yearMonth,
+  ymOf,
+} from '@ajpwer/shared';
 import { pairPunches, projectLabourCost } from '../calculations/index.js';
-import { audit, who } from '../utils/audit.js';
+import { audit, diff, who } from '../utils/audit.js';
 import { hashPassword } from '../services/auth.service.js';
-import { generatePassword } from '../utils/crypto.js';
 import { fromDbDate, n, toDbDate } from '../utils/dbDates.js';
-import { notFound } from '../utils/errors.js';
+import { AppError, notFound } from '../utils/errors.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import { env } from '../config/env.js';
 import { prisma } from '../config/db.js';
 import { toEnginePunch, computeMonths } from '../services/attendance.service.js';
 import { computePayslip, loadRecoveries } from '../services/payslip.service.js';
@@ -13,21 +28,52 @@ import { payContext } from '../services/payroll.service.js';
 
 const today = () => istDate(new Date());
 
+const PASSWORD_NOTE = "Write this down or share it with the site in-charge now. It won't be shown again.";
+
+/** A tablet counts as signed in when one has used a valid token within the session length. */
+function tabletSignedIn(s) {
+  return !!s.login_enabled && !!s.is_active && !!s.last_seen_at && Date.now() - s.last_seen_at.getTime() < env.SITE_SESSION_HOURS * 3600_000;
+}
+
+/** Never includes the password hash. */
 function siteOut(s) {
   return {
     id: s.id,
     code: s.code,
     name: s.name,
+    address: s.address,
     state: s.state,
     lat: Number(s.lat),
     lng: Number(s.lng),
     radius_m: s.radius_m,
     project_id: s.project_id,
     login: s.login,
+    login_enabled: s.login_enabled,
+    last_login_at: s.last_login_at,
+    tablet_signed_in: tabletSignedIn(s),
     is_active: s.is_active,
     created_on: fromDbDate(s.created_on),
   };
 }
+
+/** Readable refusals for a name or login ID already in use (the database enforces both too). */
+async function assertUnique(fields, exceptId) {
+  const not = exceptId ? { id: { not: exceptId } } : {};
+  if (fields.name !== undefined) {
+    const clash = await prisma.site.findFirst({ where: { ...not, deleted_at: null, name: { equals: fields.name, mode: 'insensitive' } }, select: { id: true } });
+    if (clash) throw new AppError('CONFLICT', `Another site is already called "${fields.name}". Choose a different name.`, 409, 'name');
+  }
+  if (fields.login !== undefined) {
+    const clash = await prisma.site.findFirst({ where: { ...not, login: fields.login }, select: { id: true } });
+    if (clash) throw new AppError('CONFLICT', `The login ID "${fields.login}" is already used by another site. Choose a different one.`, 409, 'login');
+  }
+  if (fields.code !== undefined) {
+    const clash = await prisma.site.findFirst({ where: { ...not, code: fields.code }, select: { id: true } });
+    if (clash) throw new AppError('CONFLICT', `The code ${fields.code} is already used by another site.`, 409, 'code');
+  }
+}
+
+const GEOFENCE_FIELDS = ['lat', 'lng', 'radius_m'];
 
 /** "On site now" is derived: the person's most recent punch is an IN, at this site. */
 async function onSiteNow(date) {
@@ -76,37 +122,70 @@ export const listSites = asyncHandler(async (_req, res) => {
   res.json({ data: out });
 });
 
-/** Creating a site generates the tablet login and password, shown once. */
+/** HR sets the login ID and types or generates the password; the password is returned in this reply only. */
 export const createSite = asyncHandler(async (req, res) => {
-  const b = siteSchema.parse(req.body);
-  const password = generatePassword();
-  const login = `site-${b.code.toLowerCase()}`;
+  const { password: typed, ...b } = siteSchema.parse(req.body);
+  await assertUnique(b);
+  const password = typed ?? generateSitePassword();
   const { actor, ip } = who(req);
   const s = await prisma.$transaction(async (tx) => {
-    const created = await tx.site.create({ data: { ...b, project_id: b.project_id ?? null, login, password_hash: await hashPassword(password) } });
-    await audit(tx, { actor, ip, action: 'site.create', entity_type: 'site', entity_id: created.id, detail: { ...b, login } });
+    const created = await tx.site.create({ data: { ...b, address: b.address || null, project_id: b.project_id ?? null, password_hash: await hashPassword(password) } });
+    await audit(tx, { actor, ip, action: 'site.create', entity_type: 'site', entity_id: created.id, detail: { ...b, password: typed ? 'typed by HR' : 'generated' } });
     return created;
   });
-  res.status(201).json({ data: { ...siteOut(s), credentials: { login, password, note: 'Shown once. Reissue from the site screen if lost.' } } });
+  res.status(201).json({ data: { ...siteOut(s), credentials: { login: s.login, password, note: PASSWORD_NOTE } } });
 });
 
+/** A new centre or radius applies to the next sign-in and the next punch; past punches keep their stored distance. */
 export const updateSite = asyncHandler(async (req, res) => {
-  const b = siteSchema.partial().strict().parse(req.body);
-  const before = await prisma.site.findUnique({ where: { id: req.params.id } });
+  const b = siteUpdateSchema.parse(req.body);
+  const before = await prisma.site.findFirst({ where: { id: req.params.id, deleted_at: null } });
   if (!before) throw notFound('That site');
-  const s = await prisma.site.update({ where: { id: before.id }, data: b });
-  await audit(prisma, { ...who(req), action: 'site.update', entity_type: 'site', entity_id: s.id, detail: { before: siteOut(before), after: b } });
+  await assertUnique(b, before.id);
+  const { actor, ip } = who(req);
+  const s = await prisma.$transaction(async (tx) => {
+    const updated = await tx.site.update({ where: { id: before.id }, data: b });
+    const changes = diff(siteOut(before), siteOut(updated));
+    await audit(tx, { actor, ip, action: 'site.update', entity_type: 'site', entity_id: updated.id, detail: changes });
+    const fence = Object.fromEntries(GEOFENCE_FIELDS.filter((k) => changes[k]).map((k) => [k, changes[k]]));
+    if (Object.keys(fence).length) {
+      await audit(tx, { actor, ip, action: 'site.geofence_change', entity_type: 'site', entity_id: updated.id, detail: { ...fence, applies_from: new Date().toISOString() } });
+    }
+    return updated;
+  });
   res.json({ data: siteOut(s) });
 });
 
-/** Rotation invalidates every existing tablet token for the site. */
-export const reissueSiteLogin = asyncHandler(async (req, res) => {
-  const s = await prisma.site.findUnique({ where: { id: req.params.id } });
+/**
+ * Reset: HR types a password or the server generates one, shown once. Bumping
+ * token_version signs out every tablet still using the old password on its next request.
+ */
+export const resetSitePassword = asyncHandler(async (req, res) => {
+  const { password: typed } = sitePasswordSchema.parse(req.body ?? {});
+  const s = await prisma.site.findFirst({ where: { id: req.params.id, deleted_at: null } });
   if (!s) throw notFound('That site');
-  const password = generatePassword();
-  await prisma.site.update({ where: { id: s.id }, data: { password_hash: await hashPassword(password), token_version: { increment: 1 } } });
-  await audit(prisma, { ...who(req), action: 'site.password_rotate', entity_type: 'site', entity_id: s.id });
-  res.json({ data: { login: s.login, password, note: 'Shown once. Every tablet signed in to this site has been signed out.' } });
+  const password = typed ?? generateSitePassword();
+  const { actor, ip } = who(req);
+  await prisma.$transaction(async (tx) => {
+    await tx.site.update({ where: { id: s.id }, data: { password_hash: await hashPassword(password), token_version: { increment: 1 }, last_seen_at: null } });
+    await audit(tx, { actor, ip, action: 'site.password_reset', entity_type: 'site', entity_id: s.id, detail: { login: s.login, password: typed ? 'typed by HR' : 'generated', tablets_signed_out: true } });
+  });
+  res.json({ data: { login: s.login, password, note: PASSWORD_NOTE } });
+});
+
+/** Disabling signs out every tablet (token_version); enabling lets the current password work again. */
+export const setSiteLoginEnabled = asyncHandler(async (req, res) => {
+  const { enabled } = siteLoginEnabledSchema.parse(req.body);
+  const s = await prisma.site.findFirst({ where: { id: req.params.id, deleted_at: null } });
+  if (!s) throw notFound('That site');
+  const data = enabled ? { login_enabled: true } : { login_enabled: false, token_version: { increment: 1 }, last_seen_at: null };
+  const { actor, ip } = who(req);
+  const updated = await prisma.$transaction(async (tx) => {
+    const u = await tx.site.update({ where: { id: s.id }, data });
+    await audit(tx, { actor, ip, action: enabled ? 'site.login_enable' : 'site.login_disable', entity_type: 'site', entity_id: s.id, detail: { login: s.login } });
+    return u;
+  });
+  res.json({ data: siteOut(updated) });
 });
 
 /** Everything a site screen needs, in one call. All derived from punches, none from membership. */

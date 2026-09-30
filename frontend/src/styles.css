@@ -230,3 +230,9 @@
     break-after: page;
   }
 }
+
+/* Site geofence circle on the map (Leaflet SVG path): theme colour via CSS, which overrides the path's attributes. */
+.site-fence {
+  stroke: var(--primary);
+  fill: var(--primary);
+}

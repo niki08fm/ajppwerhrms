@@ -33,6 +33,13 @@ const schema = z.object({
   }, 'PII_ENCRYPTION_KEY must be 32 bytes, base64 encoded (openssl rand -base64 32)'),
   FACE_MATCH_THRESHOLD: z.coerce.number().min(0).max(1).default(0.55),
   GPS_MAX_ACCURACY_M: z.coerce.number().default(50),
+  // Place search on the site form goes through our proxy to Nominatim (OpenStreetMap).
+  NOMINATIM_URL: z.string().url().default('https://nominatim.openstreetmap.org'),
+  NOMINATIM_USER_AGENT: z.string().min(3).default('AJPWER-Workforce/1.0'),
+  NOMINATIM_EMAIL: z
+    .string()
+    .optional()
+    .transform((v) => v || undefined),
   LATE_SYNC_FLAG_MIN: z.coerce.number().default(60),
   CLOCK_SKEW_FLAG_MIN: z.coerce.number().default(5),
   UPLOAD_DIR: z.string().default('./uploads'),

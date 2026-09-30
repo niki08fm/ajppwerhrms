@@ -246,7 +246,7 @@ export const PERMISSIONS = [
   'payroll.pay',
   'setup.read',
   'setup.write',
-  'sites.write',
+  'sites.manage',
   'audit.read',
   'reports.export',
 ];

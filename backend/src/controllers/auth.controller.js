@@ -12,15 +12,19 @@ const WINDOW_MS = 15 * 60_000;
 const MAX_FAILURES = 5;
 
 /** Five failed attempts in fifteen minutes, per account and per IP. */
-async function assertNotLocked(key, ip) {
+async function isLocked(key, ip) {
   const since = new Date(Date.now() - WINDOW_MS);
   const [byKey, byIp] = await Promise.all([
     prisma.loginAttempt.count({ where: { key, success: false, at: { gte: since } } }),
     ip ? prisma.loginAttempt.count({ where: { ip, success: false, at: { gte: since } } }) : Promise.resolve(0),
   ]);
-  if (byKey >= MAX_FAILURES || byIp >= MAX_FAILURES) {
-    throw new AppError('RATE_LIMITED', 'Too many failed sign-in attempts. Wait fifteen minutes and try again.', 429);
-  }
+  return byKey >= MAX_FAILURES || byIp >= MAX_FAILURES;
+}
+
+const lockedOut = () => new AppError('RATE_LIMITED', 'Too many failed sign-in attempts. Wait fifteen minutes and try again.', 429);
+
+async function assertNotLocked(key, ip) {
+  if (await isLocked(key, ip)) throw lockedOut();
 }
 
 export const login = asyncHandler(async (req, res) => {
@@ -50,22 +54,32 @@ export const me = asyncHandler(async (req, res) => {
 });
 
 /**
- * Tablet sign-in. Authenticates only inside the site's geofence; the rejection
- * is logged with its distance and accuracy.
+ * Tablet sign-in. Checks, in order, each with its own message: the login exists
+ * and is enabled; the password; the lockout (five failures in fifteen minutes by
+ * login and by IP — looked up first so a locked-out caller cannot keep guessing,
+ * but reported in this place); GPS accuracy; distance from the site centre.
+ * Rejections are logged with distance and accuracy, never the password.
  */
 export const siteLogin = asyncHandler(async (req, res) => {
   const b = siteLoginSchema.parse(req.body);
-  const key = `site:${b.login.toLowerCase()}`;
+  const loginId = b.login.trim().toLowerCase();
+  const key = `site:${loginId}`;
   const ip = req.ip ?? null;
-  await assertNotLocked(key, ip);
-  const site = await prisma.site.findFirst({ where: { login: b.login.toLowerCase(), deleted_at: null } });
-  const ok = site && site.is_active ? await verifyPassword(site.password_hash, b.password) : false;
-  await prisma.loginAttempt.create({ data: { key, ip, success: !!ok } });
-  if (!site || !ok) {
-    await audit(prisma, { actor: key, ip, action: 'auth.site_login_failed', entity_type: 'site', entity_id: site?.id ?? null });
-    throw new AppError('UNAUTHENTICATED', 'That site login and password do not match, or the site is inactive.', 401);
+  const locked = await isLocked(key, ip);
+  const site = await prisma.site.findFirst({ where: { login: loginId, deleted_at: null } });
+  const fail = async (code, message, status = 401) => {
+    await prisma.loginAttempt.create({ data: { key, ip, success: false } });
+    await audit(prisma, { actor: key, ip, action: 'auth.site_login_failed', entity_type: 'site', entity_id: site?.id ?? null, detail: { reason: code } });
+    throw new AppError(code, message, status, code === 'LOGIN_NOT_FOUND' ? 'login' : code === 'WRONG_PASSWORD' ? 'password' : null);
+  };
+  if (locked) throw lockedOut();
+  if (!site) return fail('LOGIN_NOT_FOUND', `There is no site with the login ID "${loginId}". Check it with HR.`);
+  if (!site.login_enabled || !site.is_active) {
+    return fail('LOGIN_DISABLED', `The login for ${site.name} is ${site.is_active ? 'disabled' : 'switched off because the site is inactive'}. Ask HR to enable it.`, 403);
   }
-  const fence = checkGeofence({ lat: Number(site.lat), lng: Number(site.lng), radius_m: site.radius_m }, { lat: b.lat, lng: b.lng, accuracy_m: b.accuracy_m }, env.GPS_MAX_ACCURACY_M);
+  if (!(await verifyPassword(site.password_hash, b.password))) return fail('WRONG_PASSWORD', `That password is not right for ${site.name}. Forgot the password? Ask HR to reset it.`);
+  await prisma.loginAttempt.create({ data: { key, ip, success: true } });
+  const fence = checkGeofence({ name: site.name, lat: Number(site.lat), lng: Number(site.lng), radius_m: site.radius_m }, { lat: b.lat, lng: b.lng, accuracy_m: b.accuracy_m }, env.GPS_MAX_ACCURACY_M, 'Sign in');
   if (!fence.ok) {
     await audit(prisma, {
       actor: key,
@@ -73,18 +87,23 @@ export const siteLogin = asyncHandler(async (req, res) => {
       action: 'geofence.rejected',
       entity_type: 'site',
       entity_id: site.id,
-      detail: { stage: 'login', distance_m: fence.distance_m, accuracy_m: b.accuracy_m, reason: fence.reason },
+      detail: { stage: 'login', check: fence.code, distance_m: fence.distance_m, accuracy_m: b.accuracy_m, radius_m: site.radius_m },
     });
-    throw new AppError('GEOFENCE_REJECTED', fence.reason, 403);
+    throw new AppError('GEOFENCE_REJECTED', fence.reason, 403, fence.code);
   }
-  await audit(prisma, { actor: key, ip, action: 'auth.site_login', entity_type: 'site', entity_id: site.id, detail: { distance_m: fence.distance_m } });
+  const now = new Date();
+  await prisma.site.update({ where: { id: site.id }, data: { last_login_at: now, last_seen_at: now } });
+  await audit(prisma, { actor: key, ip, action: 'auth.site_login', entity_type: 'site', entity_id: site.id, detail: { distance_m: fence.distance_m, accuracy_m: b.accuracy_m } });
   issueSiteSession(res, site.id, site.token_version);
   res.json({ data: { id: site.id, code: site.code, name: site.name } });
 });
 
 /** Signing out works anywhere, so a stolen tablet can be logged out. */
 export const siteLogout = asyncHandler(async (req, res) => {
-  if (req.site) await audit(prisma, { actor: `site:${req.site.code}`, ip: req.ip ?? null, action: 'auth.site_logout', entity_type: 'site', entity_id: req.site.id });
+  if (req.site) {
+    await prisma.site.update({ where: { id: req.site.id }, data: { last_seen_at: null } });
+    await audit(prisma, { actor: `site:${req.site.code}`, ip: req.ip ?? null, action: 'auth.site_logout', entity_type: 'site', entity_id: req.site.id });
+  }
   clearSessions(res, 'site');
   res.json({ data: { ok: true } });
 });

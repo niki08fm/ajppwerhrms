@@ -26,6 +26,11 @@ Production settings in `.env`:
 - `REDIS_URL` set (payroll runs and large exports go to the queue; the worker process handles them)
 - Terminate **TLS** at a reverse proxy (nginx, Caddy, or the cloud load balancer). Everything is HTTPS; the database is never reachable from the internet.
 
+### Site maps (OpenStreetMap)
+
+- The site form shows OpenStreetMap tiles, loaded by HR's browser from `tile.openstreetmap.org`, with the required "© OpenStreetMap contributors" attribution. If a content-security policy is added at the proxy, allow `img-src https://tile.openstreetmap.org`. The OSM tile policy suits light use like HR editing sites; for heavy use, switch the tile URL in `frontend/src/components/sites/SiteMap.jsx` to a paid tile provider.
+- Place search goes only through the backend (`GET /api/v1/geo/search`), which calls Nominatim at most once a second with the `NOMINATIM_USER_AGENT` and `NOMINATIM_EMAIL` from `.env` and caches answers for 24 hours. Set the email to a mailbox someone reads. The server needs outbound HTTPS to `nominatim.openstreetmap.org`.
+
 ## 3. Least-privilege database role
 
 Run migrations as the owner; run the application as a separate role without UPDATE or DELETE on the append-only tables:
@@ -45,7 +50,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE O
 
 - Secrets live in environment variables or the platform's secret store — never in the repository.
 - `PII_ENCRYPTION_KEY` encrypts PAN, Aadhaar and bank accounts. **Store a copy offline, separately from database backups.** A restored database without the key is unreadable; a key leaked with the backups defeats the encryption.
-- Rotating `JWT_SECRET` signs everyone out. Rotating a site password (Sites → Reissue login) signs that site's tablets out.
+- Rotating `JWT_SECRET` signs everyone out. Resetting a site password or disabling its login (Sites → the site → Tablet login) signs that site's tablets out on their next request. The tablet cannot change its own password.
 
 ## 5. Backups — and a restore rehearsed before go-live
 

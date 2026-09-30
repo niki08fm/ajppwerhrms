@@ -20,7 +20,7 @@ const snapshotDir = path.resolve(env.UPLOAD_DIR, 'snapshots');
 /** Re-check the geofence on every call — a tablet signed in inside the fence and carried outside must stop working. */
 async function fence(req, pos) {
   const site = req.site;
-  const check = checkGeofence(site, pos, env.GPS_MAX_ACCURACY_M);
+  const check = checkGeofence(site, pos, env.GPS_MAX_ACCURACY_M, 'Punch');
   if (!check.ok) {
     await audit(prisma, {
       actor: `site:${site.code}`,
@@ -28,9 +28,9 @@ async function fence(req, pos) {
       action: 'geofence.rejected',
       entity_type: 'site',
       entity_id: site.id,
-      detail: { stage: 'punch', distance_m: check.distance_m, accuracy_m: pos.accuracy_m, reason: check.reason },
+      detail: { stage: 'punch', check: check.code, distance_m: check.distance_m, accuracy_m: pos.accuracy_m, radius_m: site.radius_m },
     });
-    throw new AppError('GEOFENCE_REJECTED', check.reason, 403);
+    throw new AppError('GEOFENCE_REJECTED', check.reason, 403, check.code);
   }
   return check;
 }

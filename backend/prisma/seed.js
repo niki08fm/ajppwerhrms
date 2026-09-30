@@ -15,8 +15,8 @@
  *
  * Run: npm run db:seed   (on a freshly migrated database)
  */
-import { randomBytes } from 'node:crypto';
 import {
+  generateSitePassword,
   addDays,
   addMonths,
   AJPWER_LEAVE_TYPES,
@@ -344,7 +344,7 @@ async function main() {
   });
   const sitePasswords = {};
   const mkSite = async (code, name, state, lat, lng, radius, project) => {
-    const pw = process.env[`SEED_SITE_PASSWORD_${code.replace(/-/g, '_')}`] ?? `${code.toLowerCase()}-${randomBytes(3).toString('hex')}`;
+    const pw = process.env[`SEED_SITE_PASSWORD_${code.replace(/-/g, '_')}`] ?? generateSitePassword();
     sitePasswords[code] = pw;
     return prisma.site.create({ data: { code, name, state, lat, lng, radius_m: radius, project_id: project, login: `site-${code.toLowerCase()}`, password_hash: await hashPassword(pw) } });
   };
@@ -784,7 +784,7 @@ async function main() {
 
   console.log('\nSign in to the admin app with:');
   console.log(`  ${email} / ${process.env.ADMIN_PASSWORD ? '(ADMIN_PASSWORD from .env)' : password}`);
-  console.log('\nSite tablet logins (shown once — reissue from the site screen):');
+  console.log('\nSite tablet logins (shown once — reset from the site screen):');
   for (const [code, pw] of Object.entries(sitePasswords)) console.log(`  site-${code.toLowerCase()} / ${pw}`);
   console.log(`\n${M3} and ${M2} are paid. ${M1} is ready to run. ${M0} has the §20 cases (joiner, leaver, cross-site, worked holiday and Sunday).`);
   void lastOfMonth;

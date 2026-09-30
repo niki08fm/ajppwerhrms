@@ -5,9 +5,12 @@ import * as siteController from '../controllers/site.controller.js';
 export const sitesRouter = Router();
 
 sitesRouter.get('/sites', requirePerm('attendance.read'), siteController.listSites);
-sitesRouter.post('/sites', requirePerm('sites.write'), siteController.createSite);
-sitesRouter.patch('/sites/:id', requirePerm('sites.write'), siteController.updateSite);
-sitesRouter.post('/sites/:id/reissue-login', requirePerm('sites.write'), siteController.reissueSiteLogin);
+sitesRouter.post('/sites', requirePerm('sites.manage'), siteController.createSite);
+sitesRouter.patch('/sites/:id', requirePerm('sites.manage'), siteController.updateSite);
+sitesRouter.post('/sites/:id/password', requirePerm('sites.manage'), siteController.resetSitePassword);
+// Older name for the same reset, kept for existing clients.
+sitesRouter.post('/sites/:id/reissue-login', requirePerm('sites.manage'), siteController.resetSitePassword);
+sitesRouter.post('/sites/:id/login-enabled', requirePerm('sites.manage'), siteController.setSiteLoginEnabled);
 sitesRouter.get('/sites/:id/day', requirePerm('attendance.read'), siteController.getSiteDay);
 sitesRouter.get('/sites-network', requirePerm('attendance.read'), siteController.getSitesNetwork);
 

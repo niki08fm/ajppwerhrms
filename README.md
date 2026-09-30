@@ -45,6 +45,7 @@ Everything configurable is in [`.env.example`](.env.example), commented. The one
 | `REDIS_URL` | BullMQ queue for payroll runs and large exports. Blank = in-process |
 | `WEB_ORIGIN`, `COOKIE_SECURE`, `TRUST_PROXY` | Set for production behind HTTPS |
 | `FACE_MATCH_THRESHOLD`, `GPS_MAX_ACCURACY_M` | Face-match confidence and GPS accuracy needed for a punch |
+| `NOMINATIM_USER_AGENT`, `NOMINATIM_EMAIL` | Identify the app to OpenStreetMap's place search, used by the site map |
 
 The API refuses to start with a clear list of what is missing or malformed.
 
@@ -132,7 +133,7 @@ Each folder has its own README. The root `package.json` ties them together (npm 
 
 **The list contract** (spec §15) is one hook and one table component: server-side filtering, sorting and keyset pagination (never OFFSET), page sizes 50/100/200, filter state in the URL, filter chips, saved views, "select all N matching" bulk actions with before/after previews, filtered CSV export, sticky header and first column, virtualised rows past 200.
 
-**Security** (spec §18): argon2id passwords; JWT in httpOnly SameSite=Lax cookies with an 8-hour sliding session; five failed sign-ins in 15 minutes lock by account and IP; permissions are a lookup (`role.permissions`), not `isAdmin`; site tablets authenticate only inside their geofence, which is re-checked on every punch, and rotating a site password invalidates its tokens; PAN, Aadhaar and bank accounts are AES-256-GCM encrypted at rest, Aadhaar is masked everywhere, and every read of identity data is audited; face data is stored as embeddings, never photographs, and deleted on exit; gate snapshots are deleted after 30 days; punches store distance from the site centre, never a coordinate trail.
+**Security** (spec §18): argon2id passwords; JWT in httpOnly SameSite=Lax cookies with an 8-hour sliding session; five failed sign-ins in 15 minutes lock by account and IP; permissions are a lookup (`role.permissions`), not `isAdmin`; site tablets sign in with a login ID and password set by HR (argon2id; the password is shown once and never stored, returned again or logged) and only inside their geofence, which is re-checked on every punch; resetting a site password or disabling its login invalidates its tokens; PAN, Aadhaar and bank accounts are AES-256-GCM encrypted at rest, Aadhaar is masked everywhere, and every read of identity data is audited; face data is stored as embeddings, never photographs, and deleted on exit; gate snapshots are deleted after 30 days; punches store distance from the site centre, never a coordinate trail.
 
 ## Verification
 
@@ -159,6 +160,8 @@ Recorded here as the spec asks for any "SHOULD" done differently.
 - **Offline tablet punches** carry the face embedding and are matched on the server when they sync, so no biometric data is ever cached on the device; a queued punch that does not match confidently becomes a face exception at its original time.
 - **Face exception review** shows the gate snapshot; enrolled photographs are not stored (only embeddings, per §18), so HR compares the snapshot with the person or their ID.
 - **Face recognition** uses `@vladmandic/face-api` (tiny detector, 128-dimension descriptors) loaded only on the tablet and enrolment screens; the match threshold is `FACE_MATCH_THRESHOLD`. The spec defers ArcFace/InsightFace and liveness.
+- **Sites.** HR marks each site on an OpenStreetMap map (drag the marker, search a place, paste coordinates or a Google Maps link, or use the browser's location) with a 50–2000 m geofence, and sets the tablet's login ID and password on the same form (typed, or generated: 12 characters without look-alikes). A new centre or radius is audited and applies from the next sign-in and punch; past punches keep the distance recorded when they were made. Site names are unique ignoring case. The migration that introduced this brought any radius outside 50–2000 m inside it and appended the code to duplicate names, and recorded each change in the audit log. Permission `sites.write` became `sites.manage`.
+- **Tablet sign-in order.** The login ID, then the password, then the lockout, then GPS accuracy, then distance, each with its own message. The lockout is looked up before the password is checked, so a locked-out caller cannot keep guessing.
 - **People search** covers name, code, designation and phone. PAN is encrypted at rest, so it is not substring-searchable.
 - **Theme.** The tweakcn theme referred to in §2 was not in the document; the tokens in `frontend/src/styles.css` follow the same shadcn/tweakcn format (with both font corrections applied), so a tweakcn export can be pasted over `:root` and `.dark`.
 - **Dependency advisories.** `npm audit` reports four *moderate* advisories (React Router 6 client-side redirect handling; `uuid` inside `exceljs`). Neither path is exercised in a way that is exploitable here; upgrading to React Router 7 is a planned follow-up. CI fails on any *high* advisory.

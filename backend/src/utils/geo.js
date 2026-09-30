@@ -8,13 +8,29 @@ export function haversineM(lat1, lng1, lat2, lng2) {
   return Math.round(2 * R * Math.asin(Math.sqrt(a)));
 }
 
-export function checkGeofence(site, pos, maxAccuracy) {
+/**
+ * Is this position good enough, and inside the site? Accuracy is checked before
+ * distance: a poor fix cannot say where the tablet is. `action` words the
+ * message for sign-in or punch. Uses the site's current centre and radius, so a
+ * change applies from the next sign-in and punch, never to past punches.
+ */
+export function checkGeofence(site, pos, maxAccuracy, action = 'Sign in') {
   const distance_m = haversineM(site.lat, site.lng, pos.lat, pos.lng);
   if (pos.accuracy_m > maxAccuracy) {
-    return { ok: false, distance_m, reason: `GPS accuracy is ${Math.round(pos.accuracy_m)} m; it must be ${maxAccuracy} m or better. Move to open sky and try again.` };
+    return {
+      ok: false,
+      code: 'GPS_ACCURACY',
+      distance_m,
+      reason: `Your location is only accurate to ${Math.round(pos.accuracy_m)} m; it must be ${maxAccuracy} m or better. Go outside or near a window, wait a moment, and try again.`,
+    };
   }
   if (distance_m > site.radius_m) {
-    return { ok: false, distance_m, reason: `This tablet is ${distance_m} m from the site centre, outside the ${site.radius_m} m boundary.` };
+    return {
+      ok: false,
+      code: 'OUTSIDE_GEOFENCE',
+      distance_m,
+      reason: `You are ${distance_m} m from ${site.name ?? 'the site'}. ${action} from inside the site (within ${site.radius_m} m).`,
+    };
   }
-  return { ok: true, distance_m, reason: null };
+  return { ok: true, code: null, distance_m, reason: null };
 }

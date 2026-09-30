@@ -83,13 +83,14 @@ function SiteLogin() {
           <MapPin className="size-6 text-primary" />
           <h1 className="font-display text-2xl font-semibold">Site tablet</h1>
         </div>
-        <p className="text-[13px] text-muted-foreground">Sign in with the site's own login. It works only inside the site's boundary.</p>
+        <p className="text-[13px] text-muted-foreground">Sign in with the site's login ID and password. After that the tablet asks for its location: it works only inside the site's boundary.</p>
         {error && <Notice tone="destructive">{error}</Notice>}
-        <Field label="Site login">{(id) => <Input id={id} value={login} onChange={(e) => setLogin(e.target.value)} autoCapitalize="none" className="h-11 text-base" required />}</Field>
+        <Field label="Login ID">{(id) => <Input id={id} value={login} onChange={(e) => setLogin(e.target.value)} autoCapitalize="none" className="h-11 text-base" required />}</Field>
         <Field label="Password">{(id) => <Input id={id} type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="h-11 text-base" required />}</Field>
         <Button type="submit" size="lg" loading={busy}>
           Sign in here
         </Button>
+        <p className="text-center text-[13px] text-muted-foreground">Forgot the password? Ask HR to reset it.</p>
       </form>
     </div>
   );
