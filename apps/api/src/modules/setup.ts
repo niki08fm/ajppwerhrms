@@ -471,11 +471,9 @@ setupRouter.get(
   ah(async (req, res) => {
     const year = Number(req.query.year ?? today().slice(0, 4));
     const rows = await prisma.holiday.findMany({ where: { deleted_at: null, date: { gte: toDbDate(`${year}-01-01`), lte: toDbDate(`${year}-12-31`) } }, orderBy: { date: 'asc' } });
-    const worked = await prisma.punch.groupBy({ by: ['work_date'], where: { work_date: { in: rows.map((r) => r.date) } }, _count: { employee_id: true } });
     const distinct = await Promise.all(
       rows.map(async (r) => ({ id: r.id, n: (await prisma.punch.findMany({ where: { work_date: r.date }, distinct: ['employee_id'], select: { employee_id: true } })).length })),
     );
-    void worked;
     res.json({ data: rows.map((r) => ({ id: r.id, date: fromDbDate(r.date), name: r.name, worked_by: distinct.find((d) => d.id === r.id)?.n ?? 0 })) });
   }),
 );

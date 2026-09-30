@@ -1,5 +1,10 @@
-# Local infrastructure for development. Production should run PostgreSQL with
-# point-in-time recovery on India-hosted infrastructure (see docs/OPERATIONS.md).
+# Local infrastructure, and (with --profile app) the whole system.
+#
+#   docker compose up -d                  PostgreSQL 16 and Redis for local development
+#   docker compose --profile app up -d    also the API + web (one image) and the job worker
+#
+# Production should run PostgreSQL with point-in-time recovery on India-hosted
+# infrastructure (see docs/OPERATIONS.md).
 services:
   postgres:
     image: postgres:16
@@ -14,10 +19,51 @@ services:
       - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ajpwer}"]
+      interval: 5s
+      retries: 10
+
   redis:
     image: redis:7
     restart: unless-stopped
     ports:
       - "127.0.0.1:6379:6379"
+
+  app:
+    profiles: ["app"]
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-ajpwer}:${POSTGRES_PASSWORD:-ajpwer}@postgres:5432/${POSTGRES_DB:-ajpwer}?schema=public
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: production
+    ports:
+      - "4000:4000"
+    volumes:
+      - appdata:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker:
+    profiles: ["app"]
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-ajpwer}:${POSTGRES_PASSWORD:-ajpwer}@postgres:5432/${POSTGRES_DB:-ajpwer}?schema=public
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: production
+    command: ["node", "apps/api/dist/worker.js"]
+    volumes:
+      - appdata:/data
+    depends_on:
+      - app
+
 volumes:
   pgdata:
+  appdata:

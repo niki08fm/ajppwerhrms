@@ -1,3 +1,5 @@
+import path from 'node:path';
+import { existsSync } from 'node:fs';
 import express from 'express';
 import compression from 'compression';
 import cookieParser from 'cookie-parser';
@@ -55,6 +57,13 @@ export function createApp() {
   v1.use('/', miscRouter);
   v1.use((_req, _res, next) => next(new AppError('NOT_FOUND', 'No such endpoint.', 404)));
   app.use('/api/v1', v1);
+
+  // Single-container deployment: serve the built web app and fall back to index.html for client routes.
+  const webDir = process.env.SERVE_WEB_DIR ? path.resolve(process.env.SERVE_WEB_DIR) : null;
+  if (webDir && existsSync(path.join(webDir, 'index.html'))) {
+    app.use(express.static(webDir, { index: false, maxAge: '1h', immutable: false }));
+    app.get(/^(?!\/api\/).*/, (_req, res) => res.sendFile(path.join(webDir, 'index.html')));
+  }
 
   app.use(errorHandler);
   return app;

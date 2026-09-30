@@ -5,7 +5,7 @@ import { audit, who } from '../lib/audit';
 import { hashPassword, requirePerm } from '../lib/auth';
 import { generatePassword } from '../lib/crypto';
 import { fromDbDate, n, toDbDate } from '../lib/db-dates';
-import { ah, AppError, notFound } from '../lib/errors';
+import { ah, notFound } from '../lib/errors';
 import { prisma } from '../lib/prisma';
 import { toEnginePunch, computeMonths } from '../services/attendance';
 import { computePayslip, loadRecoveries } from '../services/payslip';
@@ -332,4 +332,3 @@ sitesRouter.get(
   }),
 );
 
-void AppError;

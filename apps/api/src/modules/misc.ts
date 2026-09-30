@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { INDIAN_STATES, istDate, savedViewSchema } from '@ajpwer/shared';
+import { z } from 'zod';
+import { audit, who } from '../lib/audit';
 import { requireAdmin, requirePerm } from '../lib/auth';
 import { ah, notFound } from '../lib/errors';
 import { prisma } from '../lib/prisma';
@@ -131,8 +133,12 @@ miscRouter.post(
   '/documents/verify',
   requirePerm('people.write'),
   ah(async (req, res) => {
-    const ids = (req.body?.ids ?? []) as string[];
-    const r = await prisma.document.updateMany({ where: { id: { in: ids }, verified_at: null }, data: { verified_at: new Date() } });
-    res.json({ data: { verified: r.count } });
+    const { ids } = z.object({ ids: z.array(z.string().uuid()).min(1).max(1000) }).strict().parse(req.body);
+    const docs = await prisma.document.findMany({ where: { id: { in: ids }, verified_at: null }, select: { id: true, employee_id: true, doc_type: true } });
+    await prisma.$transaction(async (tx) => {
+      await tx.document.updateMany({ where: { id: { in: docs.map((d) => d.id) } }, data: { verified_at: new Date() } });
+      for (const d of docs) await audit(tx, { ...who(req), action: 'document.verify', entity_type: 'employee', entity_id: d.employee_id, detail: { document_id: d.id, doc_type: d.doc_type } });
+    });
+    res.json({ data: { verified: docs.length } });
   }),
 );

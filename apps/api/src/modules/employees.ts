@@ -27,7 +27,7 @@ import {
 } from '@ajpwer/shared';
 import { compareRegimes, ctcForGross, expandStructure, calendarDivisor, workingDaysInMonth } from '../engines';
 import { audit, auditReq, diff, who } from '../lib/audit';
-import { can, requirePerm } from '../lib/auth';
+import { requirePerm } from '../lib/auth';
 import { encryptPII, maskAadhaar } from '../lib/crypto';
 import { fromDbDate, n, toDbDate } from '../lib/db-dates';
 import { env } from '../lib/env';
@@ -39,7 +39,7 @@ import { employeeView, loadEmployee, markTask, nextEmployeeCode, rulesThatApply 
 import { leaveBalances } from '../services/leave';
 import { computePayslip, loadRecoveries } from '../services/payslip';
 import { payContext } from '../services/payroll';
-import { ptSlabs, ratesOn, regimesOn, salaryOn, structureComponents, holidaysBetween, payGroupRules } from '../services/rules';
+import { ratesOn, regimesOn, salaryOn, structureComponents, holidaysBetween } from '../services/rules';
 import { previewSalary, resolveMonthlyGross } from '../services/salary';
 import { upsertSettlement } from '../services/settlement';
 
@@ -950,6 +950,3 @@ employeesRouter.get(
   }),
 );
 
-void can;
-void ptSlabs;
-void payGroupRules;

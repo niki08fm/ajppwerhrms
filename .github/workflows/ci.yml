@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'claude/**']
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 22
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+  # Test-only secrets. Real values live in the deployment environment, never in the repository.
+  JWT_SECRET: ci-jwt-secret-ci-jwt-secret-ci-jwt-secret
+  SITE_JWT_SECRET: ci-site-secret-ci-site-secret-ci-site
+  PII_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+  ADMIN_EMAIL: hr@ajpwer.in
+  ADMIN_PASSWORD: ci-admin-password
+
+jobs:
+  test:
+    name: Typecheck, tests, build
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ajpwer_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ajpwer_test?schema=public
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ajpwer_test?schema=public
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate --schema apps/api/prisma/schema.prisma
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Engine acceptance tests (spec §20)
+        run: npm run test:engines
+      - name: API integration tests (spec §20.25–31)
+        run: npm run test:api
+      - name: Build
+        run: npm run build
+      - name: Dependency scan
+        run: npm audit --omit=dev --audit-level=high
+
+  load:
+    name: Performance budgets (spec §15, §20.34)
+    runs-on: ubuntu-latest
+    needs: test
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ajpwer_load
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ajpwer_load?schema=public
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate --schema apps/api/prisma/schema.prisma
+      - run: npx prisma migrate deploy --schema apps/api/prisma/schema.prisma
+      - name: Seed, then 200 employees and three years of punches
+        run: npm run db:seed && npm run db:seed:load
+      - name: Budgets
+        run: npm run test:load
+
+  e2e:
+    name: Browser flows (Playwright)
+    runs-on: ubuntu-latest
+    needs: test
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ajpwer
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ajpwer?schema=public
+      E2E_PASSWORD: ci-admin-password
+      PW_USE_BUNDLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '0'
+      - run: npx prisma generate --schema apps/api/prisma/schema.prisma
+      - run: npx prisma migrate deploy --schema apps/api/prisma/schema.prisma
+      - run: npm run db:seed
+      - name: Start API and web
+        run: |
+          (cd apps/api && npx tsx src/server.ts > ../../api.log 2>&1 &)
+          (cd apps/web && npx vite --port 5173 > ../../web.log 2>&1 &)
+          npx wait-on -t 60000 http://localhost:4000/api/v1/health http://localhost:5173
+      - run: npm run test:e2e
+      - if: failure()
+        run: tail -100 api.log web.log
