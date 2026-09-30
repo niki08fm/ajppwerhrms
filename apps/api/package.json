@@ -13,13 +13,14 @@
     "test:engines": "vitest run test/engines",
     "test:api": "vitest run test/api",
     "test:load": "tsx --env-file-if-exists=../../.env test/load/budgets.ts",
-    "db:migrate": "dotenv -e ../../.env -- prisma migrate dev",
-    "db:deploy": "dotenv -e ../../.env -- prisma migrate deploy",
-    "db:reset": "dotenv -e ../../.env -- prisma migrate reset --force",
+    "db:migrate": "dotenv -e ../../.env -- prisma migrate deploy",
+    "db:reset": "dotenv -e ../../.env -- prisma migrate reset --force --skip-seed",
     "db:seed": "tsx --env-file-if-exists=../../.env prisma/seed.ts",
     "db:seed:load": "tsx --env-file-if-exists=../../.env prisma/seed-load.ts",
     "db:studio": "dotenv -e ../../.env -- prisma studio",
-    "jobs:retention": "tsx --env-file-if-exists=../../.env src/jobs/retention.ts"
+    "jobs:retention": "tsx --env-file-if-exists=../../.env src/jobs/retention.ts",
+    "db:migration:new": "dotenv -e ../../.env -- prisma migrate dev --create-only",
+    "db:deploy": "prisma migrate deploy"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

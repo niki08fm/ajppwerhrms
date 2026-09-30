@@ -1,0 +1,205 @@
+import {
+  esiRatesSchema,
+  gratuityRatesSchema,
+  parsePolicyRules,
+  pfRatesSchema,
+  type ISODate,
+  type PolicyKind,
+  type PtSlab,
+  type StatutoryRates,
+  type TaxRegime,
+} from '@ajpwer/shared';
+import type { AttachedPolicy, ComponentDef } from '../engines';
+import { AppError } from '../lib/errors';
+import { fromDbDate, n, toDbDate } from '../lib/db-dates';
+import type { Db } from '../lib/prisma';
+
+/** The statutory rates row valid on a date: latest valid_from ≤ date. */
+export async function ratesOn(db: Db, date: ISODate): Promise<StatutoryRates & { id: string }> {
+  const row = await db.statutoryRates.findFirst({
+    where: { valid_from: { lte: toDbDate(date) }, deleted_at: null },
+    orderBy: { valid_from: 'desc' },
+  });
+  if (!row) throw new AppError('NOT_FOUND', `No statutory rates are set up for ${date}. Add them under Setup → Statutory rules.`, 409);
+  return {
+    id: row.id,
+    valid_from: fromDbDate(row.valid_from),
+    pf: pfRatesSchema.parse(row.pf),
+    esi: esiRatesSchema.parse(row.esi),
+    gratuity: gratuityRatesSchema.parse(row.gratuity),
+    recovery_cap_pct: Number(row.recovery_cap_pct),
+  };
+}
+
+export async function ratesById(db: Db, id: string): Promise<StatutoryRates & { id: string }> {
+  const row = await db.statutoryRates.findUniqueOrThrow({ where: { id } });
+  return {
+    id: row.id,
+    valid_from: fromDbDate(row.valid_from),
+    pf: pfRatesSchema.parse(row.pf),
+    esi: esiRatesSchema.parse(row.esi),
+    gratuity: gratuityRatesSchema.parse(row.gratuity),
+    recovery_cap_pct: Number(row.recovery_cap_pct),
+  };
+}
+
+export async function ptSlabs(db: Db): Promise<PtSlab[]> {
+  const rows = await db.ptSlab.findMany({ where: { deleted_at: null } });
+  return rows.map((r) => ({
+    state: r.state,
+    gender_scope: r.gender_scope,
+    upto_amount: r.upto_amount === null ? null : n(r.upto_amount),
+    amount: n(r.amount),
+    feb_amount: r.feb_amount === null ? null : n(r.feb_amount),
+  }));
+}
+
+/** Both regimes as valid on a date. */
+export async function regimesOn(db: Db, date: ISODate): Promise<{ NEW: TaxRegime; OLD: TaxRegime }> {
+  const rows = await db.taxRegime.findMany({
+    where: { valid_from: { lte: toDbDate(date) }, deleted_at: null },
+    include: { slabs: { where: { deleted_at: null } } },
+    orderBy: { valid_from: 'desc' },
+  });
+  const pick = (code: 'NEW' | 'OLD'): TaxRegime => {
+    const r = rows.find((x) => x.code === code) ?? null;
+    if (!r) throw new AppError('NOT_FOUND', `The ${code.toLowerCase()} tax regime is not set up for ${date}.`, 409);
+    return {
+      code,
+      name: r.name,
+      valid_from: fromDbDate(r.valid_from),
+      std_deduction: n(r.std_deduction),
+      rebate_limit: n(r.rebate_limit),
+      rebate_max: r.rebate_max === null ? null : n(r.rebate_max),
+      marginal_relief: r.marginal_relief,
+      allows_80c: r.allows_80c,
+      allows_hra: r.allows_hra,
+      cess_pct: Number(r.cess_pct),
+      slabs: r.slabs.map((s) => ({ upto_amount: s.upto_amount === null ? null : n(s.upto_amount), rate: Number(s.rate) })),
+    };
+  };
+  return { NEW: pick('NEW'), OLD: pick('OLD') };
+}
+
+export function toComponentDefs(
+  rows: { id: string; seq: number; name: string; calc_type: ComponentDef['calc_type']; calc_value: unknown; frequency: ComponentDef['frequency']; pay_month: number | null; is_taxable: boolean; counts_as_wages: boolean; colour: string }[],
+): ComponentDef[] {
+  return rows
+    .map((c) => ({
+      id: c.id,
+      seq: c.seq,
+      name: c.name,
+      calc_type: c.calc_type,
+      calc_value: Number(c.calc_value),
+      frequency: c.frequency,
+      pay_month: c.pay_month,
+      is_taxable: c.is_taxable,
+      counts_as_wages: c.counts_as_wages,
+      colour: c.colour,
+    }))
+    .sort((a, b) => a.seq - b.seq);
+}
+
+export async function structureComponents(db: Db, structureId: string): Promise<ComponentDef[]> {
+  const rows = await db.salaryComponent.findMany({ where: { structure_id: structureId, deleted_at: null }, orderBy: { seq: 'asc' } });
+  return toComponentDefs(rows);
+}
+
+export function toAttachedPolicy(p: {
+  id: string;
+  policy_key: string;
+  kind: PolicyKind;
+  name: string;
+  version: number;
+  valid_from: Date;
+  valid_to: Date | null;
+  rules: unknown;
+}): AttachedPolicy {
+  return {
+    id: p.id,
+    policy_key: p.policy_key,
+    kind: p.kind,
+    name: p.name,
+    version: p.version,
+    valid_from: fromDbDate(p.valid_from),
+    valid_to: fromDbDate(p.valid_to),
+    rules: parsePolicyRules(p.kind, p.rules),
+  } as AttachedPolicy;
+}
+
+export interface PayGroupRules {
+  id: string;
+  name: string;
+  calendar_method: 'FIXED_26' | 'FIXED_30' | 'ACTUAL' | 'WORKING';
+  weekly_off: string[];
+  shift: { id: string; name: string; start_min: number; end_min: number; break_min: number; crosses_midnight: boolean };
+  structure_id: string;
+  policies: AttachedPolicy[];
+}
+
+export async function payGroupRules(db: Db, payGroupId: string): Promise<PayGroupRules> {
+  const g = await db.payGroup.findUniqueOrThrow({
+    where: { id: payGroupId },
+    include: { shift: true, policies: { where: { deleted_at: null }, include: { policy: true } } },
+  });
+  return {
+    id: g.id,
+    name: g.name,
+    calendar_method: g.calendar_method,
+    weekly_off: g.weekly_off,
+    shift: g.shift,
+    structure_id: g.structure_id,
+    policies: g.policies.filter((x) => !x.policy.deleted_at).map((x) => toAttachedPolicy(x.policy)),
+  };
+}
+
+/** Cache of pay group rules for bulk work (a payroll run, the register). */
+export function payGroupRulesCache(db: Db) {
+  const cache = new Map<string, Promise<PayGroupRules>>();
+  return (id: string) => {
+    let p = cache.get(id);
+    if (!p) {
+      p = payGroupRules(db, id);
+      cache.set(id, p);
+    }
+    return p;
+  };
+}
+
+export async function holidaysBetween(db: Db, from: ISODate, to: ISODate): Promise<Map<ISODate, string>> {
+  const rows = await db.holiday.findMany({ where: { date: { gte: toDbDate(from), lte: toDbDate(to) }, deleted_at: null } });
+  return new Map(rows.map((h) => [fromDbDate(h.date), h.name]));
+}
+
+export interface SalaryOn {
+  id: string;
+  mode: 'CTC' | 'GROSS';
+  amount: number;
+  monthly_gross: number;
+  structure_id: string;
+  valid_from: ISODate;
+  valid_to: ISODate | null;
+}
+
+/** The salary record valid on a date. */
+export async function salaryOn(db: Db, employeeId: string, date: ISODate): Promise<SalaryOn | null> {
+  const row = await db.employeeSalary.findFirst({
+    where: {
+      employee_id: employeeId,
+      deleted_at: null,
+      valid_from: { lte: toDbDate(date) },
+      OR: [{ valid_to: null }, { valid_to: { gte: toDbDate(date) } }],
+    },
+    orderBy: { valid_from: 'desc' },
+  });
+  if (!row) return null;
+  return {
+    id: row.id,
+    mode: row.mode,
+    amount: n(row.amount),
+    monthly_gross: n(row.monthly_gross),
+    structure_id: row.structure_id,
+    valid_from: fromDbDate(row.valid_from),
+    valid_to: fromDbDate(row.valid_to),
+  };
+}

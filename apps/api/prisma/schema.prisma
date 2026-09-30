@@ -1,0 +1,1133 @@
+// AJPWER Workforce — PostgreSQL 16 schema.
+//
+// Money columns are BigInt holding PAISE (₹24,000.50 = 2400050).
+// Rates and percentages are Decimal(9,6). Never float near money.
+// Every table has id / created_at / updated_at / deleted_at (soft delete).
+// Nothing referenced by a payroll run is ever hard-deleted.
+//
+// Constraints that must live in the database (triggers, exclusion constraints,
+// partial and trigram indexes, revoked grants) are in the raw SQL migration
+// `prisma/migrations/*_constraints/migration.sql`.
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pg_trgm, btree_gist, pgcrypto]
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum EmployeeStatus {
+  OFFER
+  ACCEPTED
+  ONBOARDING
+  ACTIVE
+  NOTICE
+  EXITED
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum PolicyKind {
+  ATTENDANCE
+  OVERTIME
+  WEEKOFF_PAY
+  HOLIDAY_PAY
+  HOLIDAY_WORK
+  LATE_PENALTY
+  LEAVE
+}
+
+enum PolicyStatus {
+  ACTIVE
+  RETIRED
+}
+
+enum CalcType {
+  PCT_GROSS
+  PCT_BASIC
+  FIXED
+  BALANCE
+}
+
+enum Frequency {
+  MONTHLY
+  YEARLY
+}
+
+enum CalendarMethod {
+  FIXED_26
+  FIXED_30
+  ACTUAL
+  WORKING
+}
+
+enum SalaryMode {
+  CTC
+  GROSS
+}
+
+enum PtGenderScope {
+  ALL
+  MALE
+  FEMALE
+}
+
+enum PunchDirection {
+  IN
+  OUT
+}
+
+enum PunchMethod {
+  FACE
+  MANUAL
+  EXCEPTION
+}
+
+enum DayStatus {
+  NOT_JOINED
+  EXITED
+  HOLIDAY_WORKED
+  HOLIDAY
+  OFF_WORKED
+  WEEKLY_OFF
+  ON_LEAVE
+  ABSENT
+  MISSING_PUNCH
+  PRESENT
+  HALF_DAY
+  SHORT
+}
+
+enum OverrideReason {
+  FORGOT_TO_PUNCH
+  DEVICE_DOWN
+  NO_NETWORK
+  SITE_INSTRUCTION
+  LATE_APPROVED
+  DATA_ERROR
+  OTHER
+}
+
+enum FaceExceptionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum PeriodState {
+  DRAFT
+  RUN
+  LOCKED
+  PAID
+}
+
+enum PayslipLineKind {
+  COMPONENT
+  YEARLY
+  OT
+  OFFDAY
+  ADHOC
+  DEDUCTION
+  REIMBURSEMENT
+  EMPLOYER
+}
+
+enum AdhocKind {
+  EARNING
+  REIMBURSEMENT
+  DEDUCTION
+}
+
+enum AdhocTarget {
+  EMPLOYEE
+  PAY_GROUP
+  DEPARTMENT
+  ALL
+}
+
+enum SettlementState {
+  OPEN
+  INCLUDED
+  PAID
+}
+
+enum LoanStatus {
+  ACTIVE
+  CLOSED
+}
+
+enum LetterKind {
+  OFFER
+  JOINING
+  REVISION
+  RELIEVING
+  EXPERIENCE
+  SETTLEMENT
+}
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  DONE
+  FAILED
+}
+
+// ─── Access ──────────────────────────────────────────────────────────────────
+
+/// Permission lookup. One role (HR admin) today; adding an accounts role is a data change.
+model Role {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String    @unique
+  permissions String[]
+  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime? @updatedAt @db.Timestamptz(6)
+  deleted_at  DateTime? @db.Timestamptz(6)
+  users       AppUser[]
+
+  @@map("role")
+}
+
+model AppUser {
+  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email          String      @unique
+  name           String
+  password_hash  String
+  role_id        String      @db.Uuid
+  role           Role        @relation(fields: [role_id], references: [id])
+  last_login_at  DateTime?   @db.Timestamptz(6)
+  created_at     DateTime    @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime?   @updatedAt @db.Timestamptz(6)
+  deleted_at     DateTime?   @db.Timestamptz(6)
+  saved_views    SavedView[]
+
+  @@map("app_user")
+}
+
+model SavedView {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id    String    @db.Uuid
+  user       AppUser   @relation(fields: [user_id], references: [id])
+  list       String
+  name       String
+  query      String
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at DateTime? @updatedAt @db.Timestamptz(6)
+  deleted_at DateTime? @db.Timestamptz(6)
+
+  @@unique([user_id, list, name])
+  @@map("saved_view")
+}
+
+model LoginAttempt {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key        String
+  ip         String?
+  success    Boolean
+  at         DateTime @default(now()) @db.Timestamptz(6)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([key, at(sort: Desc)])
+  @@index([ip, at(sort: Desc)])
+  @@map("login_attempt")
+}
+
+model IdempotencyKey {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key         String
+  scope       String
+  status_code Int
+  response    Json
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([scope, key])
+  @@map("idempotency_key")
+}
+
+model Job {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  kind        String
+  status      JobStatus @default(QUEUED)
+  progress    Int       @default(0)
+  total       Int       @default(0)
+  params      Json
+  result      Json?
+  error       String?
+  file_key    String?
+  created_by  String?
+  started_at  DateTime? @db.Timestamptz(6)
+  finished_at DateTime? @db.Timestamptz(6)
+  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime? @updatedAt @db.Timestamptz(6)
+
+  @@index([kind, created_at(sort: Desc)])
+  @@map("job")
+}
+
+// ─── Organisation and places ────────────────────────────────────────────────
+
+model Company {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name       String
+  address    String?
+  pan        String?
+  tan        String?
+  pf_code    String?
+  esi_code   String?
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at DateTime? @updatedAt @db.Timestamptz(6)
+  deleted_at DateTime? @db.Timestamptz(6)
+
+  @@map("company")
+}
+
+model Project {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code           String    @unique
+  name           String
+  client         String?
+  contract_value BigInt    @default(0)
+  budget_labour  BigInt    @default(0)
+  material_cost  BigInt    @default(0)
+  other_cost     BigInt    @default(0)
+  started_on     DateTime? @db.Date
+  created_at     DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime? @updatedAt @db.Timestamptz(6)
+  deleted_at     DateTime? @db.Timestamptz(6)
+  sites          Site[]
+
+  @@map("project")
+}
+
+/// A place with a boundary and a login. NOT a group of people: no employee has a site_id.
+model Site {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code            String          @unique
+  name            String
+  state           String
+  lat             Decimal         @db.Decimal(9, 6)
+  lng             Decimal         @db.Decimal(9, 6)
+  radius_m        Int
+  project_id      String?         @db.Uuid
+  project         Project?        @relation(fields: [project_id], references: [id])
+  login           String          @unique
+  password_hash   String
+  /// Bumped on password rotation: invalidates every tablet token for this site
+  token_version   Int             @default(1)
+  is_active       Boolean         @default(true)
+  created_on      DateTime        @default(now()) @db.Date
+  created_at      DateTime        @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime?       @updatedAt @db.Timestamptz(6)
+  deleted_at      DateTime?       @db.Timestamptz(6)
+  punches         Punch[]
+  face_exceptions FaceException[]
+
+  @@map("site")
+}
+
+model Department {
+  id         String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name       String     @unique
+  colour     String     @default("chart-1")
+  created_at DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at DateTime?  @updatedAt @db.Timestamptz(6)
+  deleted_at DateTime?  @db.Timestamptz(6)
+  employees  Employee[]
+
+  @@map("department")
+}
+
+/// Company-wide.
+model Holiday {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  date       DateTime  @unique @db.Date
+  name       String
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at DateTime? @updatedAt @db.Timestamptz(6)
+  deleted_at DateTime? @db.Timestamptz(6)
+
+  @@map("holiday")
+}
+
+/// Minutes from midnight: 09:00 is 540.
+model Shift {
+  id               String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String     @unique
+  start_min        Int
+  end_min          Int
+  break_min        Int        @default(0)
+  crosses_midnight Boolean    @default(false)
+  created_at       DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime?  @updatedAt @db.Timestamptz(6)
+  deleted_at       DateTime?  @db.Timestamptz(6)
+  pay_groups       PayGroup[]
+
+  @@map("shift")
+}
+
+// ─── Rules ───────────────────────────────────────────────────────────────────
+
+/// Never edited. A new version closes the old one the day before and is attached wherever the old one was.
+model Policy {
+  id         String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  policy_key String           @db.Uuid
+  kind       PolicyKind
+  name       String
+  version    Int
+  valid_from DateTime         @db.Date
+  valid_to   DateTime?        @db.Date
+  status     PolicyStatus     @default(ACTIVE)
+  rules      Json
+  created_by String?
+  created_at DateTime         @default(now()) @db.Timestamptz(6)
+  updated_at DateTime?        @updatedAt @db.Timestamptz(6)
+  deleted_at DateTime?        @db.Timestamptz(6)
+  pay_groups PayGroupPolicy[]
+
+  @@unique([policy_key, version])
+  @@index([policy_key, valid_from])
+  @@index([kind])
+  @@map("policy")
+}
+
+/// Never edited in place. A structure referenced by a payslip is immutable.
+model SalaryStructure {
+  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name            String
+  valid_from      DateTime          @db.Date
+  duplicated_from String?           @db.Uuid
+  created_by      String?
+  created_at      DateTime          @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime?         @updatedAt @db.Timestamptz(6)
+  deleted_at      DateTime?         @db.Timestamptz(6)
+  components      SalaryComponent[]
+  pay_groups      PayGroup[]
+  salaries        EmployeeSalary[]
+  offers          Offer[]
+
+  @@map("salary_structure")
+}
+
+model SalaryComponent {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  structure_id    String          @db.Uuid
+  structure       SalaryStructure @relation(fields: [structure_id], references: [id])
+  seq             Int
+  name            String
+  calc_type       CalcType
+  /// Percentage for PCT_*, paise for FIXED
+  calc_value      Decimal         @db.Decimal(14, 6)
+  frequency       Frequency       @default(MONTHLY)
+  pay_month       Int?
+  is_taxable      Boolean         @default(true)
+  /// Decides which components form the PF base, and nothing else
+  counts_as_wages Boolean         @default(false)
+  colour          String          @default("chart-1")
+  created_at      DateTime        @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime?       @updatedAt @db.Timestamptz(6)
+  deleted_at      DateTime?       @db.Timestamptz(6)
+
+  @@unique([structure_id, seq])
+  @@map("salary_component")
+}
+
+/// The centre of gravity: calendar, weekly off, shift, structure and every policy hang off here.
+model PayGroup {
+  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name            String           @unique
+  frequency       String           @default("MONTHLY")
+  calendar_method CalendarMethod
+  weekly_off      String[]
+  shift_id        String           @db.Uuid
+  shift           Shift            @relation(fields: [shift_id], references: [id])
+  structure_id    String           @db.Uuid
+  structure       SalaryStructure  @relation(fields: [structure_id], references: [id])
+  pay_day         Int              @default(1)
+  created_at      DateTime         @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime?        @updatedAt @db.Timestamptz(6)
+  deleted_at      DateTime?        @db.Timestamptz(6)
+  policies        PayGroupPolicy[]
+  employees       Employee[]
+  periods         PayrollPeriod[]
+
+  @@map("pay_group")
+}
+
+model PayGroupPolicy {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  pay_group_id String    @db.Uuid
+  pay_group    PayGroup  @relation(fields: [pay_group_id], references: [id])
+  policy_id    String    @db.Uuid
+  policy       Policy    @relation(fields: [policy_id], references: [id])
+  created_at   DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime? @updatedAt @db.Timestamptz(6)
+  deleted_at   DateTime? @db.Timestamptz(6)
+
+  @@unique([pay_group_id, policy_id])
+  @@map("pay_group_policy")
+}
+
+/// Versioned; a payroll run stores which row it used.
+model StatutoryRates {
+  id               String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  valid_from       DateTime        @unique @db.Date
+  pf               Json
+  esi              Json
+  gratuity         Json
+  recovery_cap_pct Decimal         @db.Decimal(9, 6)
+  created_by       String?
+  created_at       DateTime        @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime?       @updatedAt @db.Timestamptz(6)
+  deleted_at       DateTime?       @db.Timestamptz(6)
+  periods          PayrollPeriod[]
+
+  @@map("statutory_rates")
+}
+
+model PtSlab {
+  id           String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  state        String
+  gender_scope PtGenderScope @default(ALL)
+  /// Inclusive upper bound, paise. Null is the top slab.
+  upto_amount  BigInt?
+  amount       BigInt
+  feb_amount   BigInt?
+  created_at   DateTime      @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime?     @updatedAt @db.Timestamptz(6)
+  deleted_at   DateTime?     @db.Timestamptz(6)
+
+  @@index([state])
+  @@map("pt_slab")
+}
+
+model TaxRegime {
+  id              String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code            String
+  name            String
+  valid_from      DateTime   @db.Date
+  std_deduction   BigInt
+  rebate_limit    BigInt
+  rebate_max      BigInt?
+  marginal_relief Boolean
+  allows_80c      Boolean
+  allows_hra      Boolean
+  cess_pct        Decimal    @db.Decimal(9, 6)
+  created_at      DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime?  @updatedAt @db.Timestamptz(6)
+  deleted_at      DateTime?  @db.Timestamptz(6)
+  slabs           TaxSlab[]
+
+  @@unique([code, valid_from])
+  @@map("tax_regime")
+}
+
+model TaxSlab {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  regime_id   String    @db.Uuid
+  regime      TaxRegime @relation(fields: [regime_id], references: [id])
+  upto_amount BigInt?
+  rate        Decimal   @db.Decimal(9, 6)
+  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime? @updatedAt @db.Timestamptz(6)
+  deleted_at  DateTime? @db.Timestamptz(6)
+
+  @@map("tax_slab")
+}
+
+// ─── People ──────────────────────────────────────────────────────────────────
+
+/// No site_id. Nobody belongs to a site; where someone punched is where they worked.
+model Employee {
+  id                 String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code               String              @unique
+  name               String
+  dob                DateTime?           @db.Date
+  gender             Gender
+  phone              String
+  email              String?
+  address            String?
+  blood_group        String?
+  department_id      String              @db.Uuid
+  department         Department          @relation(fields: [department_id], references: [id])
+  designation        String
+  pay_group_id       String              @db.Uuid
+  pay_group          PayGroup            @relation(fields: [pay_group_id], references: [id])
+  status             EmployeeStatus      @default(OFFER)
+  joined_on          DateTime            @db.Date
+  resigned_on        DateTime?           @db.Date
+  last_day           DateTime?           @db.Date
+  notice_days        Int                 @default(30)
+  notice_served_days Int?
+  exit_reason        String?
+  activated_at       DateTime?           @db.Timestamptz(6)
+  created_at         DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime?           @updatedAt @db.Timestamptz(6)
+  deleted_at         DateTime?           @db.Timestamptz(6)
+  identity           EmployeeIdentity?
+  statutory          EmployeeStatutory?
+  salaries           EmployeeSalary[]
+  faces              EmployeeFace[]
+  offers             Offer[]
+  onboarding_tasks   OnboardingTask[]
+  documents          Document[]
+  letters            Letter[]
+  punches            Punch[]
+  overrides          AttendanceOverride[]
+  leave_requests     LeaveRequest[]
+  leave_balances     LeaveBalance[]
+  payslips           Payslip[]
+  exclusions         PayrollExclusion[]
+  settlements        Settlement[]
+  advances           Advance[]
+  loans              Loan[]
+  recovery_carries   RecoveryCarry[]
+
+  @@index([pay_group_id])
+  @@index([department_id])
+  @@map("employee")
+}
+
+/// The PII table. PAN, Aadhaar and bank details are encrypted at rest (AES-256-GCM); every read is logged.
+model EmployeeIdentity {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id    String    @unique @db.Uuid
+  employee       Employee  @relation(fields: [employee_id], references: [id])
+  pan_enc        String?
+  aadhaar_enc    String?
+  /// XXXX XXXX 1234 — the only form Aadhaar is ever displayed or exported in
+  aadhaar_masked String?
+  uan            String?
+  esi_number     String?
+  bank_account_enc String?
+  bank_last4     String?
+  bank_ifsc      String?
+  bank_name      String?
+  created_at     DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime? @updatedAt @db.Timestamptz(6)
+  deleted_at     DateTime? @db.Timestamptz(6)
+
+  @@map("employee_identity")
+}
+
+/// Statutory choices are personal: they depend on the person, not the group.
+model EmployeeStatutory {
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id            String    @unique @db.Uuid
+  employee               Employee  @relation(fields: [employee_id], references: [id])
+  pf_enabled             Boolean   @default(true)
+  pf_restrict_to_ceiling Boolean   @default(true)
+  vpf_pct                Decimal   @default(0) @db.Decimal(9, 6)
+  esi_enabled            Boolean   @default(true)
+  /// Covered until this date by the contribution-period rule
+  esi_locked_until       DateTime? @db.Date
+  pt_applicable          Boolean   @default(true)
+  pt_exempt_reason       String?
+  pt_state               String
+  tax_regime_code        String    @default("NEW")
+  decl_80c               BigInt    @default(0)
+  decl_80d               BigInt    @default(0)
+  decl_rent_monthly      BigInt    @default(0)
+  decl_metro             Boolean   @default(false)
+  created_at             DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at             DateTime? @updatedAt @db.Timestamptz(6)
+  deleted_at             DateTime? @db.Timestamptz(6)
+
+  @@map("employee_statutory")
+}
+
+/// Effective-dated. Never overwritten: a revision closes the old row and inserts a new one.
+/// An exclusion constraint prevents two rows overlapping in date.
+model EmployeeSalary {
+  id           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id  String          @db.Uuid
+  employee     Employee        @relation(fields: [employee_id], references: [id])
+  valid_from   DateTime        @db.Date
+  valid_to     DateTime?       @db.Date
+  mode         SalaryMode
+  /// Annual for CTC, monthly for GROSS
+  amount       BigInt
+  /// The monthly gross this record resolves to (solved once, at save, for CTC)
+  monthly_gross BigInt
+  structure_id String          @db.Uuid
+  structure    SalaryStructure @relation(fields: [structure_id], references: [id])
+  reason       String
+  created_by   String?
+  created_at   DateTime        @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime?       @updatedAt @db.Timestamptz(6)
+  deleted_at   DateTime?       @db.Timestamptz(6)
+
+  @@index([employee_id, valid_from(sort: Desc)])
+  @@map("employee_salary")
+}
+
+model EmployeeFace {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id   String    @db.Uuid
+  employee      Employee  @relation(fields: [employee_id], references: [id])
+  /// Float32 embedding. Embeddings, not photographs, are stored for matching.
+  embedding     Bytes
+  enrolled_at   DateTime  @default(now()) @db.Timestamptz(6)
+  model_version String
+  consent_at    DateTime  @db.Timestamptz(6)
+  created_at    DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime? @updatedAt @db.Timestamptz(6)
+  deleted_at    DateTime? @db.Timestamptz(6)
+
+  @@index([employee_id])
+  @@map("employee_face")
+}
+
+model Offer {
+  id           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id  String          @db.Uuid
+  employee     Employee        @relation(fields: [employee_id], references: [id])
+  ref          String          @unique
+  mode         SalaryMode
+  amount       BigInt
+  monthly_gross BigInt
+  structure_id String          @db.Uuid
+  structure    SalaryStructure @relation(fields: [structure_id], references: [id])
+  issued_on    DateTime        @db.Date
+  join_by      DateTime        @db.Date
+  valid_till   DateTime        @db.Date
+  accepted_on  DateTime?       @db.Date
+  created_at   DateTime        @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime?       @updatedAt @db.Timestamptz(6)
+  deleted_at   DateTime?       @db.Timestamptz(6)
+
+  @@map("offer")
+}
+
+/// The task catalogue is a constant (ONBOARDING_TASKS), not a table.
+model OnboardingTask {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id String    @db.Uuid
+  employee    Employee  @relation(fields: [employee_id], references: [id])
+  task_code   String
+  done_at     DateTime? @db.Timestamptz(6)
+  done_by     String?
+  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime? @updatedAt @db.Timestamptz(6)
+  deleted_at  DateTime? @db.Timestamptz(6)
+
+  @@unique([employee_id, task_code])
+  @@map("onboarding_task")
+}
+
+model Document {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id  String    @db.Uuid
+  employee     Employee  @relation(fields: [employee_id], references: [id])
+  doc_type     String
+  collected_on DateTime  @db.Date
+  expires_on   DateTime? @db.Date
+  verified_at  DateTime? @db.Timestamptz(6)
+  file_key     String?
+  file_name    String?
+  created_at   DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime? @updatedAt @db.Timestamptz(6)
+  deleted_at   DateTime? @db.Timestamptz(6)
+
+  @@index([employee_id])
+  @@index([expires_on])
+  @@map("document")
+}
+
+/// snapshot freezes the figures the letter stated, so it reprints years later as issued.
+model Letter {
+  id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id String     @db.Uuid
+  employee    Employee   @relation(fields: [employee_id], references: [id])
+  kind        LetterKind
+  ref         String     @unique
+  issued_on   DateTime?  @db.Date
+  snapshot    Json
+  created_at  DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime?  @updatedAt @db.Timestamptz(6)
+  deleted_at  DateTime?  @db.Timestamptz(6)
+
+  @@index([employee_id])
+  @@map("letter")
+}
+
+// ─── Attendance ──────────────────────────────────────────────────────────────
+
+/// APPEND-ONLY. No update, no delete (enforced by trigger and revoked grants).
+/// work_date is set by the server in Asia/Kolkata, never by the device.
+model Punch {
+  id               String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id      String         @db.Uuid
+  employee         Employee       @relation(fields: [employee_id], references: [id])
+  punched_at       DateTime       @db.Timestamptz(6)
+  work_date        DateTime       @db.Date
+  direction        PunchDirection
+  site_id          String         @db.Uuid
+  site             Site           @relation(fields: [site_id], references: [id])
+  method           PunchMethod
+  match_score      Decimal?       @db.Decimal(9, 6)
+  /// Distance from the site centre — never a raw coordinate
+  distance_m       Int?
+  device_id        String?
+  client_punched_at DateTime      @db.Timestamptz(6)
+  /// Arrived more than an hour after it was taken (offline queue) or the device clock was off
+  flagged          Boolean        @default(false)
+  flag_reason      String?
+  source_ref       String?
+  created_at       DateTime       @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime?      @db.Timestamptz(6)
+  deleted_at       DateTime?      @db.Timestamptz(6)
+
+  @@unique([employee_id, site_id, client_punched_at])
+  @@index([employee_id, work_date])
+  @@index([site_id, work_date])
+  @@index([work_date])
+  @@map("punch")
+}
+
+/// Layer 2: what a human decided. Stores what was computed alongside what was substituted.
+model AttendanceOverride {
+  id                String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id       String         @db.Uuid
+  employee          Employee       @relation(fields: [employee_id], references: [id])
+  work_date         DateTime       @db.Date
+  status            DayStatus
+  day_value         Decimal        @db.Decimal(4, 2)
+  worked_min        Int
+  ot_min            Int
+  late_min          Int
+  reason_code       OverrideReason
+  reason_text       String
+  created_by        String
+  computed_snapshot Json
+  created_at        DateTime       @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime?      @updatedAt @db.Timestamptz(6)
+  deleted_at        DateTime?      @db.Timestamptz(6)
+
+  @@unique([employee_id, work_date])
+  @@map("attendance_override")
+}
+
+model FaceException {
+  id                  String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  site_id             String              @db.Uuid
+  site                Site                @relation(fields: [site_id], references: [id])
+  occurred_at         DateTime            @db.Timestamptz(6)
+  claimed_employee_id String?             @db.Uuid
+  best_match_id       String?             @db.Uuid
+  score               Decimal?            @db.Decimal(9, 6)
+  reason              String
+  direction           PunchDirection?
+  distance_m          Int?
+  /// Gate snapshot — deleted automatically after 30 days
+  snapshot_key        String?
+  status              FaceExceptionStatus @default(PENDING)
+  decided_by          String?
+  decided_at          DateTime?           @db.Timestamptz(6)
+  decision_reason     String?
+  decided_employee_id String?             @db.Uuid
+  punch_id            String?             @db.Uuid
+  created_at          DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime?           @updatedAt @db.Timestamptz(6)
+  deleted_at          DateTime?           @db.Timestamptz(6)
+
+  @@index([status, occurred_at])
+  @@map("face_exception")
+}
+
+model LeaveRequest {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id String      @db.Uuid
+  employee    Employee    @relation(fields: [employee_id], references: [id])
+  leave_type  String
+  from_date   DateTime    @db.Date
+  to_date     DateTime    @db.Date
+  days        Decimal     @db.Decimal(5, 2)
+  reason      String?
+  status      LeaveStatus @default(PENDING)
+  decided_by  String?
+  decided_at  DateTime?   @db.Timestamptz(6)
+  decision_note String?
+  created_at  DateTime    @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime?   @updatedAt @db.Timestamptz(6)
+  deleted_at  DateTime?   @db.Timestamptz(6)
+
+  @@index([employee_id, from_date])
+  @@index([status])
+  @@map("leave_request")
+}
+
+/// Recomputed nightly — a convenience, not a source of truth.
+model LeaveBalance {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id String    @db.Uuid
+  employee    Employee  @relation(fields: [employee_id], references: [id])
+  leave_type  String
+  year        Int
+  accrued     Decimal   @db.Decimal(6, 2)
+  used        Decimal   @db.Decimal(6, 2)
+  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime? @updatedAt @db.Timestamptz(6)
+  deleted_at  DateTime? @db.Timestamptz(6)
+
+  @@unique([employee_id, leave_type, year])
+  @@map("leave_balance")
+}
+
+/// Cached daily aggregates for the dashboard, written nightly and updated on each punch.
+model DailyAggregate {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  date         DateTime  @db.Date
+  site_id      String?   @db.Uuid
+  present      Int       @default(0)
+  worked_min   Int       @default(0)
+  headcount    Int       @default(0)
+  late         Int       @default(0)
+  data         Json?
+  created_at   DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime? @updatedAt @db.Timestamptz(6)
+
+  @@unique([date, site_id])
+  @@map("daily_aggregate")
+}
+
+// ─── Payroll ─────────────────────────────────────────────────────────────────
+
+model PayrollPeriod {
+  id                 String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  period_ym          String             @unique
+  pay_group_id       String?            @db.Uuid
+  pay_group          PayGroup?          @relation(fields: [pay_group_id], references: [id])
+  state              PeriodState        @default(DRAFT)
+  steps_submitted    Int[]              @default([])
+  step_log           Json               @default("[]")
+  /// Set atomically while a run is in flight; a second run is rejected, not queued
+  running_job_id     String?            @db.Uuid
+  run_at             DateTime?          @db.Timestamptz(6)
+  run_by             String?
+  locked_at          DateTime?          @db.Timestamptz(6)
+  paid_at            DateTime?          @db.Timestamptz(6)
+  payment_ref        String?            @unique
+  statutory_rates_id String?            @db.Uuid
+  statutory_rates    StatutoryRates?    @relation(fields: [statutory_rates_id], references: [id])
+  settlement_ids     String[]           @default([])
+  totals             Json?
+  created_at         DateTime           @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime?          @updatedAt @db.Timestamptz(6)
+  deleted_at         DateTime?          @db.Timestamptz(6)
+  exclusions         PayrollExclusion[]
+  payslips           Payslip[]
+  settlements        Settlement[]
+
+  @@map("payroll_period")
+}
+
+model PayrollExclusion {
+  id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  period_id   String        @db.Uuid
+  period      PayrollPeriod @relation(fields: [period_id], references: [id])
+  employee_id String        @db.Uuid
+  employee    Employee      @relation(fields: [employee_id], references: [id])
+  reason      String
+  /// Set when the person is paid in a later run; until then they stay on the held-back list
+  resolved_at DateTime?     @db.Timestamptz(6)
+  created_by  String?
+  created_at  DateTime      @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime?     @updatedAt @db.Timestamptz(6)
+  deleted_at  DateTime?     @db.Timestamptz(6)
+
+  @@unique([period_id, employee_id])
+  @@map("payroll_exclusion")
+}
+
+/// The snapshot. Once its period is LOCKED or PAID it cannot be updated (trigger).
+model Payslip {
+  id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  period_id        String        @db.Uuid
+  period           PayrollPeriod @relation(fields: [period_id], references: [id])
+  employee_id      String        @db.Uuid
+  employee         Employee      @relation(fields: [employee_id], references: [id])
+  gross            BigInt
+  salary_gross     BigInt
+  adhoc_earnings   BigInt        @default(0)
+  total_deductions BigInt
+  reimbursements   BigInt
+  net              BigInt
+  employer_total   BigInt
+  ctc_month        BigInt
+  pf_wage          BigInt
+  esi_applicable   Boolean
+  paid_days        Decimal       @db.Decimal(5, 2)
+  lop_days         Decimal       @db.Decimal(5, 2)
+  divisor          Int
+  /// Frozen context: employee, department, pay group, bank, attendance totals, rules applied
+  meta             Json
+  computed_at      DateTime      @db.Timestamptz(6)
+  engine_version   String
+  created_at       DateTime      @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime?     @updatedAt @db.Timestamptz(6)
+  deleted_at       DateTime?     @db.Timestamptz(6)
+  lines            PayslipLine[]
+
+  @@unique([period_id, employee_id])
+  @@index([period_id])
+  @@index([employee_id, period_id])
+  @@index([period_id, net(sort: Desc)])
+  @@map("payslip")
+}
+
+model PayslipLine {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  payslip_id      String          @db.Uuid
+  payslip         Payslip         @relation(fields: [payslip_id], references: [id], onDelete: Cascade)
+  seq             Int
+  kind            PayslipLineKind
+  code            String
+  name            String
+  full_amount     BigInt
+  amount          BigInt
+  is_taxable      Boolean
+  counts_as_wages Boolean
+  created_at      DateTime        @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime?       @updatedAt @db.Timestamptz(6)
+  deleted_at      DateTime?       @db.Timestamptz(6)
+
+  @@index([payslip_id])
+  @@map("payslip_line")
+}
+
+/// Targets resolve at run time.
+model AdhocItem {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  period_ym   String
+  kind        AdhocKind
+  name        String
+  amount      BigInt
+  is_taxable  Boolean
+  target_type AdhocTarget
+  target_ids  String[]
+  note        String
+  created_by  String?
+  created_at  DateTime    @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime?   @updatedAt @db.Timestamptz(6)
+  deleted_at  DateTime?   @db.Timestamptz(6)
+
+  @@index([period_ym])
+  @@map("adhoc_item")
+}
+
+model Settlement {
+  id               String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id      String          @db.Uuid
+  employee         Employee        @relation(fields: [employee_id], references: [id])
+  last_day         DateTime        @db.Date
+  period_id        String?         @db.Uuid
+  period           PayrollPeriod?  @relation(fields: [period_id], references: [id])
+  earnings         Json
+  deductions       Json
+  total_earnings   BigInt
+  total_deductions BigInt
+  net              BigInt
+  clearance        Json            @default("[]")
+  state            SettlementState @default(OPEN)
+  /// For a negative net: WRITE_OFF or PURSUE — a deliberate decision is required
+  recoverable_decision String?
+  paid_at          DateTime?       @db.Timestamptz(6)
+  created_at       DateTime        @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime?       @updatedAt @db.Timestamptz(6)
+  deleted_at       DateTime?       @db.Timestamptz(6)
+
+  @@index([employee_id])
+  @@map("settlement")
+}
+
+model Advance {
+  id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id String     @db.Uuid
+  employee    Employee   @relation(fields: [employee_id], references: [id])
+  amount      BigInt
+  reason      String
+  granted_on  DateTime   @db.Date
+  instalment  BigInt
+  recovered   BigInt     @default(0)
+  status      LoanStatus @default(ACTIVE)
+  created_by  String?
+  created_at  DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime?  @updatedAt @db.Timestamptz(6)
+  deleted_at  DateTime?  @db.Timestamptz(6)
+
+  @@index([employee_id])
+  @@map("advance")
+}
+
+model Loan {
+  id                String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id       String     @db.Uuid
+  employee          Employee   @relation(fields: [employee_id], references: [id])
+  loan_type         String
+  principal         BigInt
+  months            Int
+  emi               BigInt
+  instalments_paid  Int        @default(0)
+  recovered         BigInt     @default(0)
+  started_on        DateTime   @db.Date
+  status            LoanStatus @default(ACTIVE)
+  created_by        String?
+  created_at        DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime?  @updatedAt @db.Timestamptz(6)
+  deleted_at        DateTime?  @db.Timestamptz(6)
+
+  @@index([employee_id])
+  @@map("loan")
+}
+
+/// What the recovery cap pushed into the next month.
+model RecoveryCarry {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id String    @db.Uuid
+  employee    Employee  @relation(fields: [employee_id], references: [id])
+  /// The month the carry is to be taken in
+  period_ym   String
+  amount      BigInt
+  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime? @updatedAt @db.Timestamptz(6)
+  deleted_at  DateTime? @db.Timestamptz(6)
+
+  @@unique([employee_id, period_ym])
+  @@map("recovery_carry")
+}
+
+/// INSERT-ONLY (trigger + revoked grants).
+model AuditLog {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  at          DateTime  @default(now()) @db.Timestamptz(6)
+  actor       String
+  action      String
+  entity_type String
+  entity_id   String?
+  detail      Json      @default("{}")
+  ip          String?
+  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime? @db.Timestamptz(6)
+  deleted_at  DateTime? @db.Timestamptz(6)
+
+  @@index([entity_type, entity_id, at(sort: Desc)])
+  @@index([at(sort: Desc)])
+  @@index([actor, at(sort: Desc)])
+  @@map("audit_log")
+}

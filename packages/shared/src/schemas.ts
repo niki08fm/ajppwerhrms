@@ -346,19 +346,22 @@ export const punchIdentifySchema = z
 
 export const punchCreateSchema = z
   .object({
-    employee_id: uuid,
+    employee_id: uuid.optional(),
     direction: z.enum(['IN', 'OUT']),
     client_punched_at: z.string().datetime({ offset: true }),
     lat: z.number(),
     lng: z.number(),
     accuracy_m: z.number().min(0),
-    match_score: z.number().min(0).max(1),
-    /** Signed token from /punches/identify proving the match happened server-side */
-    match_token: z.string().min(1),
+    /** Signed token from /punches/identify proving the match happened server-side (live punches) */
+    match_token: z.string().min(1).optional(),
+    /** Offline-queued punches carry the embedding; the server matches it on sync */
+    embedding: z.array(z.number()).min(64).max(1024).optional(),
     device_id: z.string().max(100),
     queued: z.boolean().default(false),
+    snapshot: z.string().max(400_000).optional(),
   })
-  .strict();
+  .strict()
+  .refine((v) => !!v.match_token || !!v.embedding, { message: 'A punch needs a match token or, when queued offline, the face embedding' });
 
 export const faceExceptionCreateSchema = z
   .object({
