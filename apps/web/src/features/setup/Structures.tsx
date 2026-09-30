@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Copy, Lock, Plus } from 'lucide-react';
-import { CALC_TYPE_LABELS, formatINR, type CalcType } from '@ajpwer/shared';
+import { describeComponentRule, formatINR, type CalcType } from '@ajpwer/shared';
 import { api } from '@/lib/api';
 import { Money, PageHeader, ProportionBar } from '@/components/bits';
 import { Chip, EmptyState, ErrorState, Notice, SkeletonBlock } from '@/components/states';
@@ -14,6 +14,8 @@ export interface Component {
   name: string;
   calc_type: CalcType;
   calc_value: number;
+  /** Cap on a percentage component, in paise; null for none */
+  max_amount: number | null;
   frequency: 'MONTHLY' | 'YEARLY';
   pay_month: number | null;
   is_taxable: boolean;
@@ -28,11 +30,11 @@ export interface Structure {
   components: Component[];
   pay_groups: { id: string; name: string }[];
   immutable: boolean;
-  sample: { gross: number; monthly: { name: string; amount: number }[]; yearly: { name: string; amount: number }[]; over_budget: boolean };
+  sample: { gross: number; annual_ctc: number; monthly: { name: string; amount: number }[]; yearly: { name: string; amount: number }[]; over_budget: boolean };
   validation: { errors: string[]; warnings: string[] };
 }
 
-export const ruleOf = (c: Pick<Component, 'calc_type' | 'calc_value'>) => (c.calc_type === 'FIXED' ? `Fixed ${formatINR(c.calc_value)}` : c.calc_type === 'BALANCE' ? 'Balance of gross' : `${c.calc_value}% of ${c.calc_type === 'PCT_GROSS' ? 'gross' : 'basic'}`);
+export const ruleOf = describeComponentRule;
 
 export default function Structures() {
   const nav = useNavigate();
@@ -54,7 +56,7 @@ export default function Structures() {
         <ErrorState error={q.error} onRetry={() => q.refetch()} />
       ) : !q.data!.length ? (
         <Card>
-          <EmptyState title="No structures yet" body="Build one: Basic, HRA, any allowances, and a balance component that takes the remainder." action={<Button onClick={() => nav('/setup/structures/new')}>Build a structure</Button>} />
+          <EmptyState title="No structures yet" body="Build one: Basic, HRA and any allowances. Whatever is left of gross becomes the Special Allowance." action={<Button onClick={() => nav('/setup/structures/new')}>Build a structure</Button>} />
         </Card>
       ) : (
         <div className="grid gap-4 xl:grid-cols-2">
@@ -85,7 +87,7 @@ export default function Structures() {
                       <th>Rule</th>
                       <th>Tax</th>
                       <th>PF base</th>
-                      <th className="text-right">At ₹24,000</th>
+                      <th className="text-right">At {formatINR(s.sample.gross)}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -113,7 +115,9 @@ export default function Structures() {
                     {w}
                   </Notice>
                 ))}
-                <p className="text-[11px] text-muted-foreground">{Object.values(CALC_TYPE_LABELS).length} rule types: % of gross, % of basic, fixed, balance.</p>
+                <p className="text-[11px] text-muted-foreground">
+                  Sample at {formatINR(s.sample.gross)} a month{s.components.some((c) => c.calc_type === 'PCT_CTC') ? `, a CTC of ${formatINR(s.sample.annual_ctc)} a year` : ''}. Whatever is left of gross is the Special Allowance.
+                </p>
               </CardBody>
             </Card>
           ))}

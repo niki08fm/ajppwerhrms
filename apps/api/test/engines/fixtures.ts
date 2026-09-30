@@ -19,12 +19,12 @@ export const NEW_REGIME = SEED_TAX_REGIMES.find((r) => r.code === 'NEW') as TaxR
 export const OLD_REGIME = SEED_TAX_REGIMES.find((r) => r.code === 'OLD') as TaxRegime;
 export const NO_DECL = { decl_80c: 0, decl_80d: 0, decl_rent_monthly: 0, decl_metro: false };
 
-/** Basic 50% of gross (PF base), HRA 40% of basic, conveyance ₹1,600 fixed, special allowance takes the balance. */
+/** Basic 50% of gross (PF base), HRA 40% of basic, conveyance ₹1,600 fixed, the Special Allowance takes the balance. */
 export const STANDARD_STRUCTURE: ComponentDef[] = [
   { seq: 1, name: 'Basic', calc_type: 'PCT_GROSS', calc_value: 50, frequency: 'MONTHLY', pay_month: null, is_taxable: true, counts_as_wages: true },
   { seq: 2, name: 'HRA', calc_type: 'PCT_BASIC', calc_value: 40, frequency: 'MONTHLY', pay_month: null, is_taxable: true, counts_as_wages: false },
   { seq: 3, name: 'Conveyance', calc_type: 'FIXED', calc_value: R(1600), frequency: 'MONTHLY', pay_month: null, is_taxable: true, counts_as_wages: false },
-  { seq: 4, name: 'Special allowance', calc_type: 'BALANCE', calc_value: 0, frequency: 'MONTHLY', pay_month: null, is_taxable: true, counts_as_wages: false },
+  { seq: 4, name: 'Special Allowance', calc_type: 'BALANCE', calc_value: 0, frequency: 'MONTHLY', pay_month: null, is_taxable: true, counts_as_wages: false },
 ];
 
 export const PF_ON = { pf_enabled: true, pf_restrict_to_ceiling: true, vpf_pct: 0 };
@@ -118,6 +118,7 @@ export function payslipInput(overrides: Partial<PayslipInput> = {}): PayslipInpu
     ym: '2026-09',
     employee: { id: 'e1', gender: 'MALE' },
     monthly_gross: R(24000),
+    annual_ctc: 0,
     components: STANDARD_STRUCTURE,
     attendance: fullMonthTotals('2026-09', 30),
     offday_work: [],

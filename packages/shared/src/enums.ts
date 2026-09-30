@@ -38,15 +38,30 @@ export const POLICY_KIND_MISSING_WARNING: Record<PolicyKind, string> = {
 
 export const POLICY_STATUSES = ['ACTIVE', 'RETIRED'] as const;
 
-export const CALC_TYPES = ['PCT_GROSS', 'PCT_BASIC', 'FIXED', 'BALANCE'] as const;
+export const CALC_TYPES = ['PCT_GROSS', 'PCT_CTC', 'PCT_BASIC', 'FIXED', 'BALANCE'] as const;
 export type CalcType = (typeof CALC_TYPES)[number];
 
 export const CALC_TYPE_LABELS: Record<CalcType, string> = {
   PCT_GROSS: '% of gross',
+  PCT_CTC: '% of CTC',
   PCT_BASIC: '% of basic',
   FIXED: 'Fixed',
-  BALANCE: 'Balance',
+  BALANCE: 'Special Allowance',
 };
+
+/** What a percentage component is a percentage of. */
+export const PERCENT_OF = [
+  { calc_type: 'PCT_GROSS', label: 'Gross', explain: 'of the monthly gross' },
+  { calc_type: 'PCT_CTC', label: 'CTC', explain: 'of the annual CTC, spread over twelve months' },
+  { calc_type: 'PCT_BASIC', label: 'Basic', explain: 'of the monthly basic' },
+] as const satisfies readonly { calc_type: CalcType; label: string; explain: string }[];
+
+/** The name of the component that takes whatever is left of gross. Every structure has exactly one. */
+export const SPECIAL_ALLOWANCE = 'Special Allowance';
+
+export function isPercentCalc(t: CalcType): t is 'PCT_GROSS' | 'PCT_CTC' | 'PCT_BASIC' {
+  return t === 'PCT_GROSS' || t === 'PCT_CTC' || t === 'PCT_BASIC';
+}
 
 export const FREQUENCIES = ['MONTHLY', 'YEARLY'] as const;
 export type Frequency = (typeof FREQUENCIES)[number];

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 import { toast } from 'sonner';
-import { CALC_TYPE_LABELS, formatINR, type CalcType } from '@ajpwer/shared';
+import { describeComponentRule, formatINR, pfMaxContribution, type CalcType } from '@ajpwer/shared';
 import { api, errorMessage } from '@/lib/api';
 import { useLookups } from '@/lib/lookups';
 import { cn } from '@/lib/utils';
@@ -20,13 +20,11 @@ import { PayslipPreview } from './PayslipPreview';
 interface PayData {
   salary: { mode: 'CTC' | 'GROSS'; amount: number; monthly_gross: number; valid_from: string };
   preview: Preview & { structure: Preview['structure'] & { monthly: (Preview['structure']['monthly'][number] & { calc_type: CalcType })[] } };
-  rates: { pf: { ceiling: number; employee_pct: number; employer_pct: number; eps_pct: number; max_contribution: number | null }; esi: { ceiling: number } };
+  rates: { pf: { ceiling: number; employee_pct: number; employer_pct: number; eps_pct: number }; esi: { ceiling: number } };
 }
 
-function ruleText(c: { calc_type: CalcType; calc_value: number }) {
-  if (c.calc_type === 'FIXED') return `Fixed ${formatINR(c.calc_value)}`;
-  if (c.calc_type === 'BALANCE') return 'Balance of gross';
-  return `${c.calc_value}${CALC_TYPE_LABELS[c.calc_type].replace('%', '% ')}`.replace('  ', ' ');
+function ruleText(c: { calc_type: CalcType; calc_value: number; max_amount?: number | null }) {
+  return describeComponentRule(c);
 }
 
 export function PayTab({ e }: { e: Employee }) {
@@ -124,7 +122,7 @@ export function PayTab({ e }: { e: Employee }) {
                 {p.structure.monthly.map((c) => (
                   <tr key={c.name} className="border-t">
                     <td className="py-1.5">{c.name}</td>
-                    <td className="text-muted-foreground">{ruleText(c as { calc_type: CalcType; calc_value: number })}</td>
+                    <td className="text-muted-foreground">{ruleText(c as { calc_type: CalcType; calc_value: number; max_amount?: number | null })}</td>
                     <td className="text-right">
                       <Money value={c.amount} />
                     </td>
@@ -180,7 +178,11 @@ export function PayTab({ e }: { e: Employee }) {
                 ]}
               />
               <p className="text-[12px] text-muted-foreground">
-                PF is {rates.pf.employee_pct}% of the PF wage{rates.pf.max_contribution ? `, capped at ${formatINR(rates.pf.max_contribution)}` : ''}. Overtime, off-day pay and adhoc bonuses never count. Which components form the base is set in the salary structure.
+                PF is {rates.pf.employee_pct}% of the PF wage.{' '}
+                {st.pf_restrict_to_ceiling
+                  ? `Restricted to the ${formatINR(rates.pf.ceiling)} ceiling, so it is never more than ${formatINR(pfMaxContribution(rates.pf).employee)} a month.`
+                  : 'Not restricted to the ceiling, so it follows the full PF wage.'}{' '}
+                Overtime, off-day pay and adhoc bonuses never count. Which components form the base is set in the salary structure.
               </p>
             </CardBody>
           </Card>

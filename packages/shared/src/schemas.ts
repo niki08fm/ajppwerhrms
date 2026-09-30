@@ -14,6 +14,10 @@ import {
   PT_GENDER_SCOPES,
   SALARY_MODES,
   TAX_REGIMES,
+  SPECIAL_ALLOWANCE,
+  isPercentCalc,
+  type CalcType,
+  type Frequency,
 } from './enums';
 import { DAY_NAMES, isISODate, isYearMonth } from './dates';
 import { esiRatesSchema, gratuityRatesSchema, pfRatesSchema } from './statutory';
@@ -127,24 +131,43 @@ export const policyVersionSchema = z
 export const salaryComponentSchema = z
   .object({
     seq: z.number().int().min(0),
-    name: z.string().min(1).max(60),
+    name: z.string().trim().min(1).max(60),
     calc_type: z.enum(CALC_TYPES),
     /** Percentage for PCT_*, paise for FIXED, ignored for BALANCE */
     calc_value: z.number().min(0),
+    /** Optional cap in paise on a percentage component. There is deliberately no minimum. */
+    max_amount: z.number().int().min(1).nullable().default(null),
     frequency: z.enum(FREQUENCIES),
     pay_month: z.number().int().min(1).max(12).nullable(),
     is_taxable: z.boolean(),
     counts_as_wages: z.boolean(),
     colour: z.string().max(40).default('chart-1'),
   })
-  .strict();
+  .strict()
+  .refine((c) => c.max_amount === null || isPercentCalc(c.calc_type), { message: 'A maximum only applies to a percentage component.', path: ['max_amount'] })
+  .refine((c) => !isPercentCalc(c.calc_type) || c.calc_value <= 100, { message: 'A percentage cannot be more than 100.', path: ['calc_value'] });
 export type SalaryComponentInput = z.infer<typeof salaryComponentSchema>;
+
+/**
+ * Whatever is left of gross is the Special Allowance. A structure sent without
+ * one gets one, last, so gross always adds up.
+ */
+export function withSpecialAllowance<T extends { seq: number; calc_type: CalcType; frequency: Frequency }>(components: T[], make: (seq: number) => T): T[] {
+  if (components.some((c) => c.calc_type === 'BALANCE' && c.frequency === 'MONTHLY')) return components;
+  const seq = components.reduce((m, c) => Math.max(m, c.seq), 0) + 1;
+  return [...components, make(seq)];
+}
 
 export const structureCreateSchema = z
   .object({
     name: z.string().min(1).max(100),
     valid_from: isoDate,
-    components: z.array(salaryComponentSchema).min(1),
+    components: z
+      .array(salaryComponentSchema)
+      .min(1)
+      .transform((cs) =>
+        withSpecialAllowance(cs, (seq) => ({ seq, name: SPECIAL_ALLOWANCE, calc_type: 'BALANCE', calc_value: 0, max_amount: null, frequency: 'MONTHLY', pay_month: null, is_taxable: true, counts_as_wages: false, colour: `chart-${((seq - 1) % 5) + 1}` })),
+      ),
     duplicated_from: uuid.optional(),
   })
   .strict();

@@ -165,3 +165,51 @@ describe('Tablet punch', () => {
     expect(p2.body.data.duplicate).toBe(true);
   });
 });
+
+describe('Salary structures: name, percentage or fixed, % of gross, CTC or basic, an optional maximum', () => {
+  const comp = (seq: number, name: string, calc_type: string, calc_value: number, extra: object = {}) => ({ seq, name, calc_type, calc_value, max_amount: null, frequency: 'MONTHLY', pay_month: null, is_taxable: true, counts_as_wages: name === 'Basic', colour: 'chart-1', ...extra });
+
+  it('a structure sent without a Special Allowance gets one, last', async () => {
+    const r = await f.agent.post('/api/v1/structures').send({ name: 'No balance sent', valid_from: '2026-10-01', components: [comp(1, 'Basic', 'PCT_GROSS', 50), comp(2, 'HRA', 'PCT_BASIC', 40)] });
+    expect(r.status).toBe(201);
+    const last = r.body.data.components.at(-1);
+    expect(last).toMatchObject({ name: 'Special Allowance', calc_type: 'BALANCE', frequency: 'MONTHLY' });
+    expect(r.body.data.sample.monthly.reduce((s: number, c: { amount: number }) => s + c.amount, 0)).toBe(r.body.data.sample.gross);
+  });
+
+  it('a maximum is refused on a fixed amount, by the API and by the database', async () => {
+    const r = await f.agent.post('/api/v1/structures').send({ name: 'Bad max', valid_from: '2026-10-01', components: [comp(1, 'Basic', 'PCT_GROSS', 50), comp(2, 'Conveyance', 'FIXED', R(1600), { max_amount: R(1000) })] });
+    expect(r.status).toBe(422);
+    const s = await prisma.salaryStructure.findFirstOrThrow();
+    await expect(prisma.salaryComponent.create({ data: { structure_id: s.id, seq: 99, name: 'Bad', calc_type: 'FIXED', calc_value: R(100), max_amount: BigInt(R(50)) } })).rejects.toThrow();
+  });
+
+  it('% of CTC runs on the agreed CTC, a capped HRA sends the excess to the Special Allowance, and PF uses the ₹25,000 ceiling', async () => {
+    const created = await f.agent.post('/api/v1/structures').send({
+      name: 'Managers (CTC based)',
+      valid_from: '2025-04-01',
+      components: [comp(1, 'Basic', 'PCT_CTC', 40), comp(2, 'HRA', 'PCT_BASIC', 50, { max_amount: R(8000) }), comp(3, 'Conveyance', 'FIXED', R(1600))],
+    });
+    expect(created.status).toBe(201);
+    const r = await f.agent.post('/api/v1/employees/salary-preview').send({ mode: 'CTC', amount: R(600000), structure_id: created.body.data.id, date: '2026-09-30' });
+    expect(r.status).toBe(200);
+    const p = r.body.data;
+    const amt = (name: string) => p.structure.monthly.find((c: { name: string }) => c.name === name).amount;
+    expect(amt('Basic')).toBe(R(20000)); // 40% of ₹6,00,000 ÷ 12
+    expect(amt('HRA')).toBe(R(8000)); // 50% of basic would be ₹10,000; capped
+    // Basic ₹20,000 is under the ₹25,000 ceiling: employer PF ₹2,400 + admin ₹100 + EDLI ₹75 (on the statutory ₹15,000).
+    expect(p.gross).toBe(R(50000 - 2575));
+    expect(amt('Special Allowance')).toBe(p.gross - R(20000 + 8000 + 1600));
+    expect(p.ctc.annual_ctc).toBe(R(600000));
+  });
+});
+
+describe('PF has one limit: the ceiling', () => {
+  it('stored rates carry no separate maximum, and publishing one is refused', async () => {
+    const cur = (await f.agent.get('/api/v1/statutory-rates')).body.data.current;
+    expect(cur.pf.ceiling).toBe(R(25000));
+    expect(cur.pf).not.toHaveProperty('max_contribution');
+    const r = await f.agent.patch('/api/v1/statutory-rates').send({ valid_from: '2027-04-01', pf: { ...cur.pf, max_contribution: R(6000) }, esi: cur.esi, gratuity: cur.gratuity, recovery_cap_pct: 40 });
+    expect(r.status).toBe(422);
+  });
+});

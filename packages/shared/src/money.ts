@@ -76,6 +76,12 @@ export function pct(amount: Paise, percent: number | string, mode: RoundMode = '
 }
 
 /** Multiply an amount by a factor such as 1.5 or 2 (stored with six decimals). */
+/** A percentage of one twelfth of an annual figure, rounded once — "40% of CTC" as a monthly amount. */
+export function pctOfTwelfth(annual: Paise, percent: number | string, mode: RoundMode = 'nearest'): Paise {
+  assertInt(annual, 'annual');
+  return Number(divBig(BigInt(annual) * toMicroPct(percent), 1200n * MICRO, mode));
+}
+
 export function mulFactor(amount: Paise, factor: number | string, mode: RoundMode = 'nearest'): Paise {
   assertInt(amount, 'amount');
   return Number(divBig(BigInt(amount) * toMicroPct(factor), MICRO, mode));

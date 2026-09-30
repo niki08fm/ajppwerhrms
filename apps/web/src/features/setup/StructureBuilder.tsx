@@ -1,42 +1,105 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Lock, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { CALC_TYPES, CALC_TYPE_LABELS, MONTH_NAMES, type CalcType } from '@ajpwer/shared';
+import { formatINR, isPercentCalc, MONTH_NAMES, PERCENT_OF, SPECIAL_ALLOWANCE, type CalcType } from '@ajpwer/shared';
 import { api, errorMessage } from '@/lib/api';
 import { useDebounced } from '@/lib/hooks';
-import { toPaise } from '@/lib/utils';
+import { cn, toPaise } from '@/lib/utils';
 import { Money, PageHeader, ProportionBar } from '@/components/bits';
-import { Notice } from '@/components/states';
+import { Chip, Notice } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { Field, Input, MoneyInput, Select } from '@/components/ui/form';
 import { Switch } from '@/components/ui/overlay';
-import type { Component, Structure } from './Structures';
+import type { Structure } from './Structures';
 
-type Row = Omit<Component, 'calc_value'> & { value: string };
+type PercentOf = (typeof PERCENT_OF)[number]['calc_type'];
 
-const blank = (seq: number, over: Partial<Row> = {}): Row => ({ seq, name: '', calc_type: 'FIXED', value: '', frequency: 'MONTHLY', pay_month: null, is_taxable: true, counts_as_wages: false, colour: `chart-${((seq - 1) % 5) + 1}`, ...over });
+/**
+ * One component as the builder asks for it, in order: its name, whether it is a
+ * percentage or a fixed amount, and — for a percentage — what it is a percentage
+ * of and an optional maximum. There is no minimum: whatever is left of gross is
+ * the Special Allowance, so a minimum could only push gross over.
+ */
+interface Row {
+  name: string;
+  kind: 'PERCENT' | 'FIXED';
+  of: PercentOf;
+  value: string;
+  max: string;
+  frequency: 'MONTHLY' | 'YEARLY';
+  pay_month: number | null;
+  is_taxable: boolean;
+  counts_as_wages: boolean;
+  colour: string;
+}
 
-const DEFAULT: Row[] = [
-  blank(1, { name: 'Basic', calc_type: 'PCT_GROSS', value: '50', counts_as_wages: true }),
-  blank(2, { name: 'HRA', calc_type: 'PCT_BASIC', value: '40' }),
-  blank(3, { name: 'Special allowance', calc_type: 'BALANCE', value: '0' }),
-];
+/** The Special Allowance: always last, always monthly, takes whatever is left of gross. */
+interface Special {
+  is_taxable: boolean;
+  counts_as_wages: boolean;
+}
+
+const colourFor = (i: number) => `chart-${(i % 5) + 1}`;
+const blank = (i: number, over: Partial<Row> = {}): Row => ({ name: '', kind: 'PERCENT', of: 'PCT_GROSS', value: '', max: '', frequency: 'MONTHLY', pay_month: null, is_taxable: true, counts_as_wages: false, colour: colourFor(i), ...over });
+
+const DEFAULT_ROWS: Row[] = [blank(0, { name: 'Basic', of: 'PCT_GROSS', value: '50', counts_as_wages: true }), blank(1, { name: 'HRA', of: 'PCT_BASIC', value: '40' })];
+const DEFAULT_SPECIAL: Special = { is_taxable: true, counts_as_wages: false };
+
+const isBasicName = (name: string) => name.trim().toLowerCase() === 'basic';
 
 function toComponent(r: Row, i: number) {
+  const calc_type: CalcType = r.kind === 'FIXED' ? 'FIXED' : r.of;
   return {
     seq: i + 1,
     name: r.name.trim(),
-    calc_type: r.calc_type,
-    calc_value: r.calc_type === 'FIXED' ? toPaise(r.value) : r.calc_type === 'BALANCE' ? 0 : Number(r.value) || 0,
+    calc_type,
+    calc_value: r.kind === 'FIXED' ? toPaise(r.value) : Number(r.value) || 0,
+    max_amount: r.kind === 'PERCENT' && r.max.trim() && toPaise(r.max) > 0 ? toPaise(r.max) : null,
     frequency: r.frequency,
-    pay_month: r.frequency === 'YEARLY' ? r.pay_month ?? 3 : null,
+    pay_month: r.frequency === 'YEARLY' ? (r.pay_month ?? 3) : null,
     is_taxable: r.is_taxable,
     counts_as_wages: r.frequency === 'MONTHLY' && r.counts_as_wages,
     colour: r.colour,
   };
+}
+
+function specialComponent(s: Special, seq: number) {
+  return { seq, name: SPECIAL_ALLOWANCE, calc_type: 'BALANCE' as const, calc_value: 0, max_amount: null, frequency: 'MONTHLY' as const, pay_month: null, is_taxable: s.is_taxable, counts_as_wages: s.counts_as_wages, colour: colourFor(seq - 1) };
+}
+
+/** Two-way choice shown as buttons, so "percentage or fixed" is one click and always visible. */
+function KindToggle({ value, onChange, label }: { value: Row['kind']; onChange: (v: Row['kind']) => void; label: string }) {
+  return (
+    <div role="radiogroup" aria-label={label} className="inline-flex h-9 overflow-hidden rounded-md border text-[12px]">
+      {(
+        [
+          ['PERCENT', 'Percentage'],
+          ['FIXED', 'Fixed'],
+        ] as const
+      ).map(([k, text]) => (
+        <button
+          key={k}
+          type="button"
+          role="radio"
+          aria-checked={value === k}
+          onClick={() => onChange(k)}
+          className={cn('px-2 transition-colors', value === k ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:bg-muted')}
+        >
+          {text}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+interface Validation {
+  errors: string[];
+  warnings: string[];
+  annual_ctc: number;
+  expanded: { monthly: { name: string; amount: number; colour: string; max_amount: number | null; calc_type: CalcType }[]; yearly: { name: string; amount: number }[]; gross: number; yearly_total: number };
 }
 
 export default function StructureBuilder() {
@@ -47,23 +110,42 @@ export default function StructureBuilder() {
   const src = useQuery({ queryKey: ['structure', from], queryFn: () => api.get<{ data: Structure }>(`/structures/${from}`).then((r) => r.data), enabled: !!from });
   const [name, setName] = useState('');
   const [validFrom, setValidFrom] = useState(new Date().toISOString().slice(0, 10));
-  const [rows, setRows] = useState<Row[]>(DEFAULT);
+  const [rows, setRows] = useState<Row[]>(DEFAULT_ROWS);
+  const [special, setSpecial] = useState<Special>(DEFAULT_SPECIAL);
   const [sample, setSample] = useState('24000');
   useEffect(() => {
     const s = src.data;
     if (!s) return;
     setName(`${s.name} (copy)`);
-    setRows(s.components.map((c) => ({ ...c, value: c.calc_type === 'FIXED' ? String(c.calc_value / 100) : String(c.calc_value) })));
+    setRows(
+      s.components
+        .filter((c) => c.calc_type !== 'BALANCE')
+        .map((c, i) => ({
+          name: c.name,
+          kind: isPercentCalc(c.calc_type) ? 'PERCENT' : 'FIXED',
+          of: isPercentCalc(c.calc_type) ? c.calc_type : 'PCT_GROSS',
+          value: c.calc_type === 'FIXED' ? String(c.calc_value / 100) : String(c.calc_value),
+          max: c.max_amount ? String(c.max_amount / 100) : '',
+          frequency: c.frequency,
+          pay_month: c.pay_month,
+          is_taxable: c.is_taxable,
+          counts_as_wages: c.counts_as_wages,
+          colour: c.colour || colourFor(i),
+        })),
+    );
+    const bal = s.components.find((c) => c.calc_type === 'BALANCE' && c.frequency === 'MONTHLY');
+    setSpecial(bal ? { is_taxable: bal.is_taxable, counts_as_wages: bal.counts_as_wages } : DEFAULT_SPECIAL);
   }, [src.data]);
 
-  const comps = rows.map(toComponent);
+  const comps = [...rows.map(toComponent), specialComponent(special, rows.length + 1)];
   const debounced = useDebounced({ comps, gross: toPaise(sample) }, 200);
   // Live preview at a sample gross, updating as the user types.
   const preview = useQuery({
     queryKey: ['structure-validate', debounced],
-    queryFn: () => api.post<{ data: { errors: string[]; warnings: string[]; expanded: { monthly: { name: string; amount: number; colour: string }[]; yearly: { name: string; amount: number }[]; gross: number; yearly_total: number } } }>('/structures/validate', { components: debounced.comps, sample_gross: debounced.gross || 100 }).then((r) => r.data),
+    queryFn: () => api.post<{ data: Validation }>('/structures/validate', { components: debounced.comps, sample_gross: debounced.gross || 100 }).then((r) => r.data),
     enabled: debounced.comps.every((c) => c.name) && debounced.gross > 0,
     placeholderData: (p) => p,
+    retry: false,
   });
   const save = useMutation({
     mutationFn: () => api.post('/structures', { name, valid_from: validFrom, components: comps, ...(from ? { duplicated_from: from } : {}) }),
@@ -85,117 +167,161 @@ export default function StructureBuilder() {
     });
   const p = preview.data;
   const blankNames = rows.some((r) => !r.name.trim());
+  const reservedName = rows.some((r) => r.name.trim().toLowerCase() === SPECIAL_ALLOWANCE.toLowerCase());
+  const usesCtc = rows.some((r) => r.kind === 'PERCENT' && r.of === 'PCT_CTC');
+  const cappedAt = (n: string) => p?.expanded.monthly.find((c) => c.name === n && c.max_amount !== null && c.amount === c.max_amount);
 
   return (
     <div className="flex flex-col gap-4">
       <PageHeader crumbs={[{ label: 'Salary structures', to: '/setup/structures' }, { label: from ? 'Duplicate and edit' : 'New structure' }]} title={from ? 'Duplicate and edit' : 'New salary structure'} description="A new structure with its own effective date. The original is untouched." />
-      <div className="grid gap-4 xl:grid-cols-3">
-        <Card className="xl:col-span-2">
-          <CardHeader title="Components" description="Basic is computed first, then the rest; the balance takes whatever is left of gross and is never negative." />
+      <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_340px]">
+        <Card className="min-w-0">
+          <CardHeader title="Components" description="For each one: its name, then percentage or fixed, then what the percentage is of. Basic is worked out first; whatever is left of gross is the Special Allowance." />
           <CardBody className="flex flex-col gap-3">
             <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Name" required>
+              <Field label="Structure name" required>
                 {(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Site staff 2027" />}
               </Field>
               <Field label="Effective from">{(id) => <Input id={id} type="date" value={validFrom} onChange={(e) => setValidFrom(e.target.value)} />}</Field>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[820px] text-[13px]">
+              <table className="w-full min-w-[920px] text-[13px]">
                 <thead className="text-left text-[12px] text-muted-foreground">
                   <tr>
                     <th className="py-1" />
-                    <th>Name</th>
-                    <th>Rule</th>
-                    <th>Value</th>
+                    <th>Component name</th>
+                    <th>Type</th>
+                    <th>Amount</th>
+                    <th title="Optional. Caps a percentage; anything above it goes to the Special Allowance. There is no minimum.">Maximum</th>
                     <th>Paid</th>
                     <th>Taxable</th>
-                    <th title="Tick on Basic, and on a dearness allowance if you use one. It decides which components form the PF base, and nothing else.">Counts as wages*</th>
+                    <th title="Tick on Basic, and on a dearness allowance if you use one. It decides which components form the PF base, and nothing else.">PF wage*</th>
                     <th />
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r, i) => (
-                    <tr key={i} className="border-t align-top">
-                      <td className="py-1.5 pr-1">
-                        <div className="flex flex-col">
-                          <button disabled={i === 0} onClick={() => move(i, -1)} aria-label="Move up" className="disabled:opacity-30">
-                            <ArrowUp className="size-3.5" />
-                          </button>
-                          <button disabled={i === rows.length - 1} onClick={() => move(i, 1)} aria-label="Move down" className="disabled:opacity-30">
-                            <ArrowDown className="size-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                      <td className="py-1.5 pr-2">
-                        <Input value={r.name} onChange={(e) => set(i, { name: e.target.value })} aria-label="Component name" aria-invalid={!r.name.trim()} />
-                      </td>
-                      <td className="py-1.5 pr-2">
-                        <Select value={r.calc_type} onChange={(e) => set(i, { calc_type: e.target.value as CalcType })} aria-label="Rule">
-                          {CALC_TYPES.map((t) => (
-                            <option key={t} value={t}>
-                              {CALC_TYPE_LABELS[t]}
-                            </option>
-                          ))}
-                        </Select>
-                      </td>
-                      <td className="w-32 py-1.5 pr-2">
-                        {r.calc_type === 'BALANCE' ? (
-                          <span className="text-[12px] text-muted-foreground">Remainder</span>
-                        ) : r.calc_type === 'FIXED' ? (
-                          <MoneyInput value={r.value} onChange={(e) => set(i, { value: e.target.value })} aria-label="Amount" />
-                        ) : (
-                          <div className="relative">
-                            <Input value={r.value} onChange={(e) => set(i, { value: e.target.value })} className="pr-6 num" aria-label="Percent" />
-                            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground">%</span>
+                  {rows.map((r, i) => {
+                    const basicRow = isBasicName(r.name);
+                    const capped = cappedAt(r.name.trim());
+                    return (
+                      <tr key={i} className="border-t align-top">
+                        <td className="py-1.5 pr-1">
+                          <div className="flex flex-col">
+                            <button disabled={i === 0} onClick={() => move(i, -1)} aria-label="Move up" className="disabled:opacity-30">
+                              <ArrowUp className="size-3.5" />
+                            </button>
+                            <button disabled={i === rows.length - 1} onClick={() => move(i, 1)} aria-label="Move down" className="disabled:opacity-30">
+                              <ArrowDown className="size-3.5" />
+                            </button>
                           </div>
-                        )}
-                      </td>
-                      <td className="py-1.5 pr-2">
-                        <div className="flex gap-1">
-                          <Select value={r.frequency} onChange={(e) => set(i, { frequency: e.target.value as 'MONTHLY' | 'YEARLY', pay_month: e.target.value === 'YEARLY' ? r.pay_month ?? 10 : null })} aria-label="Frequency">
-                            <option value="MONTHLY">Monthly</option>
-                            <option value="YEARLY">Yearly</option>
-                          </Select>
-                          {r.frequency === 'YEARLY' && (
-                            <Select value={r.pay_month ?? 10} onChange={(e) => set(i, { pay_month: Number(e.target.value) })} aria-label="Payout month">
-                              {MONTH_NAMES.map((m, k) => (
-                                <option key={m} value={k + 1}>
-                                  {m.slice(0, 3)}
-                                </option>
-                              ))}
-                            </Select>
+                        </td>
+                        <td className="w-40 py-1.5 pr-2">
+                          <Input value={r.name} onChange={(e) => set(i, { name: e.target.value })} placeholder="e.g. Conveyance" aria-label="Component name" aria-invalid={!r.name.trim()} />
+                        </td>
+                        <td className="py-1.5 pr-2">
+                          <KindToggle value={r.kind} onChange={(kind) => set(i, { kind, max: kind === 'FIXED' ? '' : r.max })} label={`${r.name || 'Component'}: percentage or fixed`} />
+                        </td>
+                        <td className="py-1.5 pr-2">
+                          {r.kind === 'FIXED' ? (
+                            <MoneyInput value={r.value} onChange={(e) => set(i, { value: e.target.value })} className="w-32" aria-label="Fixed amount" />
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <div className="relative w-[4.5rem]">
+                                <Input value={r.value} inputMode="decimal" onChange={(e) => set(i, { value: e.target.value })} className="pr-6 num" aria-label="Percent" />
+                                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground">%</span>
+                              </div>
+                              <span className="text-muted-foreground">of</span>
+                              <Select value={r.of} onChange={(e) => set(i, { of: e.target.value as PercentOf })} className="w-24" aria-label="Percentage of">
+                                {PERCENT_OF.map((o) => (
+                                  <option key={o.calc_type} value={o.calc_type} disabled={basicRow && o.calc_type === 'PCT_BASIC'} title={o.explain}>
+                                    {o.label}
+                                  </option>
+                                ))}
+                              </Select>
+                            </div>
                           )}
-                        </div>
-                      </td>
-                      <td className="py-2.5">
-                        <Switch checked={r.is_taxable} onCheckedChange={(v) => set(i, { is_taxable: v })} label="Taxable" />
-                      </td>
-                      <td className="py-2.5">
-                        <Switch checked={r.counts_as_wages} disabled={r.frequency === 'YEARLY'} onCheckedChange={(v) => set(i, { counts_as_wages: v })} label="Counts as wages (PF base)" />
-                      </td>
-                      <td className="py-1.5">
-                        <Button size="icon" variant="ghost" onClick={() => setRows(rows.filter((_, j) => j !== i))} aria-label={`Remove ${r.name || 'component'}`}>
-                          <Trash2 />
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="w-32 py-1.5 pr-2">
+                          {r.kind === 'PERCENT' ? (
+                            <div className="flex flex-col gap-0.5">
+                              <MoneyInput value={r.max} onChange={(e) => set(i, { max: e.target.value })} placeholder="No limit" aria-label={`Maximum for ${r.name || 'component'}`} />
+                              {capped && <span className="text-[11px] text-muted-foreground">Capped at this gross</span>}
+                            </div>
+                          ) : (
+                            <span className="text-[12px] text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className="py-1.5 pr-2">
+                          <div className="flex gap-1">
+                            <Select value={r.frequency} onChange={(e) => set(i, { frequency: e.target.value as 'MONTHLY' | 'YEARLY', pay_month: e.target.value === 'YEARLY' ? (r.pay_month ?? 10) : null })} aria-label="Frequency">
+                              <option value="MONTHLY">Monthly</option>
+                              <option value="YEARLY">Yearly</option>
+                            </Select>
+                            {r.frequency === 'YEARLY' && (
+                              <Select value={r.pay_month ?? 10} onChange={(e) => set(i, { pay_month: Number(e.target.value) })} aria-label="Payout month">
+                                {MONTH_NAMES.map((m, k) => (
+                                  <option key={m} value={k + 1}>
+                                    {m.slice(0, 3)}
+                                  </option>
+                                ))}
+                              </Select>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-2.5">
+                          <Switch checked={r.is_taxable} onCheckedChange={(v) => set(i, { is_taxable: v })} label="Taxable" />
+                        </td>
+                        <td className="py-2.5">
+                          <Switch checked={r.counts_as_wages} disabled={r.frequency === 'YEARLY'} onCheckedChange={(v) => set(i, { counts_as_wages: v })} label="Counts as PF wage" />
+                        </td>
+                        <td className="py-1.5">
+                          <Button size="icon" variant="ghost" onClick={() => setRows(rows.filter((_, j) => j !== i))} aria-label={`Remove ${r.name || 'component'}`}>
+                            <Trash2 />
+                          </Button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  <tr className="border-t bg-muted/40 align-top">
+                    <td className="py-2.5 pl-0.5">
+                      <Lock className="size-3.5 text-muted-foreground" aria-hidden />
+                    </td>
+                    <td className="py-2.5 pr-2 font-medium">{SPECIAL_ALLOWANCE}</td>
+                    <td className="py-2.5 pr-2" colSpan={3}>
+                      <span className="text-[12px] text-muted-foreground">Automatic: whatever is left of gross after the components above. Never negative.</span>
+                    </td>
+                    <td className="py-2.5 pr-2 text-[12px] text-muted-foreground">Monthly</td>
+                    <td className="py-2.5">
+                      <Switch checked={special.is_taxable} onCheckedChange={(v) => setSpecial({ ...special, is_taxable: v })} label="Special Allowance taxable" />
+                    </td>
+                    <td className="py-2.5">
+                      <Switch checked={special.counts_as_wages} onCheckedChange={(v) => setSpecial({ ...special, counts_as_wages: v })} label="Special Allowance counts as PF wage" />
+                    </td>
+                    <td />
+                  </tr>
                 </tbody>
               </table>
             </div>
-            <div className="flex items-center justify-between">
-              <Button variant="outline" size="sm" onClick={() => setRows([...rows, blank(rows.length + 1)])}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Button variant="outline" size="sm" onClick={() => setRows([...rows, blank(rows.length)])}>
                 <Plus /> Add component
               </Button>
-              <p className="max-w-md text-right text-[12px] text-muted-foreground">* Counts as wages: tick it on Basic, and on a dearness allowance if you use one. It decides which components form the PF base, and nothing else.</p>
+              <p className="max-w-md text-right text-[12px] text-muted-foreground">* PF wage: tick it on Basic, and on a dearness allowance if you use one. It decides which components form the PF base, and nothing else.</p>
             </div>
           </CardBody>
         </Card>
-        <Card className="h-fit xl:sticky xl:top-4">
+        <Card className="h-fit 2xl:sticky 2xl:top-4">
           <CardHeader title="Preview" description="Updates as you type." />
           <CardBody className="flex flex-col gap-3">
             <Field label="Sample monthly gross">{(id) => <MoneyInput id={id} value={sample} onChange={(e) => setSample(e.target.value)} />}</Field>
+            {usesCtc && p && (
+              <p className="text-[12px] text-muted-foreground">
+                At this gross the CTC is <span className="num font-medium text-foreground">{formatINR(p.annual_ctc)}</span> a year (PF on, ESI where it applies). “% of CTC” is a share of that, spread over twelve months.
+              </p>
+            )}
             {blankNames && <Notice tone="warning">Every component needs a name.</Notice>}
+            {reservedName && <Notice tone="destructive">{SPECIAL_ALLOWANCE} is added automatically. Give this component another name.</Notice>}
+            {preview.isError && <Notice tone="destructive">{errorMessage(preview.error)}</Notice>}
             {p?.errors.map((e) => (
               <Notice key={e} tone="destructive">
                 {e}
@@ -213,7 +339,14 @@ export default function StructureBuilder() {
                   <tbody>
                     {p.expanded.monthly.map((c) => (
                       <tr key={c.name} className="border-t">
-                        <td className="py-1">{c.name}</td>
+                        <td className="py-1">
+                          {c.name}
+                          {c.max_amount !== null && c.amount === c.max_amount && (
+                            <Chip tone="warning" className="ml-1.5">
+                              max
+                            </Chip>
+                          )}
+                        </td>
                         <td className="text-right">
                           <Money value={c.amount} />
                         </td>
@@ -237,7 +370,7 @@ export default function StructureBuilder() {
                 </table>
               </>
             )}
-            <Button size="lg" disabled={!name.trim() || blankNames || !!p?.errors.length} loading={save.isPending} onClick={() => save.mutate()}>
+            <Button size="lg" disabled={!name.trim() || blankNames || reservedName || !!p?.errors.length || preview.isError} loading={save.isPending} onClick={() => save.mutate()}>
               Create structure
             </Button>
           </CardBody>

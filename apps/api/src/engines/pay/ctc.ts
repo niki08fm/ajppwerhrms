@@ -1,7 +1,7 @@
 import type { EsiRates, Paise, PfRates } from '@ajpwer/shared';
 import { computePf, pfEmployerCost, type PfChoice } from '../statutory/pf';
 import { computeEsi } from '../statutory/esi';
-import { expandStructure, type ComponentDef } from './structure';
+import { expandStructure, usesCtc, type ComponentDef } from './structure';
 
 export interface CtcContext {
   components: ComponentDef[];
@@ -18,16 +18,13 @@ export interface CtcBreakdown {
   yearly_total: Paise;
   monthly_cost: Paise;
   annual_ctc: Paise;
+  /** The annual CTC the "% of CTC" components were worked out on */
+  ctc_basis: Paise;
 }
 
-/**
- * Annual CTC for a monthly gross: 12 × (gross + employer PF cost + employer ESI) + yearly components.
- * `forceEsi` lets the solver evaluate one side of the ceiling explicitly.
- */
-export function ctcForGross(gross: Paise, ctx: CtcContext, forceEsi?: boolean): CtcBreakdown {
-  const s = expandStructure(ctx.components, gross);
+function costAt(gross: Paise, ctx: CtcContext, esiApplies: boolean, ctcBasis: Paise): CtcBreakdown {
+  const s = expandStructure(ctx.components, gross, ctcBasis);
   const pf = computePf(s.pf_base, ctx.pf, ctx.rates.pf);
-  const esiApplies = forceEsi ?? (ctx.esi_enabled && gross <= ctx.rates.esi.ceiling);
   const esi = computeEsi(esiApplies, gross, ctx.rates.esi);
   const employer_pf = pfEmployerCost(pf);
   const monthly_cost = s.gross + employer_pf + esi.employer;
@@ -39,7 +36,38 @@ export function ctcForGross(gross: Paise, ctx: CtcContext, forceEsi?: boolean): 
     yearly_total: s.yearly_total,
     monthly_cost,
     annual_ctc: monthly_cost * 12 + s.yearly_total,
+    ctc_basis: ctcBasis,
   };
+}
+
+/**
+ * Annual CTC for a monthly gross: 12 × (gross + employer PF cost + employer ESI) + yearly components.
+ * `forceEsi` lets the solver evaluate one side of the ceiling explicitly.
+ *
+ * `agreedCtc` is the CTC in the salary agreement, when there is one: "% of CTC"
+ * components are worked out on it. Without one (a salary agreed as gross), those
+ * components depend on the CTC they help produce, so the CTC is found by iterating
+ * to its fixed point. Each round moves by a fraction of the last (only employer PF
+ * and yearly items feed back), so it settles in a handful of rounds.
+ */
+export function ctcForGross(gross: Paise, ctx: CtcContext, forceEsi?: boolean, agreedCtc?: Paise): CtcBreakdown {
+  const esiApplies = forceEsi ?? (ctx.esi_enabled && gross <= ctx.rates.esi.ceiling);
+  if (agreedCtc !== undefined || !usesCtc(ctx.components)) return costAt(gross, ctx, esiApplies, agreedCtc ?? 0);
+
+  const tried: Paise[] = [];
+  let basis = costAt(gross, ctx, esiApplies, 0).annual_ctc;
+  for (let round = 0; round < 60; round++) {
+    const next = costAt(gross, ctx, esiApplies, basis);
+    if (next.annual_ctc === basis) return next;
+    const seen = tried.indexOf(next.annual_ctc);
+    if (seen !== -1) {
+      // Rupee rounding can leave two neighbouring figures pointing at each other; take the higher, every time.
+      return costAt(gross, ctx, esiApplies, Math.max(...tried.slice(seen), basis));
+    }
+    tried.push(basis);
+    basis = next.annual_ctc;
+  }
+  return costAt(gross, ctx, esiApplies, basis);
 }
 
 export interface GrossSolution {
@@ -88,7 +116,9 @@ function bisect(target: Paise, loR: number, hiR: number, ctc: (g: Paise) => CtcB
  * CTC is NOT monotonic in gross: at the ESI ceiling employer ESI switches off, so
  * a rupee more of gross gives a lower CTC. Every CTC in that band has two valid
  * grosses. A single bisection over the whole range silently returns a wrong answer
- * there, so each side of the ceiling is solved separately.
+ * there, so each side of the ceiling is solved separately. "% of CTC" components
+ * are worked out on the CTC being solved for, so they stay put while gross moves
+ * and the Special Allowance absorbs the difference.
  */
 export function solveGrossFromCtc(annualCtc: Paise, ctx: CtcContext): GrossSolution {
   const ceilingR = Math.floor(ctx.rates.esi.ceiling / RUPEE);
@@ -96,16 +126,16 @@ export function solveGrossFromCtc(annualCtc: Paise, ctx: CtcContext): GrossSolut
   const ok = (s: { breakdown: CtcBreakdown } | null) => !!s && Math.abs(s.breakdown.annual_ctc - annualCtc) <= TOLERANCE;
 
   if (!ctx.esi_enabled) {
-    const s = bisect(annualCtc, 0, maxR, (g) => ctcForGross(g, ctx, false))!;
+    const s = bisect(annualCtc, 0, maxR, (g) => ctcForGross(g, ctx, false, annualCtc))!;
     return { gross: s.gross, breakdown: s.breakdown, ambiguous: false, alternative: null, approximate: !ok(s) };
   }
 
   // 1. [0, ceiling] with ESI applied
-  const withEsi = bisect(annualCtc, 0, Math.min(ceilingR, maxR), (g) => ctcForGross(g, ctx, true));
+  const withEsi = bisect(annualCtc, 0, Math.min(ceilingR, maxR), (g) => ctcForGross(g, ctx, true, annualCtc));
   const esiSide = withEsi && withEsi.gross <= ctx.rates.esi.ceiling && ok(withEsi) ? withEsi : null;
 
   // 2. (ceiling, ctc/12] with ESI off
-  const withoutEsi = maxR > ceilingR ? bisect(annualCtc, ceilingR + 1, maxR, (g) => ctcForGross(g, ctx, false)) : null;
+  const withoutEsi = maxR > ceilingR ? bisect(annualCtc, ceilingR + 1, maxR, (g) => ctcForGross(g, ctx, false, annualCtc)) : null;
   const plainSide = withoutEsi && withoutEsi.gross > ctx.rates.esi.ceiling && ok(withoutEsi) ? withoutEsi : null;
 
   if (esiSide && plainSide) {
@@ -117,6 +147,6 @@ export function solveGrossFromCtc(annualCtc: Paise, ctx: CtcContext): GrossSolut
   // Nothing reproduced within tolerance: return the nearest candidate, flagged.
   const candidates = [withEsi, withoutEsi].filter(Boolean) as { gross: Paise; breakdown: CtcBreakdown }[];
   candidates.sort((a, b) => Math.abs(a.breakdown.annual_ctc - annualCtc) - Math.abs(b.breakdown.annual_ctc - annualCtc));
-  const best = candidates[0] ?? { gross: 0, breakdown: ctcForGross(0, ctx) };
+  const best = candidates[0] ?? { gross: 0, breakdown: ctcForGross(0, ctx, undefined, annualCtc) };
   return { gross: best.gross, breakdown: best.breakdown, ambiguous: false, alternative: null, approximate: true };
 }

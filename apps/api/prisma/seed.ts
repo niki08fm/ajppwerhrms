@@ -166,7 +166,7 @@ async function main() {
           { seq: 1, name: 'Basic', calc_type: 'PCT_GROSS', calc_value: 50, is_taxable: true, counts_as_wages: true, colour: 'chart-1' },
           { seq: 2, name: 'HRA', calc_type: 'PCT_BASIC', calc_value: 40, is_taxable: true, counts_as_wages: false, colour: 'chart-2' },
           { seq: 3, name: 'Conveyance', calc_type: 'FIXED', calc_value: R(1600), is_taxable: true, counts_as_wages: false, colour: 'chart-3' },
-          { seq: 4, name: 'Special allowance', calc_type: 'BALANCE', calc_value: 0, is_taxable: true, counts_as_wages: false, colour: 'chart-4' },
+          { seq: 4, name: 'Special Allowance', calc_type: 'BALANCE', calc_value: 0, is_taxable: true, counts_as_wages: false, colour: 'chart-4' },
         ],
       },
     },
@@ -180,8 +180,25 @@ async function main() {
           { seq: 1, name: 'Basic', calc_type: 'PCT_GROSS', calc_value: 40, is_taxable: true, counts_as_wages: true, colour: 'chart-1' },
           { seq: 2, name: 'HRA', calc_type: 'PCT_BASIC', calc_value: 50, is_taxable: true, counts_as_wages: false, colour: 'chart-2' },
           { seq: 3, name: 'Medical', calc_type: 'FIXED', calc_value: R(1250), is_taxable: true, counts_as_wages: false, colour: 'chart-3' },
-          { seq: 4, name: 'Special allowance', calc_type: 'BALANCE', calc_value: 0, is_taxable: true, counts_as_wages: false, colour: 'chart-4' },
+          { seq: 4, name: 'Special Allowance', calc_type: 'BALANCE', calc_value: 0, is_taxable: true, counts_as_wages: false, colour: 'chart-4' },
           { seq: 5, name: 'Annual bonus', calc_type: 'PCT_BASIC', calc_value: 8.33, frequency: 'YEARLY', pay_month: 10, is_taxable: true, counts_as_wages: false, colour: 'chart-5' },
+        ],
+      },
+    },
+  });
+
+  // A structure built the other way round, for people hired on a CTC: basic is a
+  // share of CTC, HRA is capped, and the Special Allowance takes the rest.
+  await prisma.salaryStructure.create({
+    data: {
+      name: 'Managers (CTC based)',
+      valid_from: toDbDate('2025-04-01'),
+      components: {
+        create: [
+          { seq: 1, name: 'Basic', calc_type: 'PCT_CTC', calc_value: 40, is_taxable: true, counts_as_wages: true, colour: 'chart-1' },
+          { seq: 2, name: 'HRA', calc_type: 'PCT_BASIC', calc_value: 50, max_amount: R(20000), is_taxable: true, counts_as_wages: false, colour: 'chart-2' },
+          { seq: 3, name: 'Conveyance', calc_type: 'FIXED', calc_value: R(1600), is_taxable: true, counts_as_wages: false, colour: 'chart-3' },
+          { seq: 4, name: 'Special Allowance', calc_type: 'BALANCE', calc_value: 0, is_taxable: true, counts_as_wages: false, colour: 'chart-4' },
         ],
       },
     },
@@ -338,7 +355,7 @@ async function main() {
 
   const rates = { pf: AJPWER_RATES.pf, esi: AJPWER_RATES.esi };
   const components = async (structureId: string) =>
-    (await prisma.salaryComponent.findMany({ where: { structure_id: structureId }, orderBy: { seq: 'asc' } })).map((c) => ({ ...c, calc_value: Number(c.calc_value) }));
+    (await prisma.salaryComponent.findMany({ where: { structure_id: structureId }, orderBy: { seq: 'asc' } })).map((c) => ({ ...c, calc_value: Number(c.calc_value), max_amount: c.max_amount === null ? null : Number(c.max_amount) }));
 
   const created: { p: Person; id: string; code: string }[] = [];
   let seq = 0;

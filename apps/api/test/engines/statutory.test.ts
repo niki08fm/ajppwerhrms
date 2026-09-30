@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { assemblePayslip, compareRegimes, computeAnnualTax, computePf, computePt, esiEligibility, expandStructure, hraExemption } from '../../src/engines';
 import { NEW_REGIME, NO_DECL, OLD_REGIME, payslipInput, PF_ON, PT_SLABS, R, RATES, STANDARD_STRUCTURE } from './fixtures';
+import { pfMaxContribution } from '@ajpwer/shared';
 
 const tax = (gross: number) => computeAnnualTax({ gross: R(gross), basic: 0, hra: 0 }, NO_DECL, NEW_REGIME);
 
@@ -71,9 +72,21 @@ describe('§20.13 PF ceiling', () => {
     expect(r.pf_wage).toBe(R(40000));
     expect(r.employee).toBe(R(4800));
   });
-  it('the maximum contribution caps the rupees after the percentage', () => {
-    const r = computePf(R(80000), { ...PF_ON, pf_restrict_to_ceiling: false }, { ...RATES.pf, max_contribution: R(6000) });
-    expect(r.employee).toBe(R(6000));
+  it('the ceiling is the only limit: the largest contribution is the rate on the ceiling', () => {
+    const ajpwer = { ...RATES.pf, ceiling: R(25000) };
+    expect(pfMaxContribution(ajpwer)).toEqual({ employee: R(3000), employer: R(3000), total: R(6000) });
+    for (const basic of [25000, 40000, 80000]) {
+      const r = computePf(R(basic), PF_ON, ajpwer);
+      expect(r.employee).toBe(R(3000));
+      expect(r.employer_total).toBe(R(3000));
+    }
+  });
+  it('restrict-to-ceiling off: nothing caps the rupees, PF follows the full wage', () => {
+    const r = computePf(R(80000), { ...PF_ON, pf_restrict_to_ceiling: false }, { ...RATES.pf, ceiling: R(25000) });
+    expect(r.employee).toBe(R(9600));
+    // Pension stays on the statutory ₹15,000; the rest of the employer share goes to EPF.
+    expect(r.eps).toBe(R(1250));
+    expect(r.employer_epf).toBe(R(9600 - 1250));
   });
 });
 

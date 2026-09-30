@@ -54,6 +54,7 @@ enum PolicyStatus {
 
 enum CalcType {
   PCT_GROSS
+  PCT_CTC
   PCT_BASIC
   FIXED
   BALANCE
@@ -433,6 +434,8 @@ model SalaryComponent {
   calc_type       CalcType
   /// Percentage for PCT_*, paise for FIXED
   calc_value      Decimal         @db.Decimal(14, 6)
+  /// Optional cap in paise on a percentage component; the excess falls to the Special Allowance. No minimum, by design
+  max_amount      BigInt?
   frequency       Frequency       @default(MONTHLY)
   pay_month       Int?
   is_taxable      Boolean         @default(true)

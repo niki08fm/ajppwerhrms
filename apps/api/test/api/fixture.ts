@@ -64,7 +64,7 @@ export async function buildFixture(opts: { noBankFor?: string[] } = {}): Promise
         create: [
           { seq: 1, name: 'Basic', calc_type: 'PCT_GROSS', calc_value: 50, counts_as_wages: true },
           { seq: 2, name: 'HRA', calc_type: 'PCT_BASIC', calc_value: 40 },
-          { seq: 3, name: 'Special allowance', calc_type: 'BALANCE', calc_value: 0 },
+          { seq: 3, name: 'Special Allowance', calc_type: 'BALANCE', calc_value: 0 },
         ],
       },
     },

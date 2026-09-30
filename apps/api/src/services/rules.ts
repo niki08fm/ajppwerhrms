@@ -82,7 +82,7 @@ export async function regimesOn(db: Db, date: ISODate): Promise<{ NEW: TaxRegime
 }
 
 export function toComponentDefs(
-  rows: { id: string; seq: number; name: string; calc_type: ComponentDef['calc_type']; calc_value: unknown; frequency: ComponentDef['frequency']; pay_month: number | null; is_taxable: boolean; counts_as_wages: boolean; colour: string }[],
+  rows: { id: string; seq: number; name: string; calc_type: ComponentDef['calc_type']; calc_value: unknown; max_amount: bigint | number | null; frequency: ComponentDef['frequency']; pay_month: number | null; is_taxable: boolean; counts_as_wages: boolean; colour: string }[],
 ): ComponentDef[] {
   return rows
     .map((c) => ({
@@ -91,6 +91,7 @@ export function toComponentDefs(
       name: c.name,
       calc_type: c.calc_type,
       calc_value: Number(c.calc_value),
+      max_amount: c.max_amount === null ? null : Number(c.max_amount),
       frequency: c.frequency,
       pay_month: c.pay_month,
       is_taxable: c.is_taxable,

@@ -16,17 +16,18 @@ import {
   ptSlabsReplaceSchema,
   shiftSchema,
   statutoryRatesCreateSchema,
+  STATUTORY_MINIMUM_RATES,
   structureCreateSchema,
   ymOf,
   type PolicyKind,
 } from '@ajpwer/shared';
-import { calendarDivisor, expandStructure, findOverlaps, validateStructure, workingDaysInMonth } from '../engines';
+import { calendarDivisor, ctcForGross, expandStructure, findOverlaps, validateStructure, workingDaysInMonth, type ComponentDef } from '../engines';
 import { audit, auditReq, who } from '../lib/audit';
 import { requirePerm } from '../lib/auth';
 import { fromDbDate, n, toDbDate } from '../lib/db-dates';
 import { ah, AppError, notFound } from '../lib/errors';
 import { prisma } from '../lib/prisma';
-import { holidaysBetween, toAttachedPolicy, toComponentDefs } from '../services/rules';
+import { holidaysBetween, ratesOn, toAttachedPolicy, toComponentDefs } from '../services/rules';
 import { randomUUID } from 'node:crypto';
 
 export const setupRouter = Router();
@@ -148,6 +149,17 @@ setupRouter.all(['/policies/:id', '/policies/:key/versions/:v'], (req, _res, nex
 
 // ─── Salary structures ───────────────────────────────────────────────────────
 
+/**
+ * A structure at a sample gross, for the builder and the list: someone on PF
+ * (restricted to the ceiling), with ESI where the gross allows it. "% of CTC"
+ * components run on the CTC that gross works out to.
+ */
+async function sampleAt(components: ComponentDef[], gross: number) {
+  const rates = await ratesOn(prisma, today()).catch(() => ({ ...STATUTORY_MINIMUM_RATES }));
+  const ctc = ctcForGross(gross, { components, pf: { pf_enabled: true, pf_restrict_to_ceiling: true, vpf_pct: 0 }, esi_enabled: true, rates: { pf: rates.pf, esi: rates.esi } });
+  return { annual_ctc: ctc.annual_ctc, ctc_basis: ctc.ctc_basis, expanded: expandStructure(components, gross, ctc.ctc_basis) };
+}
+
 async function structureView(id: string) {
   const s = await prisma.salaryStructure.findUniqueOrThrow({
     where: { id },
@@ -156,7 +168,8 @@ async function structureView(id: string) {
   const components = toComponentDefs(s.components);
   const referenced = await prisma.payslip.count({ where: { employee: { salaries: { some: { structure_id: id } } } }, take: 1 }).catch(() => 0);
   const used = (await prisma.employeeSalary.count({ where: { structure_id: id } })) > 0;
-  const sample = expandStructure(components, SAMPLE_GROSS);
+  const at = await sampleAt(components, SAMPLE_GROSS);
+  const sample = at.expanded;
   return {
     id: s.id,
     name: s.name,
@@ -165,8 +178,8 @@ async function structureView(id: string) {
     components,
     pay_groups: s.pay_groups,
     immutable: used || referenced > 0,
-    sample: { gross: SAMPLE_GROSS, monthly: sample.monthly.map((c) => ({ name: c.name, amount: c.amount })), yearly: sample.yearly.map((c) => ({ name: c.name, amount: c.amount })), over_budget: sample.over_budget },
-    validation: validateStructure(components, SAMPLE_GROSS),
+    sample: { gross: SAMPLE_GROSS, annual_ctc: at.annual_ctc, monthly: sample.monthly.map((c) => ({ name: c.name, amount: c.amount })), yearly: sample.yearly.map((c) => ({ name: c.name, amount: c.amount })), over_budget: sample.over_budget },
+    validation: validateStructure(components, SAMPLE_GROSS, at.ctc_basis),
   };
 }
 
@@ -194,7 +207,8 @@ setupRouter.post(
   ah(async (req, res) => {
     const b = z.object({ components: structureCreateSchema.shape.components, sample_gross: z.number().int().min(1) }).strict().parse(req.body);
     const components = b.components.map((c) => ({ ...c }));
-    res.json({ data: { ...validateStructure(components, b.sample_gross), expanded: expandStructure(components, b.sample_gross) } });
+    const at = await sampleAt(components, b.sample_gross);
+    res.json({ data: { ...validateStructure(components, b.sample_gross, at.ctc_basis), expanded: at.expanded, annual_ctc: at.annual_ctc } });
   }),
 );
 
@@ -204,7 +218,7 @@ setupRouter.post(
   requirePerm('setup.write'),
   ah(async (req, res) => {
     const b = structureCreateSchema.parse(req.body);
-    const v = validateStructure(b.components, SAMPLE_GROSS);
+    const v = validateStructure(b.components, SAMPLE_GROSS, (await sampleAt(b.components, SAMPLE_GROSS)).ctc_basis);
     if (v.errors.length) throw new AppError('VALIDATION', v.errors[0], 422, 'components', v.errors);
     const { actor, ip } = who(req);
     const s = await prisma.$transaction(async (tx) => {

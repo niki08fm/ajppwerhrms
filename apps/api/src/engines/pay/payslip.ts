@@ -23,7 +23,7 @@ import { expandStructure, type ComponentDef } from './structure';
 import { applyRecoveryCap, type RecoveryItem, type RecoveryResult } from './recovery';
 
 /** Stored on every payslip. Bump when a computation changes so old months stay explainable. */
-export const ENGINE_VERSION = '1.0.0';
+export const ENGINE_VERSION = '1.1.0';
 
 export interface PayslipLine {
   seq: number;
@@ -54,6 +54,8 @@ export interface PayslipInput {
   };
   /** Contracted monthly gross valid on the last day of the month */
   monthly_gross: Paise;
+  /** The annual CTC "% of CTC" components run on: the agreed CTC, or what the gross works out to */
+  annual_ctc: Paise;
   components: ComponentDef[];
   attendance: MonthTotals;
   offday_work: OffDayWorkEntry[];
@@ -122,7 +124,7 @@ export function assemblePayslip(input: PayslipInput): PayslipResult {
   const push = (l: Omit<PayslipLine, 'seq'>) => lines.push({ ...l, seq: seq++ });
   const flags: string[] = [];
 
-  const full = expandStructure(input.components, input.monthly_gross);
+  const full = expandStructure(input.components, input.monthly_gross, input.annual_ctc);
   if (full.over_budget) flags.push('STRUCTURE_OVER_BUDGET');
   const month = Number(input.ym.slice(5, 7));
   const att = input.attendance;

@@ -1,5 +1,5 @@
-import { formatINR, type Gender, type ISODate, type SalaryMode } from '@ajpwer/shared';
-import { salaryPreview, type SalaryPreview } from '../engines';
+import { formatINR, type EsiRates, type Gender, type ISODate, type Paise, type PfRates, type SalaryMode } from '@ajpwer/shared';
+import { ctcForGross, salaryPreview, type ComponentDef, type SalaryPreview } from '../engines';
 import { AppError } from '../lib/errors';
 import type { Db } from '../lib/prisma';
 import { ptSlabs, ratesOn, regimesOn, structureComponents } from './rules';
@@ -65,4 +65,25 @@ export async function resolveMonthlyGross(db: Db, r: PreviewRequest): Promise<{ 
     }
   }
   return { monthly_gross: preview.gross, preview };
+}
+
+/**
+ * The annual CTC a salary's "% of CTC" components are worked out on. On a CTC
+ * agreement it is the agreed figure; on a gross agreement it is the CTC that
+ * gross works out to for this person (their PF and ESI choices), the same figure
+ * the profile and offer screens show.
+ */
+export function ctcBasisOf(
+  salary: { mode: string; amount: number; monthly_gross: number },
+  components: ComponentDef[],
+  st: { pf_enabled: boolean; pf_restrict_to_ceiling: boolean; vpf_pct: unknown; esi_enabled: boolean },
+  rates: { pf: PfRates; esi: EsiRates },
+): Paise {
+  if (salary.mode === 'CTC') return salary.amount;
+  return ctcForGross(salary.monthly_gross, {
+    components,
+    pf: { pf_enabled: st.pf_enabled, pf_restrict_to_ceiling: st.pf_restrict_to_ceiling, vpf_pct: Number(st.vpf_pct) },
+    esi_enabled: st.esi_enabled,
+    rates,
+  }).ctc_basis;
 }

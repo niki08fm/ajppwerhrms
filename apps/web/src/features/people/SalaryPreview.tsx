@@ -70,7 +70,7 @@ export function SalaryPreviewPanel({ args, chosen, onChoose, compact }: { args: 
           </div>
         </Notice>
       )}
-      {p.structure.over_budget && <Notice tone="warning">Fixed and percentage components exceed this gross; the balance component is zero.</Notice>}
+      {p.structure.over_budget && <Notice tone="warning">The components add up to more than this gross, so the Special Allowance is zero.</Notice>}
       <div className="grid grid-cols-2 gap-3 text-[13px] sm:grid-cols-4">
         <div>
           <div className="text-[12px] text-muted-foreground">Monthly gross</div>

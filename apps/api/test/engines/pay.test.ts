@@ -14,7 +14,7 @@ import {
   type ComponentDef,
   type CtcContext,
 } from '../../src/engines';
-import { mulDiv, type CalendarMethod } from '@ajpwer/shared';
+import { mulDiv, structureCreateSchema, type CalendarMethod } from '@ajpwer/shared';
 import {
   ATTENDANCE,
   fullDay,
@@ -37,7 +37,7 @@ describe('Salary structure expansion', () => {
     const s = expandStructure(STANDARD_STRUCTURE, R(24000));
     expect(s.basic).toBe(R(12000));
     expect(s.hra).toBe(R(4800));
-    expect(s.monthly.find((c) => c.name === 'Special allowance')!.amount).toBe(R(24000 - 12000 - 4800 - 1600));
+    expect(s.monthly.find((c) => c.name === 'Special Allowance')!.amount).toBe(R(24000 - 12000 - 4800 - 1600));
     expect(s.gross).toBe(R(24000));
     expect(s.over_budget).toBe(false);
   });
@@ -46,14 +46,14 @@ describe('Salary structure expansion', () => {
     const s = expandStructure(STANDARD_STRUCTURE, R(3000));
     expect(s.monthly.every((c) => c.amount >= 0)).toBe(true);
     expect(s.over_budget).toBe(true);
-    expect(validateStructure(STANDARD_STRUCTURE, R(3000)).warnings.join(' ')).toMatch(/exceed the sample gross/);
+    expect(validateStructure(STANDARD_STRUCTURE, R(3000)).warnings.join(' ')).toMatch(/more than the sample gross/);
   });
 
   it('validation blocks a structure with no Basic or two balances', () => {
     const noBasic = STANDARD_STRUCTURE.map((c) => (c.name === 'Basic' ? { ...c, name: 'Base pay' } : c));
     expect(validateStructure(noBasic, R(24000)).errors[0]).toMatch(/Basic/);
     const twoBal = [...STANDARD_STRUCTURE, { ...STANDARD_STRUCTURE[3], seq: 9, name: 'Other' }];
-    expect(validateStructure(twoBal, R(24000)).errors.join(' ')).toMatch(/More than one balance/);
+    expect(validateStructure(twoBal, R(24000)).errors.join(' ')).toMatch(/More than one Special Allowance/);
   });
 
   it('yearly components are part of CTC but not monthly gross', () => {
@@ -65,6 +65,111 @@ describe('Salary structure expansion', () => {
     expect(s.gross).toBe(R(24000));
     expect(s.yearly_total).toBe(R(12000));
     expect(ctcForGross(R(24000), { ...ctx, components: withBonus }).annual_ctc - ctcForGross(R(24000), ctx).annual_ctc).toBe(R(12000));
+  });
+});
+
+/** Basic 40% of CTC (PF base), HRA 50% of basic up to ₹20,000, conveyance ₹1,600, the Special Allowance takes the rest. */
+const CTC_STRUCTURE: ComponentDef[] = [
+  { seq: 1, name: 'Basic', calc_type: 'PCT_CTC', calc_value: 40, frequency: 'MONTHLY', pay_month: null, is_taxable: true, counts_as_wages: true },
+  { seq: 2, name: 'HRA', calc_type: 'PCT_BASIC', calc_value: 50, max_amount: R(20000), frequency: 'MONTHLY', pay_month: null, is_taxable: true, counts_as_wages: false },
+  { seq: 3, name: 'Conveyance', calc_type: 'FIXED', calc_value: R(1600), frequency: 'MONTHLY', pay_month: null, is_taxable: true, counts_as_wages: false },
+  { seq: 4, name: 'Special Allowance', calc_type: 'BALANCE', calc_value: 0, frequency: 'MONTHLY', pay_month: null, is_taxable: true, counts_as_wages: false },
+];
+const amountOf = (s: { monthly: { name: string; amount: number }[] }, name: string) => s.monthly.find((c) => c.name === name)!.amount;
+
+describe('Components: a percentage of gross, CTC or basic, with an optional maximum', () => {
+  it('% of CTC is a share of the annual CTC, spread over twelve months', () => {
+    const s = expandStructure(CTC_STRUCTURE, R(45000), R(600000));
+    expect(s.basic).toBe(R(20000)); // 40% of ₹6,00,000 ÷ 12
+    expect(amountOf(s, 'HRA')).toBe(R(10000));
+    expect(amountOf(s, 'Special Allowance')).toBe(R(45000 - 20000 - 10000 - 1600));
+    expect(s.gross).toBe(R(45000));
+  });
+
+  it('a maximum caps the percentage and the excess falls to the Special Allowance; gross still adds up', () => {
+    const capped = CTC_STRUCTURE.map((c) => (c.name === 'HRA' ? { ...c, max_amount: R(8000) } : c));
+    const s = expandStructure(capped, R(45000), R(600000));
+    expect(amountOf(s, 'HRA')).toBe(R(8000));
+    expect(amountOf(s, 'Special Allowance')).toBe(R(45000 - 20000 - 8000 - 1600));
+    expect(s.gross).toBe(R(45000));
+  });
+
+  it('a maximum on basic caps the PF base with it', () => {
+    const struct = STANDARD_STRUCTURE.map((c) => (c.name === 'Basic' ? { ...c, max_amount: R(15000) } : c));
+    const s = expandStructure(struct, R(40000));
+    expect(s.basic).toBe(R(15000));
+    expect(s.pf_base).toBe(R(15000));
+    expect(amountOf(s, 'HRA')).toBe(R(6000)); // 40% of the capped basic
+    expect(s.gross).toBe(R(40000));
+  });
+
+  it('refuses to expand a % of CTC structure without the CTC, rather than paying zero', () => {
+    expect(() => expandStructure(CTC_STRUCTURE, R(45000))).toThrow(/CTC/);
+  });
+
+  it('validation: a maximum only on a percentage, basic never a % of itself, no percentage over 100', () => {
+    const fixedWithMax = STANDARD_STRUCTURE.map((c) => (c.name === 'Conveyance' ? { ...c, max_amount: R(1000) } : c));
+    expect(validateStructure(fixedWithMax, R(24000)).errors).toContain('A maximum only applies to a percentage component.');
+    const basicOfBasic = STANDARD_STRUCTURE.map((c) => (c.name === 'Basic' ? { ...c, calc_type: 'PCT_BASIC' as const } : c));
+    expect(validateStructure(basicOfBasic, R(24000)).errors.join()).toMatch(/Basic cannot be a percentage of itself/);
+    const over = STANDARD_STRUCTURE.map((c) => (c.name === 'HRA' ? { ...c, calc_value: 140 } : c));
+    expect(validateStructure(over, R(24000)).errors).toContain('A percentage cannot be more than 100.');
+    expect(validateStructure(CTC_STRUCTURE, R(45000), R(600000))).toEqual({ errors: [], warnings: [] });
+  });
+
+  it('a structure saved without a Special Allowance gets one, last, so gross always adds up', () => {
+    const parsed = structureCreateSchema.parse({
+      name: 'No balance',
+      valid_from: '2026-10-01',
+      components: STANDARD_STRUCTURE.filter((c) => c.calc_type !== 'BALANCE').map((c) => ({ ...c, colour: 'chart-1' })),
+    });
+    const last = parsed.components.at(-1)!;
+    expect(last).toMatchObject({ name: 'Special Allowance', calc_type: 'BALANCE', frequency: 'MONTHLY', seq: 4 });
+    const withOne = structureCreateSchema.parse({ name: 'Has one', valid_from: '2026-10-01', components: STANDARD_STRUCTURE.map((c) => ({ ...c, colour: 'chart-1' })) });
+    expect(withOne.components.filter((c) => c.calc_type === 'BALANCE')).toHaveLength(1);
+    expect(() => structureCreateSchema.parse({ name: 'x', valid_from: '2026-10-01', components: [{ ...STANDARD_STRUCTURE[2], max_amount: R(100) }] })).toThrow(/maximum only applies/);
+  });
+
+  const ctx: CtcContext = { components: CTC_STRUCTURE, pf: { pf_enabled: true, pf_restrict_to_ceiling: true, vpf_pct: 0 }, esi_enabled: true, rates: { pf: RATES.pf, esi: RATES.esi } };
+
+  it('agreed on CTC: % of CTC runs on the agreed figure and the solved gross reproduces it', () => {
+    const sol = solveGrossFromCtc(R(600000), ctx);
+    expect(sol.approximate).toBe(false);
+    expect(Math.abs(sol.breakdown.annual_ctc - R(600000))).toBeLessThanOrEqual(R(24));
+    expect(sol.breakdown.ctc_basis).toBe(R(600000));
+    const s = expandStructure(CTC_STRUCTURE, sol.gross, R(600000));
+    expect(s.basic).toBe(R(20000));
+    // PF ₹1,800 + EDLI ₹75 + admin ₹75 on the ₹15,000 ceiling; ESI off above ₹21,000.
+    expect(sol.gross).toBe(R(50000 - 1950));
+  });
+
+  it('agreed on gross: the CTC the % of CTC components run on is the CTC the gross works out to', () => {
+    const b = ctcForGross(R(45000), ctx);
+    expect(b.ctc_basis).toBe(b.annual_ctc);
+    expect(b.annual_ctc).toBe(R((45000 + 1950) * 12));
+    // Round trip: that CTC solves back to the same gross.
+    expect(solveGrossFromCtc(b.annual_ctc, ctx).gross).toBe(R(45000));
+  });
+
+  it('the fixed point also settles when the % of CTC component moves the PF base', () => {
+    const noCeiling: CtcContext = { ...ctx, pf: { ...ctx.pf, pf_restrict_to_ceiling: false } };
+    const b = ctcForGross(R(45000), noCeiling);
+    const s = expandStructure(CTC_STRUCTURE, R(45000), b.ctc_basis);
+    // basic = CTC ÷ 30 (40% ÷ 12); CTC = 12 × (gross + 12.5% of basic for PF and admin + ₹75 EDLI on the ₹15,000 cap).
+    // Solved exactly: CTC = 12 × 45,075 ÷ (1 − 0.4 × 0.125). PF rounds to the rupee, so within ₹2 a month.
+    const exact = (45075 * 12) / (1 - 0.4 * 0.125);
+    expect(Math.abs(b.annual_ctc - R(exact))).toBeLessThanOrEqual(R(24));
+    expect(Math.abs(b.annual_ctc - b.ctc_basis)).toBeLessThanOrEqual(R(24));
+    expect(s.gross).toBe(R(45000));
+  });
+
+  it('a payslip on a % of CTC structure carries the components and still reconciles', () => {
+    const r = assemblePayslip(payslipInput({ monthly_gross: R(45000), annual_ctc: R(600000), components: CTC_STRUCTURE }));
+    const line = (code: string) => r.lines.find((l) => l.code === code)!;
+    expect(line('Basic').amount).toBe(R(20000));
+    expect(line('HRA').amount).toBe(R(10000));
+    expect(line('Special Allowance').amount).toBe(R(13400));
+    expect(r.salary_gross).toBe(R(45000));
   });
 });
 

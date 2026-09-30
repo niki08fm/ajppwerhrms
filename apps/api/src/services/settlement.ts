@@ -8,6 +8,7 @@ import { leaveBalances } from './leave';
 import { computePayslip } from './payslip';
 import { payContext } from './payroll';
 import { salaryOn, structureComponents } from './rules';
+import { ctcBasisOf } from './salary';
 
 /**
  * Full and final settlement, computed live while the person is on notice and
@@ -21,9 +22,10 @@ export async function computeSettlementFor(db: Db, employeeId: string, opts: { a
   const salary = await salaryOn(db, e.id, lastDay);
   if (!salary) throw new AppError('VALIDATION', `${e.name} has no salary on their last day.`, 409);
   const components = await structureComponents(db, salary.structure_id);
-  const full = expandStructure(components, salary.monthly_gross);
-
   const ctx = await payContext(db, ym);
+  if (!e.statutory) throw new AppError('VALIDATION', `${e.name} (${e.code}) has no statutory setup.`, 409);
+  const full = expandStructure(components, salary.monthly_gross, ctcBasisOf(salary, components, e.statutory, ctx.rates));
+
   const months = await computeMonths(db, [e], ym);
   const payslip = await computePayslip(db, e, ym, months.get(e.id)!, ctx, null);
   const statutoryCodes = ['PF', 'VPF', 'ESI', 'PT', 'TDS'];

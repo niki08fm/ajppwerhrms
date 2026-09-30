@@ -56,8 +56,9 @@ export function salaryPreview(input: SalaryPreviewInput): SalaryPreview {
   } else {
     gross = input.amount;
   }
-  const structure = expandStructure(input.components, gross);
-  const ctc = ctcForGross(gross, ctx);
+  // On a CTC agreement, "% of CTC" components run on the agreed figure; on gross, on the CTC it works out to.
+  const ctc = ctcForGross(gross, ctx, undefined, input.mode === 'CTC' ? input.amount : undefined);
+  const structure = expandStructure(input.components, gross, ctc.ctc_basis);
   const pf = computePf(structure.pf_base, input.pf, input.rates.pf);
   const esi_within_ceiling = gross <= input.rates.esi.ceiling;
   const esi = computeEsi(input.esi_enabled && esi_within_ceiling, gross, input.rates.esi);

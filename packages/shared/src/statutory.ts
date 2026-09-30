@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { pct, roundRupee } from './money';
 
 /**
  * Company-wide statutory rates, versioned by `valid_from`. Money is paise,
@@ -12,10 +13,12 @@ export const pfRatesSchema = z
   .object({
     employee_pct: percent,
     employer_pct: percent,
-    /** Wage ceiling the percentage runs on when restrict-to-ceiling is on */
+    /**
+     * Wage ceiling the percentage runs on when restrict-to-ceiling is on. It is the
+     * only PF limit: the largest contribution follows from it (rate × ceiling), so
+     * there is no separate maximum to keep in step. See pfMaxContribution.
+     */
     ceiling: paise,
-    /** Caps the rupee contribution after the percentage; null = no cap */
-    max_contribution: paise.nullable(),
     /** Pension (EPS) share of the employer contribution */
     eps_pct: percent,
     /** EPS is computed on wages up to this figure (statutory ₹15,000) */
@@ -63,7 +66,6 @@ export const STATUTORY_MINIMUM_RATES: Omit<StatutoryRates, 'valid_from'> = {
     employee_pct: 12,
     employer_pct: 12,
     ceiling: 15_000_00,
-    max_contribution: null,
     eps_pct: 8.33,
     eps_wage_ceiling: 15_000_00,
     edli_pct: 0.5,
@@ -80,9 +82,19 @@ export const AJPWER_RATES: Omit<StatutoryRates, 'valid_from'> = {
   pf: {
     ...STATUTORY_MINIMUM_RATES.pf,
     ceiling: 25_000_00,
-    max_contribution: 6_000_00,
   },
 };
+
+/**
+ * The most anyone contributes each month while restrict-to-ceiling is on: the rate
+ * applied to the ceiling. On ₹25,000 at 12% that is ₹3,000 from the employee and
+ * ₹3,000 from the company — ₹6,000 together.
+ */
+export function pfMaxContribution(pf: Pick<PfRates, 'ceiling' | 'employee_pct' | 'employer_pct'>): { employee: number; employer: number; total: number } {
+  const employee = roundRupee(pct(pf.ceiling, pf.employee_pct));
+  const employer = roundRupee(pct(pf.ceiling, pf.employer_pct));
+  return { employee, employer, total: employee + employer };
+}
 
 export interface PtSlab {
   state: string;

@@ -25,7 +25,7 @@ import {
   ymOf,
   type ISODate,
 } from '@ajpwer/shared';
-import { compareRegimes, ctcForGross, expandStructure, calendarDivisor, workingDaysInMonth } from '../engines';
+import { compareRegimes, ctcForGross, expandStructure, calendarDivisor, usesCtc, workingDaysInMonth } from '../engines';
 import { audit, auditReq, diff, who } from '../lib/audit';
 import { requirePerm } from '../lib/auth';
 import { encryptPII, maskAadhaar } from '../lib/crypto';
@@ -40,7 +40,7 @@ import { leaveBalances } from '../services/leave';
 import { computePayslip, loadRecoveries } from '../services/payslip';
 import { payContext } from '../services/payroll';
 import { ratesOn, regimesOn, salaryOn, structureComponents, holidaysBetween } from '../services/rules';
-import { previewSalary, resolveMonthlyGross } from '../services/salary';
+import { ctcBasisOf, previewSalary, resolveMonthlyGross } from '../services/salary';
 import { upsertSettlement } from '../services/settlement';
 
 export const employeesRouter = Router();
@@ -545,15 +545,14 @@ employeesRouter.post(
     const st = e.statutory!;
     const rates = await ratesOn(prisma, today());
     const components = await structureComponents(prisma, cur.structure_id);
-    const amount =
-      mode === 'GROSS'
-        ? cur.monthly_gross
-        : ctcForGross(cur.monthly_gross, {
-            components,
-            pf: { pf_enabled: st.pf_enabled, pf_restrict_to_ceiling: st.pf_restrict_to_ceiling, vpf_pct: Number(st.vpf_pct) },
-            esi_enabled: st.esi_enabled,
-            rates: { pf: rates.pf, esi: rates.esi },
-          }).annual_ctc;
+    // Restating to CTC keeps "% of CTC" components exactly where they were: the agreed CTC is the figure they already ran on.
+    const worked = ctcForGross(cur.monthly_gross, {
+      components,
+      pf: { pf_enabled: st.pf_enabled, pf_restrict_to_ceiling: st.pf_restrict_to_ceiling, vpf_pct: Number(st.vpf_pct) },
+      esi_enabled: st.esi_enabled,
+      rates: { pf: rates.pf, esi: rates.esi },
+    });
+    const amount = mode === 'GROSS' ? cur.monthly_gross : usesCtc(components) ? worked.ctc_basis : worked.annual_ctc;
     const { actor, ip } = who(req);
     await prisma.$transaction(async (tx) => {
       await insertSalary(tx, e.id, today(), { mode, amount, monthly_gross: cur.monthly_gross, structure_id: cur.structure_id, reason: `Restated as ${mode === 'CTC' ? 'annual CTC' : 'monthly gross'}; pay unchanged` }, actor);
@@ -629,9 +628,9 @@ employeesRouter.get(
     const cur = await salaryOn(prisma, e.id, date);
     if (!cur) return res.json({ data: null });
     const components = await structureComponents(prisma, cur.structure_id);
-    const s = expandStructure(components, cur.monthly_gross);
-    const taxable = s.monthly.filter((c) => c.is_taxable).reduce((a, c) => a + c.amount, 0) * 12 + s.yearly.filter((c) => c.is_taxable).reduce((a, c) => a + c.amount, 0);
     const st = e.statutory!;
+    const s = expandStructure(components, cur.monthly_gross, ctcBasisOf(cur, components, st, await ratesOn(prisma, date)));
+    const taxable = s.monthly.filter((c) => c.is_taxable).reduce((a, c) => a + c.amount, 0) * 12 + s.yearly.filter((c) => c.is_taxable).reduce((a, c) => a + c.amount, 0);
     const regimes = await regimesOn(prisma, date);
     const cmp = compareRegimes(
       { gross: taxable, basic: s.basic * 12, hra: s.hra * 12 },

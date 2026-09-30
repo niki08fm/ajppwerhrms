@@ -28,6 +28,7 @@ import type { Db } from '../lib/prisma';
 import { AppError } from '../lib/errors';
 import type { EmployeeMonth } from './attendance';
 import { salaryOn, structureComponents } from './rules';
+import { ctcBasisOf } from './salary';
 
 export interface PayslipEmployee {
   id: string;
@@ -181,6 +182,7 @@ export async function computePayslip(
     ym,
     employee: { id: e.id, gender: e.gender },
     monthly_gross: salary.monthly_gross,
+    annual_ctc: ctcBasisOf(salary, components, e.statutory, ctx.rates),
     components,
     attendance: month.result.totals,
     offday_work: month.result.offday_work,

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { formatINR, type EsiRates, type GratuityRates, type PfRates } from '@ajpwer/shared';
+import { formatINR, pfMaxContribution, type EsiRates, type GratuityRates, type PfRates } from '@ajpwer/shared';
 import { api, errorMessage } from '@/lib/api';
 import { toPaise, toRupeesInput } from '@/lib/utils';
 import { Money, PageHeader } from '@/components/bits';
@@ -75,7 +75,7 @@ export default function Statutory() {
                     ['Employee rate', `${c.pf.employee_pct}%`],
                     ['Employer rate', `${c.pf.employer_pct}%`],
                     ['Wage ceiling', formatINR(c.pf.ceiling)],
-                    ['Maximum contribution', c.pf.max_contribution ? formatINR(c.pf.max_contribution) : 'None'],
+                    ['Largest contribution', `${formatINR(pfMaxContribution(c.pf).employee)} + ${formatINR(pfMaxContribution(c.pf).employer)} a month`],
                     ['Pension (EPS) share', `${c.pf.eps_pct}% on wages up to ${formatINR(c.pf.eps_wage_ceiling)}`],
                     ['EDLI / admin', `${c.pf.edli_pct}% / ${c.pf.admin_pct}%`],
                   ].map(([k, v]) => (
@@ -87,7 +87,7 @@ export default function Statutory() {
                 </tbody>
               </table>
               <p className="mt-2 text-[12px] text-muted-foreground">
-                The ceiling caps the wage the percentage runs on; the maximum caps the rupees. On these settings the {c.pf.max_contribution && c.pf.ceiling * (c.pf.employee_pct / 100) < c.pf.max_contribution ? 'ceiling' : 'maximum'} is what binds. Which components form the base is one tick per component in the salary structure.
+                The ceiling is the only limit. With restrict-to-ceiling on, PF runs on at most {formatINR(c.pf.ceiling)} of wages, so the most anyone pays is {c.pf.employee_pct}% of that — {formatINR(pfMaxContribution(c.pf).employee)} — and the company matches it ({formatINR(pfMaxContribution(c.pf).total)} together). Pension stays on the statutory {formatINR(c.pf.eps_wage_ceiling)}. Which components form the base is one tick per component in the salary structure.
               </p>
             </CardBody>
           </Card>
@@ -239,7 +239,6 @@ function RatesDialog({ current, onClose }: { current: RatesRow; onClose: () => v
     pf_emp: String(current.pf.employee_pct),
     pf_er: String(current.pf.employer_pct),
     ceiling: toRupeesInput(current.pf.ceiling),
-    max: toRupeesInput(current.pf.max_contribution),
     eps: String(current.pf.eps_pct),
     eps_ceiling: toRupeesInput(current.pf.eps_wage_ceiling),
     edli: String(current.pf.edli_pct),
@@ -253,7 +252,7 @@ function RatesDialog({ current, onClose }: { current: RatesRow; onClose: () => v
     mutationFn: () =>
       api.patch('/statutory-rates', {
         valid_from: f.valid_from,
-        pf: { employee_pct: Number(f.pf_emp), employer_pct: Number(f.pf_er), ceiling: toPaise(f.ceiling), max_contribution: f.max ? toPaise(f.max) : null, eps_pct: Number(f.eps), eps_wage_ceiling: toPaise(f.eps_ceiling), edli_pct: Number(f.edli), admin_pct: Number(f.admin) },
+        pf: { employee_pct: Number(f.pf_emp), employer_pct: Number(f.pf_er), ceiling: toPaise(f.ceiling), eps_pct: Number(f.eps), eps_wage_ceiling: toPaise(f.eps_ceiling), edli_pct: Number(f.edli), admin_pct: Number(f.admin) },
         esi: { ceiling: toPaise(f.esi_ceiling), employee_pct: Number(f.esi_emp), employer_pct: Number(f.esi_er) },
         gratuity: current.gratuity,
         recovery_cap_pct: Number(f.cap),
@@ -275,6 +274,8 @@ function RatesDialog({ current, onClose }: { current: RatesRow; onClose: () => v
       )}
     </Field>
   );
+  // The ceiling is the one PF limit; the largest contribution follows from it.
+  const maxPf = pfMaxContribution({ ceiling: toPaise(f.ceiling || '0'), employee_pct: Number(f.pf_emp) || 0, employer_pct: Number(f.pf_er) || 0 });
   const money = (k: keyof typeof f, label: string, hint?: string) => <Field label={label} hint={hint}>{(id) => <MoneyInput id={id} value={f[k]} onChange={(e) => setF({ ...f, [k]: e.target.value })} />}</Field>;
   return (
     <Dialog
@@ -300,8 +301,7 @@ function RatesDialog({ current, onClose }: { current: RatesRow; onClose: () => v
         </Field>
         {num('pf_emp', 'PF employee')}
         {num('pf_er', 'PF employer')}
-        {money('ceiling', 'PF wage ceiling')}
-        {money('max', 'Maximum contribution', 'Blank for none')}
+        {money('ceiling', 'PF wage ceiling', `Largest contribution: ${formatINR(maxPf.employee)} + ${formatINR(maxPf.employer)} a month`)}
         {num('eps', 'Pension (EPS) share')}
         {money('eps_ceiling', 'EPS wage ceiling')}
         {num('edli', 'EDLI')}
