@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Download, ImageOff, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { AJPWER_LEAVE_TYPES } from '@ajpwer/shared';
 import { api, API_BASE, download, errorMessage } from '@/services/api';
 import { useSession } from '@/context/SessionContext';
 import { istTime } from '@/utils';
@@ -92,7 +91,7 @@ function ExceptionCard({ f }) {
       <CardHeader title={`${f.site.name} · ${istTime(f.occurred_at, true)}`} description={f.reason} />
       <CardBody className="grid gap-4 sm:grid-cols-2">
         <div>
-          <div className="mb-1 text-[12px] text-muted-foreground">{f.crops ? `Face at the tablet, ${f.crops} tr${f.crops === 1 ? 'y' : 'ies'}` : 'Gate snapshot'}</div>
+          <div className="mb-1 text-[13px] text-muted-foreground">{f.crops ? `Face at the tablet, ${f.crops} tr${f.crops === 1 ? 'y' : 'ies'}` : 'Gate snapshot'}</div>
           {f.crops ? (
             <div className="grid grid-cols-3 gap-1.5">
               {Array.from({ length: f.crops }, (_, n) => (
@@ -102,13 +101,13 @@ function ExceptionCard({ f }) {
           ) : f.has_snapshot ? (
             <img src={`${API_BASE}/face-exceptions/${f.id}/snapshot`} alt="Gate snapshot" className="aspect-[4/3] w-full rounded-md border object-cover" />
           ) : (
-            <div className="flex aspect-[4/3] w-full flex-col items-center justify-center gap-1 rounded-md border bg-muted text-[12px] text-muted-foreground">
+            <div className="flex aspect-[4/3] w-full flex-col items-center justify-center gap-1 rounded-md border bg-muted text-[13px] text-muted-foreground">
               <ImageOff className="size-5" /> No snapshot (or past its 30 days)
             </div>
           )}
-          <p className="mt-1 text-[11px] text-muted-foreground">Only embeddings are stored for enrolled people, not photographs. Compare against the person in front of you or their ID.</p>
+          <p className="mt-1 text-[12px] text-muted-foreground">Only embeddings are stored for enrolled people, not photographs. Compare against the person in front of you or their ID.</p>
         </div>
-        <div className="flex flex-col gap-3 text-[13px]">
+        <div className="flex flex-col gap-3 text-[14px]">
           <KV
             cols={1}
             items={[
@@ -128,7 +127,7 @@ function ExceptionCard({ f }) {
           />
 
           <label className="flex flex-col gap-1">
-            <span className="text-[12px] font-medium">Who it actually was</span>
+            <span className="text-[13px] font-medium">Who it actually was</span>
             <Select value={who} onChange={(e) => setWho(e.target.value)}>
               <option value="">Choose…</option>
               {people.data?.map((p) => (
@@ -139,7 +138,7 @@ function ExceptionCard({ f }) {
             </Select>
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-[12px] font-medium">Direction</span>
+            <span className="text-[13px] font-medium">Direction</span>
             <Select value={dir} onChange={(e) => setDir(e.target.value)}>
               <option value="">Infer from their last punch</option>
               <option value="IN">In</option>
@@ -210,14 +209,14 @@ function LeaveQueue({ q }) {
     );
   return (
     <Card>
-      <table className="data-table w-full">
+      <div className="overflow-x-auto"><table className="data-table w-full">
         <tbody>
           {q.data.map((r) => (
             <tr key={r.id}>
               <td>
                 <PersonLink id={r.employee.id} name={r.employee.name} code={r.employee.code} />
               </td>
-              <td>{AJPWER_LEAVE_TYPES.find((t) => t.code === r.leave_type)?.name ?? r.leave_type}</td>
+              <td>{r.leave_name ?? r.leave_type}</td>
               <td className="num">
                 {r.from_date} → {r.to_date} ({r.days} d)
               </td>
@@ -235,7 +234,7 @@ function LeaveQueue({ q }) {
             </tr>
           ))}
         </tbody>
-      </table>
+      </table></div>
     </Card>
   );
 }
@@ -255,8 +254,8 @@ function SiteChanges({ q }) {
     );
   return (
     <Card>
-      <table className="w-full text-[13px]">
-        <thead className="border-b text-left text-[12px] text-muted-foreground">
+      <table className="w-full text-[14px]">
+        <thead className="border-b text-left text-[13px] text-muted-foreground">
           <tr>
             <th className="px-4 py-2 font-medium">Person</th>
             <th className="px-4 py-2 font-medium">From → to</th>
@@ -304,7 +303,7 @@ function SiteChangeRow({ c }) {
       </td>
       <td className="px-4 py-2">
         <Chip tone={tone}>{label}</Chip>
-        {c.reviewed_at && <div className="mt-1 text-[11px] text-muted-foreground">Set by {c.reviewed_by}</div>}
+        {c.reviewed_at && <div className="mt-1 text-[12px] text-muted-foreground">Set by {c.reviewed_by}</div>}
       </td>
       <td className="px-4 py-2 num">
         {editing ? (

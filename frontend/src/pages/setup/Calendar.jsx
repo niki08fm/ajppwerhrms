@@ -50,7 +50,7 @@ export default function Calendar() {
         ) : shifts.isError ? (
           <ErrorState error={shifts.error} />
         ) : (
-          <table className="data-table w-full">
+          <div className="overflow-x-auto"><table className="data-table w-full">
             <thead>
               <tr>
                 <th>Name</th>
@@ -73,7 +73,7 @@ export default function Calendar() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         )}
       </Card>
       <Card>
@@ -100,7 +100,7 @@ export default function Calendar() {
         ) : !holidays.data.length ? (
           <EmptyState title={`No holidays in ${year}`} body="Add the company's holidays for the year." />
         ) : (
-          <table className="data-table w-full">
+          <div className="overflow-x-auto"><table className="data-table w-full">
             <thead>
               <tr>
                 <th>Date</th>
@@ -123,7 +123,7 @@ export default function Calendar() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         )}
       </Card>
       {addShift && <ShiftDialog onClose={() => setAddShift(false)} />}
@@ -167,7 +167,7 @@ function ShiftDialog({ onClose }) {
         <Field label="Start">{(id) => <Input id={id} type="time" value={f.start} onChange={(e) => setF({ ...f, start: e.target.value })} />}</Field>
         <Field label="End">{(id) => <Input id={id} type="time" value={f.end} onChange={(e) => setF({ ...f, end: e.target.value })} />}</Field>
         <Field label="Break (minutes)">{(id) => <Input id={id} type="number" value={f.break_min} onChange={(e) => setF({ ...f, break_min: e.target.value })} />}</Field>
-        <label className="flex items-center gap-2 pt-5 text-[13px]">
+        <label className="flex items-center gap-2 pt-5 text-[14px]">
           <Switch checked={f.crosses} onCheckedChange={(v) => setF({ ...f, crosses: v })} label="Crosses midnight" /> Crosses midnight
         </label>
       </div>

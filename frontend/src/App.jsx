@@ -13,6 +13,7 @@ const Analytics = lazy(() => import('./pages/dashboard/Analytics'));
 const RunPayroll = lazy(() => import('./pages/payroll/RunPayroll'));
 const PayslipPrint = lazy(() => import('./pages/payroll/PayslipPrint'));
 const Money = lazy(() => import('./pages/payroll/Money'));
+const HeldSalaries = lazy(() => import('./pages/payroll/HeldSalaries'));
 const People = lazy(() => import('./pages/people/People'));
 const Profile = lazy(() => import('./pages/people/Profile'));
 const Offers = lazy(() => import('./pages/people/Offers'));
@@ -112,6 +113,7 @@ export function App() {
                   <Route path="payroll" element={<RunPayroll />} />
                   <Route path="payroll/:ym" element={<RunPayroll />} />
                   <Route path="money" element={<Money />} />
+                  <Route path="held-salaries" element={<HeldSalaries />} />
                   <Route path="people" element={<People />} />
                   <Route path="people/:id" element={<Profile />} />
                   <Route path="offers" element={<Offers />} />

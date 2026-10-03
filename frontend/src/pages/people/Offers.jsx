@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useNewFromUrl } from '@/hooks';
 import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, FileSignature, Play, Plus } from 'lucide-react';
@@ -19,6 +20,7 @@ export default function Offers() {
   const nav = useNavigate();
   const [tab, setTab] = useState('OFFER');
   const [issuing, setIssuing] = useState(false);
+  useNewFromUrl(useCallback(() => setIssuing(true), []));
   const q = useQuery({ queryKey: ['offers'], queryFn: () => api.get('/offers').then((r) => r.data) });
   const act = useMutation({
     mutationFn: ({ path }) => api.post(path),
@@ -64,7 +66,7 @@ export default function Offers() {
                   action={s === 'OFFER' ? <Button onClick={() => setIssuing(true)}>Issue an offer</Button> : undefined}
                 />
               ) : (
-                <table className="data-table w-full">
+                <div className="overflow-x-auto"><table className="data-table w-full">
                   <thead>
                     <tr>
                       <th>Name</th>
@@ -123,7 +125,7 @@ export default function Offers() {
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </table></div>
               )}
             </Card>
           </TabsContent>
@@ -263,7 +265,7 @@ function IssueOfferDialog({ onClose }) {
               onChoose={setChosen}
             />
           ) : (
-            <p className="text-[13px] text-muted-foreground">Pick a pay group to see the breakdown.</p>
+            <p className="text-[14px] text-muted-foreground">Pick a pay group to see the breakdown.</p>
           )}
         </div>
       </div>

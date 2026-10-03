@@ -59,7 +59,7 @@ export default function MoneyPage() {
         ) : !r.data.rows.length ? (
           <EmptyState title="Nothing lent" body="Grant an advance or a loan to someone; it is recovered through payroll." />
         ) : (
-          <table className="data-table w-full">
+          <div className="overflow-x-auto"><table className="data-table w-full">
             <thead>
               <tr>
                 <th>Person</th>
@@ -102,13 +102,13 @@ export default function MoneyPage() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         )}
       </Card>
       {r.data && r.data.carries.length > 0 && (
         <Card>
           <CardHeader title="Carry-forward balances" description="Held back by the recovery cap; taken first next month." />
-          <ul className="divide-y text-[13px]">
+          <ul className="divide-y text-[14px]">
             {r.data.carries.map((c) => (
               <li key={c.id} className="flex justify-between px-4 py-2">
                 <PersonLink id={c.employee.id} name={c.employee.name} code={c.employee.code} />
@@ -161,7 +161,7 @@ export function GrantDialog({ type, employee, onClose }) {
     >
       <div className="grid gap-3 sm:grid-cols-2">
         {employee ? (
-          <p className="sm:col-span-2 text-[13px]">For {employee.name}</p>
+          <p className="sm:col-span-2 text-[14px]">For {employee.name}</p>
         ) : (
           <Field label="Person" className="sm:col-span-2">
             {(id) => (

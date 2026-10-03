@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Command } from 'cmdk';
 import {
@@ -7,6 +7,8 @@ import {
   Banknote,
   CalendarClock,
   CalendarDays,
+  ChevronDown,
+  ChevronRight,
   ClipboardCheck,
   Clock3,
   FileCheck2,
@@ -20,9 +22,14 @@ import {
   MapPin,
   Menu as MenuIcon,
   Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PauseCircle,
+  Plus,
   Scale,
   ScrollText,
   Search,
+  Settings2,
   Sun,
   UserMinus,
   UserPlus,
@@ -36,98 +43,219 @@ import { useSession } from '@/context/SessionContext';
 import { cn, initials } from '@/utils';
 import { OfflineBanner } from './states';
 import { Button } from './ui/button';
-import { Menu } from './ui/overlay';
+import { Menu, Tooltip } from './ui/overlay';
 
+/** Navigation follows the job HR is doing. Settings are folded away until needed. */
 const NAV = [
   {
-    group: 'Overview',
+    group: null,
     items: [
-      { to: '/', label: 'Dashboard', icon: <Gauge />, end: true },
-      { to: '/sites', label: 'Sites', icon: <MapPin /> },
+      { to: '/', label: 'Today', icon: <Gauge />, end: true },
       { to: '/analytics', label: 'Analytics', icon: <BarChart3 /> },
+    ],
+  },
+  {
+    group: 'People',
+    items: [
+      { to: '/people', label: 'Employees', icon: <Users /> },
+      { to: '/offers', label: 'Hiring and onboarding', icon: <UserPlus /> },
+      { to: '/exits', label: 'Exits and settlement', icon: <UserMinus /> },
+    ],
+  },
+  {
+    group: 'Time',
+    items: [
+      { to: '/attendance', label: 'Attendance', icon: <CalendarClock /> },
+      { to: '/leave', label: 'Leave', icon: <CalendarDays /> },
+      { to: '/overtime', label: 'Overtime', icon: <Clock3 /> },
+      { to: '/approvals', label: 'Approvals', icon: <ClipboardCheck />, badge: 'approvals' },
     ],
   },
   {
     group: 'Payroll',
     items: [
       { to: '/payroll', label: 'Run payroll', icon: <Banknote /> },
-      { to: '/money', label: 'Advances and loans', icon: <HandCoins /> },
+      { to: '/held-salaries', label: 'Held salaries', icon: <PauseCircle /> },
+      { to: '/money', label: 'Loans and advances', icon: <HandCoins /> },
     ],
   },
   {
-    group: 'People',
+    group: 'Sites and records',
     items: [
-      { to: '/people', label: 'People', icon: <Users /> },
-      { to: '/offers', label: 'Offers and onboarding', icon: <UserPlus /> },
-      { to: '/exits', label: 'Exits and settlement', icon: <UserMinus /> },
-    ],
-  },
-  {
-    group: 'Daily',
-    items: [
-      { to: '/attendance', label: 'Attendance', icon: <CalendarClock /> },
-      { to: '/overtime', label: 'Overtime', icon: <Clock3 /> },
-      { to: '/leave', label: 'Leave', icon: <CalendarDays /> },
-      { to: '/approvals', label: 'Approvals', icon: <ClipboardCheck /> },
+      { to: '/sites', label: 'Sites', icon: <MapPin /> },
       { to: '/documents', label: 'Documents', icon: <FileCheck2 /> },
-    ],
-  },
-  {
-    group: 'Setup',
-    items: [
-      { to: '/setup/pay-groups', label: 'Pay groups', icon: <Workflow /> },
-      { to: '/setup/structures', label: 'Salary structures', icon: <Layers /> },
-      { to: '/setup/policies', label: 'Policies', icon: <Scale /> },
-      { to: '/setup/statutory', label: 'Statutory rules', icon: <Landmark /> },
-      { to: '/setup/calendar', label: 'Shifts and holidays', icon: <FileClock /> },
-      { to: '/setup/projects', label: 'Projects', icon: <FolderKanban /> },
       { to: '/audit', label: 'Audit log', icon: <ScrollText /> },
     ],
   },
 ];
 
-function Sidebar({ onNavigate }) {
+const SETTINGS = [
+  { to: '/setup/pay-groups', label: 'Pay groups', icon: <Workflow /> },
+  { to: '/setup/structures', label: 'Salary structures', icon: <Layers /> },
+  { to: '/setup/policies', label: 'Policies', icon: <Scale /> },
+  { to: '/setup/statutory', label: 'Statutory rules', icon: <Landmark /> },
+  { to: '/setup/calendar', label: 'Shifts and holidays', icon: <FileClock /> },
+  { to: '/setup/projects', label: 'Projects', icon: <FolderKanban /> },
+];
+
+/** The things HR starts most often, from anywhere. */
+const NEW_ACTIONS = [
+  { to: '/leave?new=1', label: 'Record leave', icon: <CalendarDays /> },
+  { to: '/exits?new=1', label: 'Record an exit', icon: <UserMinus /> },
+  { to: '/held-salaries?new=1', label: 'Hold a salary', icon: <PauseCircle /> },
+  { to: '/offers?new=1', label: 'Issue an offer', icon: <UserPlus /> },
+  { to: '/people?new=1', label: 'Add an existing employee', icon: <Users /> },
+  { to: '/attendance', label: 'Correct attendance', icon: <CalendarClock /> },
+];
+
+function remember(key, fallback) {
+  try {
+    const v = localStorage.getItem(key);
+    return v === null ? fallback : v === '1';
+  } catch {
+    return fallback;
+  }
+}
+function store(key, value) {
+  try {
+    localStorage.setItem(key, value ? '1' : '0');
+  } catch {
+    // a private window: the choice lasts until reload
+  }
+}
+
+/** One link. The current page gets a teal bar at its edge, like a lit indicator on a panel. */
+function NavItem({ it, collapsed, onNavigate, badge }) {
+  const link = (
+    <NavLink
+      to={it.to}
+      end={it.end}
+      onClick={onNavigate}
+      className={({ isActive }) =>
+        cn(
+          'relative flex h-9 items-center gap-3 rounded-md text-sm text-sidebar-foreground/75 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground [&_svg]:size-[18px] [&_svg]:shrink-0',
+          collapsed ? 'justify-center px-0' : 'px-3',
+          isActive &&
+            'bg-sidebar-accent font-medium text-sidebar-accent-foreground before:absolute before:inset-y-1.5 before:left-0 before:w-[3px] before:rounded-full before:bg-sidebar-primary [&_svg]:text-sidebar-primary',
+        )
+      }
+    >
+      {it.icon}
+      {!collapsed && <span className="flex-1 truncate">{it.label}</span>}
+      {badge > 0 &&
+        (collapsed ? (
+          <span className="absolute top-1 right-1 size-2 rounded-full bg-destructive" aria-label={`${badge} waiting`} />
+        ) : (
+          <span className="rounded-full bg-destructive px-1.5 text-[12px] leading-5 font-semibold text-destructive-foreground num">{badge}</span>
+        ))}
+    </NavLink>
+  );
+  return collapsed ? <Tooltip content={it.label}>{link}</Tooltip> : link;
+}
+
+function Sidebar({ onNavigate, collapsed, onToggleCollapsed }) {
   const { data } = useQuery({ queryKey: ['dashboard', 'people'], queryFn: () => api.get('/dashboard/people').then((r) => r.data), staleTime: 60_000 });
   const pending = (data?.approvals.face ?? 0) + (data?.approvals.leave ?? 0);
+  const { pathname } = useLocation();
+  const nav = useNavigate();
+  const inSettings = SETTINGS.some((x) => pathname.startsWith(x.to));
+  const [settingsOpen, setSettingsOpen] = useState(() => remember('nav.settings', false));
+  const showSettings = settingsOpen || inSettings;
   return (
-    <nav aria-label="Main" className="flex h-full flex-col gap-4 overflow-y-auto px-3 py-4 scrollbar-thin">
-      <div className="flex items-center gap-2 px-2">
-        <div className="flex size-8 items-center justify-center rounded-md bg-primary text-primary-foreground">
+    <nav aria-label="Main" className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
+      <div className={cn('flex h-14 shrink-0 items-center gap-2.5 border-b border-sidebar-border', collapsed ? 'justify-center px-2' : 'px-4')}>
+        <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground">
           <svg viewBox="0 0 32 32" className="size-5" aria-hidden>
             <path d="M17.5 5 9 18h6l-1.5 9L23 13h-6.2L17.5 5z" fill="currentColor" />
           </svg>
         </div>
-        <div className="leading-tight">
-          <div className="font-display text-[15px] font-semibold">AJPWER</div>
-          <div className="text-[11px] text-muted-foreground">Workforce</div>
+        {!collapsed && (
+          <div className="leading-tight">
+            <div className="font-display text-[17px] font-semibold text-sidebar-accent-foreground">AJPWER</div>
+            <div className="text-[12px] text-sidebar-foreground/60">Workforce</div>
+          </div>
+        )}
+      </div>
+      <div className={cn('shrink-0 pt-4 pb-2', collapsed ? 'px-2' : 'px-3')}>
+        <Menu
+          align="start"
+          trigger={
+            <Button className={cn('w-full bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90', collapsed && 'px-0')} aria-label="Start something new">
+              <Plus /> {!collapsed && <span className="flex-1 text-left">New</span>}
+              {!collapsed && <ChevronDown className="opacity-70" />}
+            </Button>
+          }
+          items={NEW_ACTIONS.map((a) => ({
+            label: (
+              <>
+                <span className="text-muted-foreground [&_svg]:size-4">{a.icon}</span> {a.label}
+              </>
+            ),
+            onSelect: () => {
+              onNavigate?.();
+              nav(a.to);
+            },
+          }))}
+        />
+      </div>
+      <div className={cn('flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto py-3 scrollbar-thin', collapsed ? 'px-2' : 'px-3')}>
+        {NAV.map((g, gi) => (
+          <div key={gi}>
+            {g.group && !collapsed && <div className="px-3 pb-1.5 text-[12px] font-semibold tracking-wider text-sidebar-foreground/50 uppercase">{g.group}</div>}
+            {g.group && collapsed && <div className="mx-2 mb-2 border-t border-sidebar-border" />}
+            <ul className="flex flex-col gap-0.5">
+              {g.items.map((it) => (
+                <li key={it.to}>
+                  <NavItem it={it} collapsed={collapsed} onNavigate={onNavigate} badge={it.badge === 'approvals' ? pending : 0} />
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+        <div>
+          <button
+            onClick={() => {
+              setSettingsOpen(!showSettings);
+              store('nav.settings', !showSettings);
+            }}
+            aria-expanded={showSettings}
+            className={cn(
+              'flex h-9 w-full items-center gap-3 rounded-md text-sm text-sidebar-foreground/75 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground [&_svg]:size-[18px]',
+              collapsed ? 'justify-center' : 'px-3',
+            )}
+            title={collapsed ? 'Settings' : undefined}
+          >
+            <Settings2 />
+            {!collapsed && (
+              <>
+                <span className="flex-1 text-left">Settings</span>
+                <ChevronRight className={cn('size-4 transition-transform', showSettings && 'rotate-90')} />
+              </>
+            )}
+          </button>
+          {showSettings && (
+            <ul className={cn('mt-0.5 flex flex-col gap-0.5', !collapsed && 'ml-3 border-l border-sidebar-border pl-2')}>
+              {SETTINGS.map((it) => (
+                <li key={it.to}>
+                  <NavItem it={it} collapsed={collapsed} onNavigate={onNavigate} />
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </div>
-      {NAV.map((g) => (
-        <div key={g.group}>
-          <div className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{g.group}</div>
-          <ul className="flex flex-col gap-0.5">
-            {g.items.map((it) => (
-              <li key={it.to}>
-                <NavLink
-                  to={it.to}
-                  end={it.end}
-                  onClick={onNavigate}
-                  className={({ isActive }) =>
-                    cn(
-                      'flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-sidebar-foreground [&_svg]:size-4 [&_svg]:opacity-70 hover:bg-sidebar-accent',
-                      isActive && 'bg-sidebar-accent font-medium text-sidebar-accent-foreground [&_svg]:opacity-100',
-                    )
-                  }
-                >
-                  {it.icon}
-                  <span className="flex-1">{it.label}</span>
-                  {it.to === '/approvals' && pending > 0 && <span className="rounded-full bg-destructive px-1.5 text-[10px] font-semibold text-destructive-foreground">{pending}</span>}
-                </NavLink>
-              </li>
-            ))}
-          </ul>
+      {onToggleCollapsed && (
+        <div className={cn('shrink-0 border-t border-sidebar-border py-2', collapsed ? 'px-2' : 'px-3')}>
+          <button
+            onClick={onToggleCollapsed}
+            className={cn('flex h-9 w-full items-center gap-3 rounded-md text-[13px] text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground', collapsed ? 'justify-center' : 'px-3')}
+            aria-label={collapsed ? 'Expand the sidebar' : 'Collapse the sidebar'}
+          >
+            {collapsed ? <PanelLeftOpen className="size-[18px]" /> : <PanelLeftClose className="size-[18px]" />}
+            {!collapsed && 'Collapse'}
+          </button>
         </div>
-      ))}
+      )}
     </nav>
   );
 }
@@ -158,26 +286,26 @@ function GlobalSearch() {
     <>
       <button
         onClick={() => setOpen(true)}
-        className="flex h-8 w-full max-w-sm items-center gap-2 rounded-md border bg-card px-2.5 text-[13px] text-muted-foreground hover:bg-accent"
+        className="flex h-9 w-full max-w-md items-center gap-2 rounded-md border bg-background px-3 text-sm text-muted-foreground transition-colors hover:border-primary/40"
         aria-label="Search people"
       >
         <Search className="size-4" />
         <span className="flex-1 text-left">Find a person…</span>
-        <kbd className="rounded border bg-muted px-1.5 font-mono text-[10px]">/</kbd>
+        <kbd className="rounded border bg-muted px-1.5 font-mono text-[11px]">/</kbd>
       </button>
       {open && (
         <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 pt-[12vh]" onClick={() => setOpen(false)}>
           <Command shouldFilter={false} className="w-[min(560px,calc(100vw-2rem))] overflow-hidden rounded-lg border bg-popover shadow-2xl" onClick={(e) => e.stopPropagation()} label="Find a person">
             <div className="flex items-center gap-2 border-b px-3">
               <Search className="size-4 text-muted-foreground" />
-              <Command.Input autoFocus value={q} onValueChange={setQ} placeholder="Name, employee code or phone" className="h-11 flex-1 bg-transparent text-[14px] outline-none" />
+              <Command.Input autoFocus value={q} onValueChange={setQ} placeholder="Name, employee code or phone" className="h-11 flex-1 bg-transparent text-[15px] outline-none" />
               <button onClick={() => setOpen(false)} aria-label="Close search">
                 <X className="size-4 text-muted-foreground" />
               </button>
             </div>
             <Command.List className="max-h-80 overflow-y-auto p-1">
-              {q && !isFetching && <Command.Empty className="px-3 py-6 text-center text-[13px] text-muted-foreground">No one found for “{q}”.</Command.Empty>}
-              {!q && <div className="px-3 py-6 text-center text-[13px] text-muted-foreground">Type a name or code. Enter opens the profile.</div>}
+              {q && !isFetching && <Command.Empty className="px-3 py-6 text-center text-[14px] text-muted-foreground">No one found for “{q}”.</Command.Empty>}
+              {!q && <div className="px-3 py-6 text-center text-[14px] text-muted-foreground">Type a name or code. Enter opens the profile.</div>}
               {data?.map((p) => (
                 <Command.Item
                   key={p.id}
@@ -187,12 +315,12 @@ function GlobalSearch() {
                     setQ('');
                     nav(`/people/${p.id}`);
                   }}
-                  className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-2 text-[13px] data-[selected=true]:bg-accent"
+                  className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-2 text-[14px] data-[selected=true]:bg-accent"
                 >
-                  <span className="flex size-7 items-center justify-center rounded-full bg-secondary text-[11px] font-semibold">{initials(p.name)}</span>
+                  <span className="flex size-7 items-center justify-center rounded-full bg-secondary text-[12px] font-semibold">{initials(p.name)}</span>
                   <span className="flex-1">
-                    <span className="font-medium">{p.name}</span> <span className="font-mono text-[11px] text-muted-foreground">{p.code}</span>
-                    <span className="block text-[12px] text-muted-foreground">
+                    <span className="font-medium">{p.name}</span> <span className="font-mono text-[12px] text-muted-foreground">{p.code}</span>
+                    <span className="block text-[13px] text-muted-foreground">
                       {p.designation} · {p.department.name} · {p.status.toLowerCase()}
                     </span>
                   </span>
@@ -233,24 +361,31 @@ export function AppShell() {
   const { me } = useSession();
   const online = useOnline();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => remember('nav.collapsed', false));
   const qc = useQueryClient();
   const nav = useNavigate();
   return (
     <div className="flex h-screen overflow-hidden">
-      <aside className="hidden w-60 shrink-0 border-r bg-sidebar lg:block">
-        <Sidebar />
+      <aside className={cn('hidden shrink-0 transition-[width] duration-200 lg:block', collapsed ? 'w-16' : 'w-64')}>
+        <Sidebar
+          collapsed={collapsed}
+          onToggleCollapsed={() => {
+            setCollapsed(!collapsed);
+            store('nav.collapsed', !collapsed);
+          }}
+        />
       </aside>
       {mobileOpen && (
         <div className="fixed inset-0 z-40 lg:hidden" onClick={() => setMobileOpen(false)}>
           <div className="absolute inset-0 bg-black/40" />
-          <aside className="absolute inset-y-0 left-0 w-64 border-r bg-sidebar" onClick={(e) => e.stopPropagation()}>
+          <aside className="absolute inset-y-0 left-0 w-72" onClick={(e) => e.stopPropagation()}>
             <Sidebar onNavigate={() => setMobileOpen(false)} />
           </aside>
         </div>
       )}
       <div className="flex min-w-0 flex-1 flex-col">
         {!online && <OfflineBanner />}
-        <header className="app-header flex h-12 shrink-0 items-center gap-3 border-b bg-card px-4">
+        <header className="app-header flex h-14 shrink-0 items-center gap-3 border-b bg-card px-4 lg:px-6">
           <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMobileOpen(true)} aria-label="Open navigation">
             <MenuIcon />
           </Button>
@@ -259,9 +394,9 @@ export function AppShell() {
           <ThemeToggle />
           <Menu
             trigger={
-              <button className="flex items-center gap-2 rounded-md px-2 py-1 hover:bg-accent" aria-label="Account">
-                <span className="flex size-7 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">{initials(me?.name ?? 'HR')}</span>
-                <span className="hidden text-left text-[12px] leading-tight sm:block">
+              <button className="flex items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-accent" aria-label="Account">
+                <span className="flex size-8 items-center justify-center rounded-full bg-sidebar text-[13px] font-semibold text-sidebar-foreground">{initials(me?.name ?? 'HR')}</span>
+                <span className="hidden text-left text-[13px] leading-tight sm:block">
                   <span className="block font-medium">{me?.name}</span>
                   <span className="block text-muted-foreground">{me?.role}</span>
                 </span>
@@ -285,8 +420,10 @@ export function AppShell() {
             ]}
           />
         </header>
-        <main className="min-h-0 flex-1 overflow-y-auto px-4 py-5 lg:px-6">
-          <Outlet />
+        <main className="min-h-0 flex-1 overflow-y-auto px-4 py-6 lg:px-8">
+          <div className="mx-auto max-w-[1600px]">
+            <Outlet />
+          </div>
         </main>
       </div>
     </div>

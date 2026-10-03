@@ -3,7 +3,8 @@ import { Link } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Pencil } from 'lucide-react';
 import { toast } from 'sonner';
-import { CALENDAR_METHOD_INFO, formatMinutes, OT_BASE_LABELS } from '@ajpwer/shared';
+import { CALENDAR_METHOD_INFO, formatINR, formatMinutes, GRATUITY_PART_YEAR_LABELS, MONTH_NAMES, OT_BASE_LABELS } from '@ajpwer/shared';
+import { leaveTypeSummary } from '../../setup/LeaveRulesForm';
 import { api, ApiError, errorMessage } from '@/services/api';
 import { useLookups } from '@/hooks/useLookups';
 import { hhmm, longDate } from '@/utils';
@@ -18,9 +19,11 @@ function describePolicy(kind, r) {
   if (!r) return '';
   switch (kind) {
     case 'ATTENDANCE':
-      return `${formatMinutes(r.standard_min)} day, half day from ${formatMinutes(r.half_day_min)}, ${r.grace_min} min grace`;
+      return r.half_day_upto_min === null
+        ? `${formatMinutes(r.standard_min)} day, half day from ${formatMinutes(r.half_day_min)}, ${r.grace_min} min grace`
+        : `${formatMinutes(r.standard_min)} day, half day up to ${formatMinutes(r.half_day_upto_min)}, ${r.grace_min} min grace`;
     case 'OVERTIME':
-      return `${r.multiplier}× on ${OT_BASE_LABELS[r.base]}, after ${r.after_min} min, rounded down to ${r.rounding_min} min${r.monthly_cap_min ? `, cap ${formatMinutes(r.monthly_cap_min)} a month` : ''}`;
+      return `${r.multiplier}× on ${OT_BASE_LABELS[r.base]}, ${r.counts_from === 'SHIFT_END' ? 'from shift end' : 'beyond the standard day'}, after ${r.after_min} min, rounded down to ${r.rounding_min} min${r.monthly_cap_min ? `, cap ${formatMinutes(r.monthly_cap_min)} a month` : ''}`;
     case 'WEEKOFF_PAY':
     case 'HOLIDAY_PAY':
       return `${r.paid ? 'Paid' : 'Unpaid'}${r.paid && r.sandwich ? ', sandwich rule on' : ''}`;
@@ -29,10 +32,13 @@ function describePolicy(kind, r) {
       const w = r.weekly_off;
       return `Holiday ${h.mode === 'PAY' ? `${h.rate_pct}%` : 'nothing extra'} · weekly off ${w.mode === 'PAY' ? `${w.rate_pct}%` : 'nothing extra'}`;
     }
-    case 'LATE_PENALTY':
-      return `${r.free_per_month} free a month, then ${r.slabs.length} slabs`;
-    case 'LEAVE':
-      return r.types.map((t) => `${t.code} ${t.annual_days}`).join(' · ');
+    case 'LEAVE': {
+      const a = r.types.find((t) => t.auto_apply && t.active);
+      const others = r.types.filter((t) => t.active && !t.auto_apply).map((t) => t.code);
+      return `Leave year from ${MONTH_NAMES[(r.year_start_month ?? 1) - 1]}. ${a ? `Absences are paid from ${a.name} (${leaveTypeSummary(a)}).` : 'Absences are loss of pay.'}${others.length ? ` HR records ${others.join(', ')}.` : ''}`;
+    }
+    case 'GRATUITY':
+      return `From ${r.min_years} years: last ${OT_BASE_LABELS[r.base].toLowerCase()} × ${r.days_per_year} × years ÷ ${r.divisor} (${GRATUITY_PART_YEAR_LABELS[r.part_year].toLowerCase()}), ${r.max_amount === null ? 'no ceiling' : `up to ${formatINR(r.max_amount)}`}`;
   }
   return '';
 }
@@ -64,7 +70,6 @@ export function OverviewTab({ e }) {
                 ['Date of birth', longDate(e.dob)],
                 ['Gender', e.gender.charAt(0) + e.gender.slice(1).toLowerCase()],
                 ['Blood group', e.blood_group],
-                ['Notice period', `${e.notice_days} days`],
                 ['Address', e.address],
               ]}
             />
@@ -91,31 +96,31 @@ export function OverviewTab({ e }) {
       </div>
       <Card>
         <CardHeader title="Rules that apply" description={`All read from the pay group ${r.pay_group.name}. None of it is set on the person.`} />
-        <CardBody className="flex flex-col gap-3 text-[13px]">
+        <CardBody className="flex flex-col gap-3 text-[14px]">
           <div>
-            <div className="text-[12px] text-muted-foreground">Calendar method</div>
+            <div className="text-[13px] text-muted-foreground">Calendar method</div>
             <div>
               {CALENDAR_METHOD_INFO[r.calendar_method]?.label} — {CALENDAR_METHOD_INFO[r.calendar_method]?.explain}
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <div className="text-[12px] text-muted-foreground">Weekly off</div>
+              <div className="text-[13px] text-muted-foreground">Weekly off</div>
               <div>{r.weekly_off.join(', ') || 'None'}</div>
             </div>
             <div>
-              <div className="text-[12px] text-muted-foreground">Shift</div>
+              <div className="text-[13px] text-muted-foreground">Shift</div>
               <div>
                 {r.shift.name} ({hhmm(r.shift.start_min)}–{hhmm(r.shift.end_min)})
               </div>
             </div>
           </div>
           <div>
-            <div className="text-[12px] text-muted-foreground">Salary structure</div>
+            <div className="text-[13px] text-muted-foreground">Salary structure</div>
             <div>{r.structure ? r.structure.name : '—'}</div>
           </div>
           <div className="border-t pt-3">
-            <div className="mb-1 text-[12px] text-muted-foreground">Policies in force today</div>
+            <div className="mb-1 text-[13px] text-muted-foreground">Policies in force today</div>
             <ul className="flex flex-col gap-2">
               {r.policies.map((p) => (
                 <li key={p.kind}>
@@ -129,12 +134,12 @@ export function OverviewTab({ e }) {
                       <Chip tone="warning">None attached</Chip>
                     )}
                   </div>
-                  <div className="text-[12px] text-muted-foreground">{p.id ? `${p.name}: ${describePolicy(p.kind, p.rules)}` : p.missing}</div>
+                  <div className="text-[13px] text-muted-foreground">{p.id ? `${p.name}: ${describePolicy(p.kind, p.rules)}` : p.missing}</div>
                 </li>
               ))}
             </ul>
           </div>
-          <p className="border-t pt-3 text-[12px] text-muted-foreground">
+          <p className="border-t pt-3 text-[13px] text-muted-foreground">
             To change any of this for {e.name.split(' ')[0]}, change the pay group's rules under{' '}
             <Link to="/setup/pay-groups" className="text-primary hover:underline">
               Setup → Pay groups

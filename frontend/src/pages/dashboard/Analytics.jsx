@@ -9,7 +9,7 @@ const short = (ym) => monthLabel(ym).slice(0, 3) + ' ' + ym.slice(2, 4);
 
 export default function Analytics() {
   const q = useQuery({ queryKey: ['analytics'], queryFn: () => api.get('/analytics').then((r) => r.data) });
-  const empty = <p className="py-10 text-center text-[13px] text-muted-foreground">No payroll months have been run yet.</p>;
+  const empty = <p className="py-10 text-center text-[14px] text-muted-foreground">No payroll months have been run yet.</p>;
   return (
     <div className="flex flex-col gap-4">
       <PageHeader title="Analytics" description="Trends across months, from payroll snapshots and cached daily aggregates." />

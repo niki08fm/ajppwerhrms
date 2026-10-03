@@ -71,7 +71,7 @@ export function DataTable({
   const scrollRef = useRef(null);
   const virtual = rows.length > virtualiseAbove;
   const rowModel = table.getRowModel().rows;
-  const virtualizer = useVirtualizer({ count: rowModel.length, getScrollElement: () => scrollRef.current, estimateSize: () => 36, overscan: 12, enabled: virtual });
+  const virtualizer = useVirtualizer({ count: rowModel.length, getScrollElement: () => scrollRef.current, estimateSize: () => 40, overscan: 12, enabled: virtual });
   const items = virtual ? virtualizer.getVirtualItems() : null;
   const padTop = items && items.length ? items[0].start : 0;
   const padBottom = items && items.length ? virtualizer.getTotalSize() - items[items.length - 1].end : 0;
@@ -152,7 +152,7 @@ export function DataTable({
                       key={cell.id}
                       style={{ width: m.width, minWidth: m.width, maxWidth: m.width ? m.width + 80 : undefined, left: m.sticky ? stickyLeft[cell.column.id] : undefined }}
                       className={cn(
-                        'border-b bg-card group-hover:bg-accent/60 group-focus-visible:bg-accent',
+                        'border-b bg-card transition-colors group-hover:bg-muted group-focus-visible:bg-accent',
                         m.sticky && 'sticky z-[5]',
                         m.align === 'right' && 'text-right num',
                         m.align === 'center' && 'text-center',
@@ -182,7 +182,7 @@ export function DataTable({
 export function Pager({ shown, total, page, hasPrev, hasNext, onPrev, onNext, limit, onLimit }) {
   const from = shown === 0 ? 0 : (page - 1) * (limit ?? 50) + 1;
   return (
-    <div className="no-print flex flex-wrap items-center justify-between gap-2 border-t px-3 py-2 text-[12px] text-muted-foreground">
+    <div className="no-print flex flex-wrap items-center justify-between gap-2 border-t px-3 py-2 text-[13px] text-muted-foreground">
       <span className="num">
         Showing {shown === 0 ? 0 : `${from.toLocaleString('en-IN')}–${(from + shown - 1).toLocaleString('en-IN')}`} of {total.toLocaleString('en-IN')}
       </span>
@@ -190,7 +190,7 @@ export function Pager({ shown, total, page, hasPrev, hasNext, onPrev, onNext, li
         {onLimit && (
           <label className="flex items-center gap-1">
             Rows
-            <Select value={limit} onChange={(e) => onLimit(Number(e.target.value))} className="h-7 w-[70px]">
+            <Select value={limit} onChange={(e) => onLimit(Number(e.target.value))} className="h-8 w-[76px]">
               {[50, 100, 200].map((n) => (
                 <option key={n} value={n}>
                   {n}

@@ -29,7 +29,7 @@ export function SiteNetwork({ nodes, edges }) {
     pos.set(node.id, { x: W / 2 + (n === 1 ? 0 : rx * Math.cos(angle)), y: H / 2 - 12 + (n === 1 ? 0 : ry * Math.sin(angle)), r });
   });
   const maxMoves = Math.max(1, ...edges.map((e) => e.moves));
-  if (!n) return <p className="py-10 text-center text-[13px] text-muted-foreground">No active sites yet.</p>;
+  if (!n) return <p className="py-10 text-center text-[14px] text-muted-foreground">No active sites yet.</p>;
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-label={`Site network: ${nodes.map((x) => `${x.name} ${x.punched_in} in today, ${x.on_site_now} on site now`).join('; ')}`}>
       <defs>
@@ -56,7 +56,7 @@ export function SiteNetwork({ nodes, edges }) {
         return (
           <g key={i}>
             <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="var(--muted-foreground)" strokeOpacity={0.55} strokeWidth={1 + 4 * (e.moves / maxMoves)} markerEnd="url(#arrow)" />
-            <text x={(x1 + x2) / 2 + ox} y={(y1 + y2) / 2 + oy - 4} textAnchor="middle" className="fill-muted-foreground text-[10px]">
+            <text x={(x1 + x2) / 2 + ox} y={(y1 + y2) / 2 + oy - 4} textAnchor="middle" className="fill-muted-foreground text-[11px]">
               {e.moves}
             </text>
           </g>
@@ -91,16 +91,16 @@ export function SiteNetwork({ nodes, edges }) {
                 a += span;
                 return el;
               })}
-            <text x={p.x} y={p.y - 2} textAnchor="middle" className="fill-foreground font-display text-[16px] font-semibold">
+            <text x={p.x} y={p.y - 2} textAnchor="middle" className="fill-foreground text-[16px] font-semibold num">
               {node.on_site_now}
             </text>
             <text x={p.x} y={p.y + 12} textAnchor="middle" className="fill-muted-foreground text-[9px]">
               on site now
             </text>
-            <text x={p.x} y={p.y + p.r + 20} textAnchor="middle" className="fill-foreground text-[12px] font-medium">
+            <text x={p.x} y={p.y + p.r + 20} textAnchor="middle" className="fill-foreground text-[13px] font-medium">
               {node.name}
             </text>
-            <text x={p.x} y={p.y + p.r + 33} textAnchor="middle" className="fill-muted-foreground text-[10px]">
+            <text x={p.x} y={p.y + p.r + 33} textAnchor="middle" className="fill-muted-foreground text-[11px]">
               {node.punched_in} punched in today
             </text>
           </g>

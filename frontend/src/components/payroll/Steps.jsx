@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { ADHOC_KINDS, ADHOC_TARGETS, DAY_STATUS_LABELS } from '@ajpwer/shared';
 import { api, ApiError, errorMessage } from '@/services/api';
 import { useLookups } from '@/hooks/useLookups';
-import { mins, monthLabel, toPaise } from '@/utils';
+import { longDate, mins, monthLabel, toPaise } from '@/utils';
 import { Money, PersonLink, Stat } from '@/components/bits';
 import { DataTable } from '@/components/data-table';
 import { Chip, EmployeeStatusChip, EmptyState, ErrorState, LockedNotice, Notice, SeverityChip, SkeletonRows } from '@/components/states';
@@ -47,7 +47,7 @@ function StepFooter({ period, n, ym, onDone, label, disabled, note }) {
   const submitted = period.steps_submitted.includes(n);
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 border-t px-4 py-3">
-      <div className="text-[12px] text-muted-foreground">{submitted ? 'Submitted. Reopening clears this step and every later one.' : note}</div>
+      <div className="text-[13px] text-muted-foreground">{submitted ? 'Submitted. Reopening clears this step and every later one.' : note}</div>
       {submitted ? (
         <Button variant="outline" loading={reopen.isPending} onClick={() => reopen.mutate()}>
           Reopen step {n}
@@ -75,11 +75,21 @@ export function StepAttendance({ ym, period, onDone }) {
     { id: 'p', header: 'Present', align: 'right', cell: (r) => r.present },
     { id: 'h', header: 'Half', align: 'right', cell: (r) => r.half_day },
     { id: 'a', header: 'Absent', align: 'right', cell: (r) => (r.absent ? <span className="text-destructive">{r.absent}</span> : 0) },
-    { id: 'l', header: 'Leave', align: 'right', cell: (r) => r.leave },
+    {
+      id: 'l',
+      header: 'Paid leave',
+      align: 'right',
+      cell: (r) => (r.leave_days ? <span title={r.auto_leave_days ? `${r.auto_leave_days} of them paid automatically for absences` : undefined}>{r.leave_days}{r.auto_leave_days ? ` (${r.auto_leave_days} auto)` : ''}</span> : '—'),
+    },
     { id: 'o', header: 'Off days', align: 'right', cell: (r) => r.off_days },
     { id: 'ow', header: 'Off worked', align: 'right', cell: (r) => r.off_days_worked || '—' },
     { id: 'ot', header: 'Overtime', align: 'right', cell: (r) => (r.ot_min ? mins(r.ot_min) : '—') },
-    { id: 'lp', header: 'Late penalty', align: 'right', cell: (r) => (r.late_penalty_days ? `${r.late_penalty_days} d (${r.late_days} late)` : r.late_days ? `${r.late_days} late, free` : '—') },
+    {
+      id: 'le',
+      header: 'Late / left early',
+      align: 'right',
+      cell: (r) => (r.late_days || r.early_out_days ? <span title="Flagged for follow-up; never deducted">{`${r.late_days} / ${r.early_out_days}`}</span> : '—'),
+    },
     { id: 'pd', header: 'Paid days', align: 'right', cell: (r) => <strong>{r.paid_days}</strong> },
     {
       id: 'lop',
@@ -108,14 +118,14 @@ export function StepAttendance({ ym, period, onDone }) {
         <>
           {q.data.shortlist.length > 0 && (
             <div className="border-b p-4">
-              <h4 className="mb-2 text-[13px] font-semibold">Days that need a look ({q.data.shortlist.length})</h4>
+              <h4 className="mb-2 text-[14px] font-semibold">Days that need a look ({q.data.shortlist.length})</h4>
               {frozen && <LockedNotice title="Attendance is submitted">Reopen step 1 to correct these days.</LockedNotice>}
               <div className="mt-2 flex max-h-44 flex-wrap gap-1.5 overflow-y-auto">
                 {q.data.shortlist.map((s) => (
                   <button
                     key={`${s.employee.id}${s.date}`}
                     onClick={() => setOpen({ id: s.employee.id, date: s.date })}
-                    className="rounded-md border bg-card px-2 py-1 text-left text-[12px] hover:bg-accent"
+                    className="rounded-md border bg-card px-2 py-1 text-left text-[13px] hover:bg-accent"
                   >
                     <span className="font-medium">{s.employee.name}</span> · {s.date.slice(5)} ·{' '}
                     <span className={s.status === 'SHORT' ? 'text-destructive' : 'text-warning-foreground dark:text-warning'}>{DAY_STATUS_LABELS[s.status]}</span>{' '}
@@ -169,9 +179,9 @@ export function StepJoiners({ ym, period, onDone }) {
           <section>
             <h4 className="mb-2 font-display font-semibold">Joiners this month ({d.joiners.length})</h4>
             {!d.joiners.length ? (
-              <p className="text-[13px] text-muted-foreground">Nobody joined this month.</p>
+              <p className="text-[14px] text-muted-foreground">Nobody joined this month.</p>
             ) : (
-              <ul className="divide-y rounded-md border text-[13px]">
+              <ul className="divide-y rounded-md border text-[14px]">
                 {d.joiners.map((j) => (
                   <li key={j.employee.id} className="flex flex-wrap items-center gap-3 px-3 py-2">
                     <PersonLink id={j.employee.id} name={j.employee.name} code={j.employee.code} tab="onboarding" />
@@ -187,14 +197,14 @@ export function StepJoiners({ ym, period, onDone }) {
             )}
           </section>
           <section>
-            <h4 className="mb-2 font-display font-semibold">Leavers whose last day is this month ({d.leavers.length})</h4>
+            <h4 className="mb-2 font-display font-semibold">Leavers in this payroll ({d.leavers.length})</h4>
             {!d.leavers.length ? (
-              <p className="text-[13px] text-muted-foreground">Nobody leaves this month.</p>
+              <p className="text-[14px] text-muted-foreground">Nobody leaves this month.</p>
             ) : (
-              <table className="w-full text-[13px]">
-                <thead className="text-left text-[12px] text-muted-foreground">
+              <table className="w-full text-[14px]">
+                <thead className="text-left text-[13px] text-muted-foreground">
                   <tr>
-                    <th className="py-1">Pay with this run</th>
+                    <th className="py-1">F&F in this payroll</th>
                     <th>Name</th>
                     <th>Last day</th>
                     <th className="text-right">Settlement net</th>
@@ -207,21 +217,28 @@ export function StepJoiners({ ym, period, onDone }) {
                     return (
                       <tr key={l.employee.id} className="border-t">
                         <td className="py-2">
-                          {l.settlement_id && (
-                            <Checkbox
-                              label={`Include ${l.employee.name}'s settlement`}
-                              checked={l.included}
-                              disabled={locked || tick.isPending}
-                              onCheckedChange={(v) => tick.mutate({ id: l.settlement_id, include: v })}
-                            />
-                          )}
+                          <span className="flex items-center gap-2">
+                            {l.settlement_id && (
+                              <Checkbox
+                                label={`Include ${l.employee.name}'s F&F`}
+                                checked={l.included}
+                                disabled={locked || tick.isPending}
+                                onCheckedChange={(v) => tick.mutate({ id: l.settlement_id, include: v })}
+                              />
+                            )}
+                            {l.included && l.paid_separately && (
+                              <Chip tone="info" title={`Paid ${l.paid_separately.paid_on}, ${l.paid_separately.payment_ref}`}>
+                                Paid separately
+                              </Chip>
+                            )}
+                          </span>
                         </td>
                         <td>
-                          <Link to={`/exits/${l.employee.id}`} className="font-medium hover:underline">
+                          <Link to={`/people/${l.employee.id}?tab=exit`} className="font-medium hover:underline">
                             {l.employee.name}
                           </Link>
                         </td>
-                        <td className="num">{l.last_day}</td>
+                        <td className="num">{longDate(l.last_day)}</td>
                         <td className="text-right">
                           {s ? (
                             s.net < 0 ? (
@@ -241,7 +258,7 @@ export function StepJoiners({ ym, period, onDone }) {
                               .filter((c) => c.code !== 'ATTENDANCE_NOT_SUBMITTED')
                               .map((c) => (
                                 <span key={c.code} title={c.message}>
-                                  <SeverityChip severity={c.severity} /> <span className="text-[12px]">{c.message}</span>
+                                  <SeverityChip severity={c.severity} /> <span className="text-[13px]">{c.message}</span>
                                 </span>
                               ))}
                           </span>
@@ -252,23 +269,25 @@ export function StepJoiners({ ym, period, onDone }) {
                 </tbody>
               </table>
             )}
-            <p className="mt-2 text-[12px] text-muted-foreground">An unticked settlement stays open and can go out in a later month. The leaver is not paid in this run unless ticked.</p>
+            <p className="mt-2 text-[13px] text-muted-foreground">
+              A ticked F&F goes out in this month's bank file; one paid separately is recorded here and never goes in the bank file. An unticked F&F stays open for a later month — the leaver is not paid in this run.
+            </p>
           </section>
           <section className="grid gap-4 md:grid-cols-2">
             <div>
-              <h4 className="mb-2 font-display font-semibold">On notice, leaving later ({d.notice.length})</h4>
-              <ul className="text-[13px]">
-                {d.notice.map((n) => (
+              <h4 className="mb-2 font-display font-semibold">Leaving later ({d.leaving_later.length})</h4>
+              <ul className="text-[14px]">
+                {d.leaving_later.map((n) => (
                   <li key={n.employee.id}>
-                    <PersonLink id={n.employee.id} name={n.employee.name} /> — last day {n.last_day}. {n.note}.
+                    <PersonLink id={n.employee.id} name={n.employee.name} /> — last day {longDate(n.last_day)}. {n.note}.
                   </li>
                 ))}
-                {!d.notice.length && <li className="text-muted-foreground">None</li>}
+                {!d.leaving_later.length && <li className="text-muted-foreground">None</li>}
               </ul>
             </div>
             <div>
               <h4 className="mb-2 font-display font-semibold">Not yet activated ({d.pipeline.length})</h4>
-              <ul className="text-[13px]">
+              <ul className="text-[14px]">
                 {d.pipeline.map((n) => (
                   <li key={n.employee.id}>
                     <PersonLink id={n.employee.id} name={n.employee.name} tab="onboarding" /> <EmployeeStatusChip status={n.employee.status} />
@@ -276,7 +295,7 @@ export function StepJoiners({ ym, period, onDone }) {
                 ))}
                 {!d.pipeline.length && <li className="text-muted-foreground">None</li>}
               </ul>
-              <p className="mt-1 text-[12px] text-muted-foreground">Excluded — nobody is paid before activation.</p>
+              <p className="mt-1 text-[13px] text-muted-foreground">Excluded — nobody is paid before activation.</p>
             </div>
           </section>
         </div>
@@ -306,14 +325,19 @@ export function StepIssues({ ym, period, onDone }) {
   const [reason, setReason] = useState('');
   const [selected, setSelected] = useState(new Set());
   const [kindFilter, setKindFilter] = useState(null);
+  // Hold salary: calculated in this run, kept out of the bank file until released. Leave out: no payslip this month.
   const hold = useMutation({
-    mutationFn: (ids) => api.post(`/payroll/periods/${ym}/exclusions`, { employee_ids: ids, reason }),
-    onSuccess: () => {
-      toast.success('Held back. They stay on the standing held-back list until paid in a later run.');
+    mutationFn: async ({ ids, how }) => {
+      if (how === 'LEAVE_OUT') return api.post(`/payroll/periods/${ym}/exclusions`, { employee_ids: ids, reason });
+      for (const id of ids) await api.post(`/employees/${id}/hold`, { from_ym: ym, reason });
+    },
+    onSuccess: (_r, { how }) => {
+      toast.success(how === 'LEAVE_OUT' ? 'Left out of this run: no payslip this month.' : `Salary held from ${monthLabel(ym)}: calculated in this run, kept out of the bank file until released on Held salaries.`);
       setHolding(null);
       setReason('');
       setSelected(new Set());
       qc.invalidateQueries({ queryKey: ['payroll-issues', ym] });
+      qc.invalidateQueries({ queryKey: ['held-salaries'] });
     },
     onError: (e) => toast.error(errorMessage(e)),
   });
@@ -336,13 +360,18 @@ export function StepIssues({ ym, period, onDone }) {
       align: 'right',
       cell: (r) => (
         <span className="flex justify-end gap-1">
-          <Link to={`/people/${r.employee_id}?tab=${r.fix_tab}`} target="_blank" className="rounded-md border px-2 py-1 text-[12px] hover:bg-accent">
+          <Link to={`/people/${r.employee_id}?tab=${r.fix_tab}`} target="_blank" className="rounded-md border px-2 py-1 text-[13px] hover:bg-accent">
             Fix it
           </Link>
           {!locked && (
-            <Button size="sm" variant="outline" onClick={() => setHolding([r.employee_id])}>
-              Hold back
-            </Button>
+            <>
+              <Button size="sm" variant="outline" onClick={() => setHolding({ ids: [r.employee_id], how: 'HOLD' })}>
+                Hold salary
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setHolding({ ids: [r.employee_id], how: 'LEAVE_OUT' })}>
+                Leave out
+              </Button>
+            </>
           )}
         </span>
       ),
@@ -352,7 +381,7 @@ export function StepIssues({ ym, period, onDone }) {
     <Card>
       <CardHeader
         title="Issues"
-        description="Blocking issues stop the step until they are fixed or the person is held back. Warnings pass through."
+        description="Blocking issues stop the step until they are fixed, the salary is held (calculated but not paid — enough for a missing bank account), or the person is left out of this run. Warnings pass through."
         actions={
           <Button size="sm" variant="outline" onClick={() => q.refetch()} loading={q.isFetching}>
             Recheck
@@ -366,24 +395,27 @@ export function StepIssues({ ym, period, onDone }) {
       ) : (
         <>
           <div className="flex flex-wrap gap-2 border-b p-3">
-            <button onClick={() => setKindFilter(null)} className={`rounded-full border px-3 py-1 text-[12px] ${!kindFilter ? 'bg-primary text-primary-foreground' : ''}`}>
+            <button onClick={() => setKindFilter(null)} className={`rounded-full border px-3 py-1 text-[13px] ${!kindFilter ? 'bg-primary text-primary-foreground' : ''}`}>
               All ({d.issues.length})
             </button>
             {d.kinds.map((k) => (
               <button
                 key={k.kind}
                 onClick={() => setKindFilter(k.kind)}
-                className={`flex items-center gap-1 rounded-full border px-3 py-1 text-[12px] ${kindFilter === k.kind ? 'bg-primary text-primary-foreground' : ''}`}
+                className={`flex items-center gap-1 rounded-full border px-3 py-1 text-[13px] ${kindFilter === k.kind ? 'bg-primary text-primary-foreground' : ''}`}
               >
                 {k.label} <span className="num">{k.count}</span> {k.severity === 'BLOCKING' && <span className="size-1.5 rounded-full bg-destructive" aria-label="blocking" />}
               </button>
             ))}
           </div>
           {selected.size > 0 && !locked && (
-            <div className="flex items-center gap-2 border-b bg-accent/50 px-3 py-2 text-[13px]">
+            <div className="flex items-center gap-2 border-b bg-accent/50 px-3 py-2 text-[14px]">
               {selected.size} selected
-              <Button size="sm" variant="outline" onClick={() => setHolding([...new Set(rows.filter((r) => selected.has(`${r.employee_id}${r.kind}`)).map((r) => r.employee_id))])}>
-                Hold back selected
+              <Button size="sm" variant="outline" onClick={() => setHolding({ ids: [...new Set(rows.filter((r) => selected.has(`${r.employee_id}${r.kind}`)).map((r) => r.employee_id))], how: 'HOLD' })}>
+                Hold salaries
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setHolding({ ids: [...new Set(rows.filter((r) => selected.has(`${r.employee_id}${r.kind}`)).map((r) => r.employee_id))], how: 'LEAVE_OUT' })}>
+                Leave out
               </Button>
             </div>
           )}
@@ -393,8 +425,8 @@ export function StepIssues({ ym, period, onDone }) {
             <DataTable columns={cols} rows={rows} rowId={(r) => `${r.employee_id}${r.kind}`} selectable={!locked} selected={selected} onSelectedChange={setSelected} maxHeight="50vh" />
           )}
           {d.held_back.length > 0 && (
-            <div className="border-t p-3 text-[13px]">
-              <h4 className="mb-1 font-semibold">Held back from this run ({d.held_back.length})</h4>
+            <div className="border-t p-3 text-[14px]">
+              <h4 className="mb-1 font-semibold">Left out of this run ({d.held_back.length})</h4>
               {d.held_back.map((h) => (
                 <div key={h.employee.id} className="flex items-center gap-2 py-0.5">
                   <PersonLink id={h.employee.id} name={h.employee.name} code={h.employee.code} /> <span className="text-muted-foreground">— {h.reason}</span>
@@ -421,15 +453,19 @@ export function StepIssues({ ym, period, onDone }) {
       <Dialog
         open={!!holding}
         onOpenChange={(o) => !o && setHolding(null)}
-        title={`Hold back ${holding?.length ?? 0} ${holding?.length === 1 ? 'person' : 'people'}`}
-        description="They are excluded from this run and paid in a later one. They appear on the dashboard's held-back list until then."
+        title={`${holding?.how === 'LEAVE_OUT' ? 'Leave out' : 'Hold the salary of'} ${holding?.ids.length ?? 0} ${holding?.ids.length === 1 ? 'person' : 'people'}`}
+        description={
+          holding?.how === 'LEAVE_OUT'
+            ? 'No payslip this month: nothing is calculated for them, so PF and ESI are not either. Use it only when the payslip cannot be worked out.'
+            : `Calculated in ${monthLabel(ym)} as usual — payslip, PF, ESI, TDS — and kept out of the bank file. Release it later on Held salaries: into a later payroll, or as paid separately.`
+        }
         footer={
           <>
             <Button variant="outline" onClick={() => setHolding(null)}>
               Cancel
             </Button>
             <Button disabled={reason.trim().length < 3} loading={hold.isPending} onClick={() => holding && hold.mutate(holding)}>
-              Hold back
+              {holding?.how === 'LEAVE_OUT' ? 'Leave out' : 'Hold salary'}
             </Button>
           </>
         }
@@ -482,7 +518,7 @@ export function StepAdhoc({ ym, period, onDone }) {
       ) : !q.data.data.length ? (
         <EmptyState title="No adhoc items" body="Bonuses, incentives, reimbursements and one-off deductions for this month go here. Submit the step if there are none." />
       ) : (
-        <table className="data-table w-full">
+        <div className="overflow-x-auto"><table className="data-table w-full">
           <thead>
             <tr>
               <th>Item</th>
@@ -523,7 +559,7 @@ export function StepAdhoc({ ym, period, onDone }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
       <StepFooter period={period} n={4} ym={ym} onDone={onDone} label="Submit adhoc items" />
       {adding && <AdhocDialog ym={ym} onClose={() => setAdding(false)} />}
@@ -603,7 +639,7 @@ function AdhocDialog({ ym, onClose }) {
         {f.target_type !== 'ALL' && (
           <div className="max-h-48 overflow-y-auto rounded border p-2 sm:col-span-2">
             {targetOptions.map((o) => (
-              <label key={o.id} className="flex items-center gap-2 py-0.5 text-[13px]">
+              <label key={o.id} className="flex items-center gap-2 py-0.5 text-[14px]">
                 <Checkbox
                   label={o.name}
                   checked={f.target_ids.includes(o.id)}
@@ -654,9 +690,14 @@ export function StepRun({ ym, period, onStarted }) {
               <Stat label="Gross" value={<Money value={d.gross} />} />
               <Stat label="Net" value={<Money value={d.net} />} />
               <Stat label="Cost to company" value={<Money value={d.ctc} />} />
-              <Stat label="Held back" value={d.held_back} tone={d.held_back ? 'warning' : undefined} />
-              <Stat label="Settlements going out" value={d.settlements} />
+              <Stat label="On hold" value={d.on_hold} sub={d.on_hold ? <>not in the bank file: <Money value={d.on_hold_net} /></> : 'nobody'} tone={d.on_hold ? 'warning' : undefined} to="/held-salaries" />
+              <Stat label="F&Fs" value={d.settlements} sub={d.held_back ? `${d.held_back} left out of the run` : undefined} />
             </div>
+            {d.released_held > 0 && (
+              <Notice tone="info">
+                Held salary from earlier months is paid in this run: <Money value={d.released_held} />, as its own line on each payslip.
+              </Notice>
+            )}
             {d.errors.length > 0 && (
               <Notice tone="destructive">
                 {d.errors.length} payslip{d.errors.length > 1 ? 's' : ''} cannot be computed: {d.errors.map((e) => `${e.name} — ${e.message}`).join('; ')}

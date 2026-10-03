@@ -42,7 +42,7 @@ export function LoansTab({ e }) {
       ) : rows.length === 0 ? (
         <EmptyState title="Nothing lent" body="Advances and loans granted to this person appear here with their recovery schedule." />
       ) : (
-        <table className="data-table w-full">
+        <div className="overflow-x-auto"><table className="data-table w-full">
           <thead>
             <tr>
               <th>Type</th>
@@ -81,10 +81,10 @@ export function LoansTab({ e }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
       {carries.length > 0 && (
-        <p className="border-t px-4 py-2 text-[13px]">
+        <p className="border-t px-4 py-2 text-[14px]">
           Carried forward by the recovery cap:{' '}
           {carries.map((c) => (
             <span key={c.id}>

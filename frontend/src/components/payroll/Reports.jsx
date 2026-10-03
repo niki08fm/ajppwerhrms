@@ -77,7 +77,7 @@ export function Reports({ ym, period }) {
 
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-[13px] text-muted-foreground">
+      <p className="text-[14px] text-muted-foreground">
         {monthLabel(ym)} was run {period.run_at?.slice(0, 16).replace('T', ' ')} UTC by {period.run_by}. Every figure below is read from the snapshot. Read{' '}
         <button className="text-primary hover:underline" onClick={() => setTab('change')}>
           Change vs last month
@@ -92,7 +92,7 @@ export function Reports({ ym, period }) {
             aria-selected={tab === k}
             onClick={() => setTab(k)}
             className={cn(
-              '-mb-px whitespace-nowrap border-b-2 px-3 py-2 text-[13px] font-medium',
+              '-mb-px whitespace-nowrap border-b-2 px-3 py-2 text-[14px] font-medium',
               tab === k ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground',
             )}
           >
@@ -108,7 +108,7 @@ export function Reports({ ym, period }) {
               <Input className="pl-8" value={text} onChange={(e) => setText(e.target.value)} placeholder="Filter by name or code" aria-label="Filter by name or code" />
             </div>
           )}
-          <span className="text-[12px] text-muted-foreground num">{rep && tab !== 'summary' && `${rep.rows.length.toLocaleString('en-IN')} rows${q ? ` matching “${q}”` : ''}`}</span>
+          <span className="text-[13px] text-muted-foreground num">{rep && tab !== 'summary' && `${rep.rows.length.toLocaleString('en-IN')} rows${q ? ` matching “${q}”` : ''}`}</span>
           <div className="flex-1" />
           <Button variant="outline" size="sm" loading={exporting === 'csv'} onClick={() => exp('csv')}>
             <Download /> CSV
@@ -133,7 +133,7 @@ export function Reports({ ym, period }) {
             {rep.key === 'pt' && Array.isArray(rep.extra?.by_state) && (
               <div className="flex flex-wrap gap-2 px-3 pt-3">
                 {rep.extra.by_state.map((s) => (
-                  <Card key={s.state} className="px-3 py-2 text-[13px]">
+                  <Card key={s.state} className="px-3 py-2 text-[14px]">
                     <div className="font-medium">{s.state}</div>
                     <div className="text-muted-foreground">
                       {s.people} people · <Money value={s.amount} />
@@ -176,7 +176,7 @@ export function Reports({ ym, period }) {
                   rep.totals ? (
                     <tr>
                       {rep.columns.map((c, i) => (
-                        <td key={c.key} className={cn('border-t bg-card px-3 py-2 text-[13px] font-semibold', c.money && 'text-right num', i === 0 && 'sticky left-0')}>
+                        <td key={c.key} className={cn('border-t bg-card px-3 py-2 text-[14px] font-semibold', c.money && 'text-right num', i === 0 && 'sticky left-0')}>
                           {c.money && typeof rep.totals[c.key] === 'number' ? <Money value={rep.totals[c.key]} /> : String(rep.totals[c.key] ?? '')}
                         </td>
                       ))}
@@ -186,7 +186,7 @@ export function Reports({ ym, period }) {
               />
             )}
             {rep.key === 'bank' && Array.isArray(rep.extra?.recoverable) && rep.extra.recoverable.length > 0 && (
-              <div className="border-t p-3 text-[13px]">
+              <div className="border-t p-3 text-[14px]">
                 <h4 className="font-semibold">Recoverable — not in the bank file</h4>
                 {rep.extra.recoverable.map((x) => (
                   <div key={x.name}>
@@ -196,7 +196,7 @@ export function Reports({ ym, period }) {
               </div>
             )}
             {rep.key === 'pf' && rep.totals && (
-              <p className="border-t px-3 py-2 text-[13px]">
+              <p className="border-t px-3 py-2 text-[14px]">
                 Total challan including admin: <Money value={rep.totals.challan} paise />
               </p>
             )}
@@ -221,7 +221,7 @@ function Summary({ rep }) {
       </div>
       <div>
         <h4 className="mb-2 font-display font-semibold">From full salary to net pay</h4>
-        <table className="w-full max-w-3xl text-[13px]">
+        <table className="w-full max-w-3xl text-[14px]">
           <tbody>
             {rep.rows.map((r) => {
               const v = r.amount;
@@ -243,7 +243,7 @@ function Summary({ rep }) {
           </tbody>
         </table>
       </div>
-      <p className="text-[12px] text-muted-foreground">
+      <p className="text-[13px] text-muted-foreground">
         Engine {x.engine_version} · statutory rates row <Mono>{x.statutory_rates_id?.slice(0, 8)}</Mono>. Reopening this month later never applies today's rates to it.
       </p>
     </div>

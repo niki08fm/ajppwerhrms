@@ -7,7 +7,7 @@ const NA = <span className="text-muted-foreground">—</span>;
 function Section({ children, first }) {
   return (
     <tr>
-      <td colSpan={3} className={cn('pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground', first ? 'pt-1' : 'pt-5')}>
+      <td colSpan={3} className={cn('pb-1 text-[12px] font-semibold uppercase tracking-wide text-muted-foreground', first ? 'pt-1' : 'pt-5')}>
         {children}
       </td>
     </tr>
@@ -19,7 +19,7 @@ function Line({ label, sub, monthly, yearly, muted }) {
     <tr className={cn('border-t border-border/60', muted && 'text-muted-foreground')}>
       <td className="py-1.5 pr-2">
         {label}
-        {sub && <div className="text-[11px] text-muted-foreground">{sub}</div>}
+        {sub && <div className="text-[12px] text-muted-foreground">{sub}</div>}
       </td>
       <td className="py-1.5 pl-2 text-right whitespace-nowrap">{monthly}</td>
       <td className="py-1.5 pl-2 text-right whitespace-nowrap">{yearly}</td>
@@ -62,8 +62,8 @@ export function SalaryBreakup({ p, rates, rules, capped, className }) {
   const netYear = p.gross * 12 + yearlyItems - deductionsYear;
 
   return (
-    <table className={cn('w-full text-[13px]', className)}>
-      <thead className="text-[12px] text-muted-foreground">
+    <table className={cn('w-full text-[14px]', className)}>
+      <thead className="text-[13px] text-muted-foreground">
         <tr>
           <th className="py-1 text-left font-normal" />
           <th className="py-1 pl-2 text-right font-normal">Monthly</th>

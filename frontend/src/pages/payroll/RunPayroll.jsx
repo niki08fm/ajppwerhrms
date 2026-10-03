@@ -44,7 +44,7 @@ function JobProgress({ jobId, ym }) {
   const pct = j.total ? Math.round((j.progress / j.total) * 100) : 5;
   return (
     <div className="rounded-md border bg-card p-3" role="status" aria-live="polite">
-      <div className="mb-1 flex justify-between text-[13px]">
+      <div className="mb-1 flex justify-between text-[14px]">
         <span>Computing payslips…</span>
         <span className="num">{j.total ? `${j.progress} of ${j.total}` : 'starting'}</span>
       </div>
@@ -152,7 +152,7 @@ export default function RunPayroll() {
               ))}
             </Select>
             <PeriodChip state={p.state} />
-            {p.payment_ref && <span className="text-[12px] text-muted-foreground">Paid · ref {p.payment_ref}</span>}
+            {p.payment_ref && <span className="text-[13px] text-muted-foreground">Paid · ref {p.payment_ref}</span>}
           </>
         }
         actions={
@@ -202,13 +202,13 @@ export default function RunPayroll() {
                   disabled={!st.open}
                   aria-current={step === s.n ? 'step' : undefined}
                   className={cn(
-                    'flex items-center gap-2 rounded-md px-3 py-2 text-left text-[13px]',
+                    'flex items-center gap-2 rounded-md px-3 py-2 text-left text-[14px]',
                     step === s.n ? 'bg-primary text-primary-foreground' : st.open ? 'hover:bg-accent' : 'cursor-not-allowed opacity-50',
                   )}
                 >
                   <span
                     className={cn(
-                      'flex size-6 shrink-0 items-center justify-center rounded-full border text-[12px] font-semibold',
+                      'flex size-6 shrink-0 items-center justify-center rounded-full border text-[13px] font-semibold',
                       st.submitted && step !== s.n && 'border-success bg-success text-success-foreground',
                     )}
                   >

@@ -59,7 +59,7 @@ export default function Projects() {
         ) : !q.data.data.length ? (
           <EmptyState title="No projects" body="Create a project, then link sites to it from the Sites screen." />
         ) : (
-          <table className="data-table w-full">
+          <div className="overflow-x-auto"><table className="data-table w-full">
             <thead>
               <tr>
                 <th>Project</th>
@@ -76,7 +76,7 @@ export default function Projects() {
               {q.data.data.map((p) => (
                 <tr key={p.id}>
                   <td>
-                    <span className="font-medium">{p.name}</span> <span className="font-mono text-[11px] text-muted-foreground">{p.code}</span>
+                    <span className="font-medium">{p.name}</span> <span className="font-mono text-[12px] text-muted-foreground">{p.code}</span>
                   </td>
                   <td>{p.client ?? '—'}</td>
                   <td className="text-right num">{mins(p.minutes)}</td>
@@ -94,7 +94,7 @@ export default function Projects() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         )}
       </Card>
       {adding && <ProjectDialog onClose={() => setAdding(false)} />}

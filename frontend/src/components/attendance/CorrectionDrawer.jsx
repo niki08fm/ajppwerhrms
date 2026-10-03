@@ -1,59 +1,112 @@
 import { useEffect, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Undo2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { DAY_STATUSES, DAY_STATUS_LABELS, OVERRIDE_REASONS, OVERRIDE_REASON_LABELS } from '@ajpwer/shared';
+import { DAY_STATUS_LABELS } from '@ajpwer/shared';
 import { api, errorMessage } from '@/services/api';
-import { istTime, longDate, mins } from '@/utils';
-import { KV, Mono } from '@/components/bits';
-import { DayChip, ErrorState, LockedNotice, SkeletonBlock, Chip } from '@/components/states';
+import { useDebounced } from '@/hooks';
+import { hhmm, istTime, longDate, mins } from '@/utils';
+import { Mono } from '@/components/bits';
+import { Chip, DayChip, ErrorState, LockedNotice, SkeletonBlock } from '@/components/states';
 import { Button } from '@/components/ui/button';
-import { Field, Input, Select, Textarea } from '@/components/ui/form';
+import { Field, Input, Segmented } from '@/components/ui/form';
 import { Drawer } from '@/components/ui/overlay';
 
 const FLAG_TEXT = {
   ORPHAN_OUT: 'An OUT punch with no IN before it',
   UNMATCHED_IN: 'An IN with no OUT after it',
   CROSS_SITE: 'Worked at more than one site — one day, valued by total hours',
-  LATE: 'Arrived after shift start plus grace',
+  LATE: 'Arrived after the grace period; late counts from shift start',
+  EARLY_OUT: 'Left before the day was done (shift end, or a full day after a late arrival) — flagged, not deducted',
+  AUTO_LEAVE: 'Paid from paid leave automatically: nobody applied for this absence',
+  LEAVE_UNPAID: 'Recorded leave its balance could not pay',
   NO_ATTENDANCE_POLICY: 'No attendance policy on this date — the documented default was used',
   SANDWICHED: 'Unpaid by the sandwich rule',
 };
 
+const KIND_LABEL = { WORKING: 'Working day', WEEKLY_OFF: 'Weekly off', HOLIDAY: 'Holiday' };
+
+/** "09:40" ↔ minutes from midnight. */
+const toMin = (s) => {
+  const [h, m] = (s ?? '').split(':').map(Number);
+  return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : null;
+};
+const toHHMM = (min) => `${String(Math.floor((min % 1440) / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+const hours = (min) => (min ? String(Math.round((min / 60) * 100) / 100) : '0');
+
+/** What a day comes to, in one line: the status, then hours, lateness and overtime. */
+function Outcome({ v, kind }) {
+  if (!v) return null;
+  const parts = [
+    v.worked_min ? `${mins(v.worked_min)} worked` : null,
+    v.late_min ? `late ${v.late_min} min` : kind === 'WORKING' && v.worked_min ? 'on time' : null,
+    v.ot_min ? `overtime ${mins(v.ot_min)}` : null,
+    v.early_min ? `left ${mins(v.early_min)} early` : null,
+  ].filter(Boolean);
+  return (
+    <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+      <DayChip status={v.status} />
+      <span className="text-muted-foreground">{parts.join(' · ') || DAY_STATUS_LABELS[v.status]}</span>
+    </span>
+  );
+}
+
+/**
+ * Correct one day. Either the times worked — late minutes, a half or full day and overtime
+ * follow from them by the attendance rules, and typing the overtime moves the out time — or a
+ * plain mark of the day with any overtime entered directly.
+ */
 export function CorrectionDrawer({ employeeId, date, open, onOpenChange }) {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['attendance-day', employeeId, date], queryFn: () => api.get('/attendance/day', { employee_id: employeeId, date }).then((r) => r.data), enabled: open });
   const d = q.data;
-  const [f, setF] = useState({ status: 'PRESENT', day_value: '1', worked_min: '480', ot_min: '0', late_min: '0', reason_code: '', reason_text: '' });
-  const [touched, setTouched] = useState(false);
+  const c = d?.context;
+  const [mode, setMode] = useState('TIMES');
+  const [t, setT] = useState({ in: '09:00', out: '18:00', ot: '0', edited: 'out' });
+  const [mark, setMark] = useState({ status: 'PRESENT', ot: '0' });
+  const [reason, setReason] = useState('');
   useEffect(() => {
-    const src = d?.override ?? d?.computed;
-    if (src)
-      setF({ status: src.status, day_value: String(src.day_value), worked_min: String(src.worked_min), ot_min: String(src.ot_min), late_min: String(src.late_min), reason_code: '', reason_text: '' });
-    setTouched(false);
+    if (!d?.context) return;
+    const o = d.override;
+    setMode(o && o.in_min === null ? 'MARK' : 'TIMES');
+    setT({ in: toHHMM(d.in_min ?? d.context.shift_start_min), out: toHHMM(d.out_min ?? d.context.shift_end_min), ot: hours(o?.ot_min ?? d.computed?.ot_min), edited: 'out' });
+    setMark({ status: o && ['PRESENT', 'HALF_DAY', 'ABSENT'].includes(o.status) ? o.status : 'PRESENT', ot: hours(o?.in_min === null ? o.ot_min : 0) });
+    setReason('');
   }, [d]);
 
+  // Times: the out time may pass midnight.
+  const inMin = toMin(t.in);
+  const outRaw = toMin(t.out);
+  const outMin = inMin !== null && outRaw !== null ? (outRaw <= inMin ? outRaw + 1440 : outRaw) : null;
+  const otMin = Math.round(Number(t.ot || 0) * 60);
+  const params = useDebounced(t.edited === 'ot' ? { in_min: inMin, ot_min: otMin } : { in_min: inMin, out_min: outMin }, 250);
+  const canOt = !!c?.ot && c.kind === 'WORKING';
+  const preview = useQuery({
+    queryKey: ['correction-preview', employeeId, date, params],
+    queryFn: () => api.post('/attendance/overrides/preview', { employee_id: employeeId, work_date: date, ...params }).then((r) => r.data),
+    enabled: open && !!c && mode === 'TIMES' && params.in_min !== null && (params.out_min !== null || params.ot_min !== undefined) && !(t.edited === 'ot' && !canOt),
+    placeholderData: keepPreviousData,
+    retry: false,
+  });
+  const p = preview.data;
+  // Whichever HR typed last leads: the out time gives the overtime, or the overtime gives the out time.
+  const shownOut = t.edited === 'ot' && p ? toHHMM(p.out_min) : t.out;
+  const shownOt = t.edited === 'ot' ? t.ot : p ? hours(p.ot_min) : t.ot;
+  const saveOut = t.edited === 'ot' && p ? p.out_min : outMin;
+
   const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ['attendance-day', employeeId, date] });
-    qc.invalidateQueries({ queryKey: ['register'] });
-    qc.invalidateQueries({ queryKey: ['emp-attendance'] });
-    qc.invalidateQueries({ queryKey: ['payroll-attendance'] });
+    for (const key of [['attendance-day', employeeId, date], ['register'], ['emp-attendance'], ['payroll-attendance']]) qc.invalidateQueries({ queryKey: key });
   };
   const save = useMutation({
     mutationFn: () =>
-      api.post('/attendance/overrides', {
-        employee_id: employeeId,
-        work_date: date,
-        status: f.status,
-        day_value: Number(f.day_value),
-        worked_min: Number(f.worked_min),
-        ot_min: Number(f.ot_min),
-        late_min: Number(f.late_min),
-        reason_code: f.reason_code,
-        reason_text: f.reason_text,
-      }),
+      api.post(
+        '/attendance/overrides',
+        mode === 'TIMES'
+          ? { mode, employee_id: employeeId, work_date: date, in_min: inMin, out_min: saveOut, reason_text: reason }
+          : { mode, employee_id: employeeId, work_date: date, status: mark.status, ot_min: mark.status === 'PRESENT' && canOt ? Math.round(Number(mark.ot || 0) * 60) : 0, reason_text: reason },
+      ),
     onSuccess: () => {
-      toast.success('Correction saved. The computed values are kept alongside it.');
+      toast.success('Day corrected. What the punches said is kept alongside it.');
       invalidate();
       onOpenChange(false);
     },
@@ -62,86 +115,76 @@ export function CorrectionDrawer({ employeeId, date, open, onOpenChange }) {
   const revert = useMutation({
     mutationFn: () => api.del(`/attendance/overrides/${d.override.id}`),
     onSuccess: () => {
-      toast.success('Reverted to what the punches say');
+      toast.success('Back to what the punches say');
       invalidate();
     },
     onError: (e) => toast.error(errorMessage(e)),
   });
 
-  const current = d?.override ?? d?.computed;
-  const unchanged =
-    !!current &&
-    current.status === f.status &&
-    Number(current.day_value) === Number(f.day_value) &&
-    current.worked_min === Number(f.worked_min) &&
-    current.ot_min === Number(f.ot_min) &&
-    current.late_min === Number(f.late_min);
-  const textError = touched && f.reason_text.trim().length < 8 ? 'Write at least eight characters explaining the correction.' : null;
-  const catError = touched && !f.reason_code ? 'Pick a category.' : null;
+  const off = c && c.kind !== 'WORKING';
+  const markOptions = off
+    ? [
+        { value: 'PRESENT', label: 'Worked full day' },
+        { value: 'HALF_DAY', label: 'Worked half day' },
+        { value: 'ABSENT', label: 'Not worked' },
+      ]
+    : [
+        { value: 'PRESENT', label: 'Full day' },
+        { value: 'HALF_DAY', label: 'Half day' },
+        { value: 'ABSENT', label: 'Absent' },
+      ];
+  const timesOk = mode !== 'TIMES' || (inMin !== null && saveOut !== null && !preview.isError);
+  const ok = reason.trim().length >= 3 && timesOk;
 
   return (
-    <Drawer open={open} onOpenChange={onOpenChange} title={d ? `${d.employee.name} — ${longDate(date)}` : 'Correct a day'} description={d ? <Mono>{d.employee.code}</Mono> : undefined}>
+    <Drawer
+      open={open}
+      onOpenChange={onOpenChange}
+      title={d ? `${d.employee.name} — ${longDate(date)}` : 'Correct a day'}
+      description={
+        d && c ? (
+          <>
+            <Mono>{d.employee.code}</Mono> · {KIND_LABEL[c.kind]} · shift {hhmm(c.shift_start_min)}–{hhmm(c.shift_end_min)}, {c.grace_min} min grace, {mins(c.standard_min)} day
+          </>
+        ) : undefined
+      }
+    >
       {q.isLoading ? (
         <SkeletonBlock className="h-80" />
       ) : q.isError ? (
         <ErrorState error={q.error} onRetry={() => q.refetch()} />
       ) : d?.not_in_employment ? (
-        <p className="text-[13px] text-muted-foreground">This person was not employed on this date.</p>
+        <p className="text-sm text-muted-foreground">This person was not employed on this date.</p>
       ) : d ? (
-        <div className="flex flex-col gap-5">
+        <div className="flex flex-col gap-6">
           <section>
-            <h3 className="mb-2 font-display font-semibold">1. What the punches say</h3>
+            <h3 className="mb-2 font-sans text-[12px] font-semibold tracking-wide text-muted-foreground uppercase">What the punches say</h3>
             {d.punches.length === 0 ? (
-              <p className="text-[13px] text-muted-foreground">No punches on this date.</p>
+              <p className="text-sm text-muted-foreground">No punches on this date.</p>
             ) : (
-              <table className="w-full text-[12px]">
-                <thead className="text-left text-muted-foreground">
-                  <tr>
-                    <th className="py-1">Time</th>
-                    <th>Dir.</th>
-                    <th>Site</th>
-                    <th>Method</th>
-                    <th className="text-right">Match</th>
-                    <th className="text-right">Distance</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {d.punches.map((p) => (
-                    <tr key={p.id} className="border-t">
-                      <td className="py-1 num">{istTime(p.punched_at)}</td>
-                      <td>{p.direction}</td>
-                      <td>{p.site.name}</td>
-                      <td>
-                        {p.method.toLowerCase()}
-                        {p.flagged && (
-                          <Chip tone="warning" className="ml-1" title={p.flag_reason ?? ''}>
-                            flagged
-                          </Chip>
-                        )}
-                      </td>
-                      <td className="text-right num">{p.match_score !== null ? `${Math.round(p.match_score * 100)}%` : '—'}</td>
-                      <td className="text-right num">{p.distance_m !== null ? `${p.distance_m} m` : '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <ul className="divide-y rounded-md border text-sm">
+                {d.punches.map((pu) => (
+                  <li key={pu.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2">
+                    <span className="w-12 font-semibold num">{istTime(pu.punched_at)}</span>
+                    <Chip tone={pu.direction === 'IN' ? 'success' : 'muted'}>{pu.direction === 'IN' ? 'In' : 'Out'}</Chip>
+                    <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                      {pu.site.name} · {pu.method.toLowerCase()}
+                      {pu.match_score !== null ? ` ${Math.round(pu.match_score * 100)}%` : ''}
+                    </span>
+                    {pu.flagged && (
+                      <Chip tone="warning" title={pu.flag_reason ?? ''}>
+                        flagged
+                      </Chip>
+                    )}
+                  </li>
+                ))}
+              </ul>
             )}
             {d.computed && (
-              <div className="mt-3 rounded-md border bg-muted/40 p-3">
-                <KV
-                  cols={3}
-                  items={[
-                    ['Computed status', <DayChip status={d.computed.status} />],
-                    ['Day value', d.computed.day_value],
-                    ['Worked', mins(d.computed.worked_min)],
-                    ['Overtime', mins(d.computed.ot_min)],
-                    ['Late', d.computed.late_min ? `${d.computed.late_min} min` : '—'],
-                    ['Breaks', mins(d.computed.break_min)],
-                  ]}
-                />
-
+              <div className="mt-2.5">
+                <Outcome v={d.computed} kind={c.kind} />
                 {d.computed.flags.length > 0 && (
-                  <ul className="mt-2 list-disc pl-5 text-[12px] text-muted-foreground">
+                  <ul className="mt-2 list-disc pl-5 text-[13px] text-muted-foreground">
                     {d.computed.flags.map((fl) => (
                       <li key={fl}>{FLAG_TEXT[fl] ?? fl}</li>
                     ))}
@@ -151,90 +194,98 @@ export function CorrectionDrawer({ employeeId, date, open, onOpenChange }) {
             )}
           </section>
 
-          <section>
-            <h3 className="mb-2 font-display font-semibold">2. Existing correction</h3>
-            {d.override ? (
-              <div className="rounded-md border p-3 text-[13px]">
-                <div className="flex items-center justify-between gap-2">
-                  <span>
-                    <DayChip status={d.override.status} /> · day value {d.override.day_value} · worked {mins(d.override.worked_min)}
-                  </span>
-                  {!d.frozen.frozen && (
-                    <Button size="sm" variant="outline" loading={revert.isPending} onClick={() => revert.mutate()}>
-                      <Undo2 /> Revert
-                    </Button>
-                  )}
+          {d.override && (
+            <section className="rounded-md border border-info/30 bg-info/5 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[12px] font-semibold tracking-wide text-muted-foreground uppercase">Corrected by HR</div>
+                  <div className="mt-1.5">
+                    <Outcome v={d.override} kind={c.kind} />
+                  </div>
+                  <p className="mt-1.5 text-sm">
+                    {d.override.in_min !== null ? `${hhmm(d.override.in_min)}–${hhmm(d.override.out_min)} · ` : 'Marked · '}
+                    {d.override.reason_text}
+                  </p>
+                  <p className="mt-0.5 text-[12px] text-muted-foreground">
+                    {d.override.created_by}, {istTime(d.override.created_at, true)}
+                  </p>
                 </div>
-                <p className="mt-2">
-                  <span className="text-muted-foreground">{OVERRIDE_REASON_LABELS[d.override.reason_code]}:</span> {d.override.reason_text}
-                </p>
-                <p className="mt-1 text-[12px] text-muted-foreground">
-                  By {d.override.created_by} on {istTime(d.override.created_at, true)}
-                </p>
+                {!d.frozen.frozen && (
+                  <Button size="sm" variant="outline" loading={revert.isPending} onClick={() => revert.mutate()}>
+                    <Undo2 /> Revert
+                  </Button>
+                )}
               </div>
-            ) : (
-              <p className="text-[13px] text-muted-foreground">None. Payroll reads what the punches say.</p>
-            )}
-          </section>
+            </section>
+          )}
 
           <section>
-            <h3 className="mb-2 font-display font-semibold">3. Correct this day</h3>
+            <h3 className="mb-3 font-sans text-[12px] font-semibold tracking-wide text-muted-foreground uppercase">{d.override ? 'Change the correction' : 'Correct this day'}</h3>
             {d.frozen.frozen ? (
               <LockedNotice title="Attendance for this month is submitted">{d.frozen.reason}</LockedNotice>
             ) : (
-              <div className="flex flex-col gap-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Status">
-                    {(id) => (
-                      <Select id={id} value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })}>
-                        {DAY_STATUSES.filter((s) => s !== 'NOT_JOINED' && s !== 'EXITED').map((s) => (
-                          <option key={s} value={s}>
-                            {DAY_STATUS_LABELS[s]}
-                          </option>
-                        ))}
-                      </Select>
+              <div className="flex flex-col gap-4">
+                <Segmented
+                  label="How to correct"
+                  value={mode}
+                  onChange={setMode}
+                  options={[
+                    { value: 'TIMES', label: 'In and out times' },
+                    { value: 'MARK', label: 'Mark the day' },
+                  ]}
+                />
+                {mode === 'TIMES' ? (
+                  <>
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                      <Field label="In">{(id) => <Input id={id} type="time" value={t.in} onChange={(e) => setT({ ...t, in: e.target.value })} />}</Field>
+                      <Field label="Out" hint={outRaw !== null && inMin !== null && toMin(shownOut) <= inMin ? 'next day' : undefined}>
+                        {(id) => <Input id={id} type="time" value={shownOut} onChange={(e) => setT({ ...t, out: e.target.value, edited: 'out' })} />}
+                      </Field>
+                      {canOt ? (
+                        <Field label="Overtime (hours)" hint="Moves the out time">
+                          {(id) => (
+                            <Input
+                              id={id}
+                              type="number"
+                              min={0}
+                              step={c.ot.rounding_min / 60}
+                              value={shownOt}
+                              onChange={(e) => setT({ ...t, ot: e.target.value, out: shownOut, edited: 'ot' })}
+                            />
+                          )}
+                        </Field>
+                      ) : (
+                        <div className="self-end pb-2 text-[12px] leading-snug text-muted-foreground">{off ? 'Off-day hours are paid by the off-day policy, not as overtime.' : 'No overtime policy for this pay group.'}</div>
+                      )}
+                    </div>
+                    <div className="min-h-[34px] rounded-md bg-muted/60 px-3 py-2">
+                      {preview.isError ? (
+                        <span className="text-sm text-destructive">{errorMessage(preview.error)}</span>
+                      ) : p ? (
+                        <span className="flex flex-wrap items-center justify-between gap-2">
+                          <Outcome v={p} kind={c.kind} />
+                          {p.due_out_min !== null && <span className="text-[12px] text-muted-foreground num">Day ends {hhmm(p.due_out_min)}</span>}
+                        </span>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">Working it out…</span>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex flex-wrap items-end gap-3">
+                    <Segmented label="Mark" value={mark.status} onChange={(status) => setMark({ ...mark, status })} options={markOptions} />
+                    {canOt && mark.status === 'PRESENT' && (
+                      <Field label="Overtime (hours)" className="w-36">
+                        {(id) => <Input id={id} type="number" min={0} step={c.ot.rounding_min / 60} value={mark.ot} onChange={(e) => setMark({ ...mark, ot: e.target.value })} />}
+                      </Field>
                     )}
-                  </Field>
-                  <Field label="Day value">
-                    {(id) => (
-                      <Select id={id} value={f.day_value} onChange={(e) => setF({ ...f, day_value: e.target.value })}>
-                        {['0', '0.25', '0.5', '0.75', '1'].map((v) => (
-                          <option key={v}>{v}</option>
-                        ))}
-                      </Select>
-                    )}
-                  </Field>
-                  <Field label="Worked (minutes)" hint={mins(Number(f.worked_min))}>
-                    {(id) => <Input id={id} type="number" min={0} value={f.worked_min} onChange={(e) => setF({ ...f, worked_min: e.target.value })} />}
-                  </Field>
-                  <Field label="Overtime (minutes)">{(id) => <Input id={id} type="number" min={0} value={f.ot_min} onChange={(e) => setF({ ...f, ot_min: e.target.value })} />}</Field>
-                  <Field label="Late (minutes)">{(id) => <Input id={id} type="number" min={0} value={f.late_min} onChange={(e) => setF({ ...f, late_min: e.target.value })} />}</Field>
-                  <Field label="Category" required error={catError}>
-                    {(id, inv) => (
-                      <Select id={id} aria-invalid={inv} value={f.reason_code} onChange={(e) => setF({ ...f, reason_code: e.target.value })}>
-                        <option value="">Choose…</option>
-                        {OVERRIDE_REASONS.map((r) => (
-                          <option key={r} value={r}>
-                            {OVERRIDE_REASON_LABELS[r]}
-                          </option>
-                        ))}
-                      </Select>
-                    )}
-                  </Field>
-                </div>
-                <Field label="Explanation" required error={textError} hint="Not optional. This is what HR will read when the payslip is questioned.">
-                  {(id, inv) => <Textarea id={id} aria-invalid={inv} value={f.reason_text} onBlur={() => setTouched(true)} onChange={(e) => setF({ ...f, reason_text: e.target.value })} />}
+                  </div>
+                )}
+                <Field label="Reason" required hint="A few words HR will read if the payslip is questioned.">
+                  {(id) => <Input id={id} value={reason} placeholder="e.g. Forgot to punch out, confirmed by site engineer" onChange={(e) => setReason(e.target.value)} />}
                 </Field>
-                {unchanged && <p className="text-[12px] text-muted-foreground">Nothing differs from the current values yet — an override that changes nothing is not saved.</p>}
                 <div className="flex justify-end">
-                  <Button
-                    loading={save.isPending}
-                    disabled={unchanged}
-                    onClick={() => {
-                      setTouched(true);
-                      if (f.reason_text.trim().length >= 8 && f.reason_code) save.mutate();
-                    }}
-                  >
+                  <Button loading={save.isPending} disabled={!ok} onClick={() => save.mutate()}>
                     Save correction
                   </Button>
                 </div>

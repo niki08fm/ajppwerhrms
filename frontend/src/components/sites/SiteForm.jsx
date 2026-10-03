@@ -65,13 +65,13 @@ export function PasswordOnceDialog({ creds, onClose }) {
   };
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()} title="Tablet login" description={PASSWORD_ONCE_TEXT} footer={<Button onClick={onClose}>I have saved it</Button>}>
-      <div className="flex flex-col gap-3 text-[14px]">
+      <div className="flex flex-col gap-3 text-[15px]">
         <div>
-          Login ID: <Mono className="text-[14px]">{creds.login}</Mono>
+          Login ID: <Mono className="text-[15px]">{creds.login}</Mono>
         </div>
         <div className="flex items-center gap-2">
           <span>
-            Password: <Mono className="select-all text-[15px] font-semibold">{creds.password}</Mono>
+            Password: <Mono className="select-all text-[16px] font-semibold">{creds.password}</Mono>
           </span>
           <Button size="sm" variant="outline" onClick={copy}>
             <Copy /> Copy
@@ -241,18 +241,18 @@ export function SiteFormDialog({ site, onClose, onCreated }) {
               )}
             </Field>
           </div>
-          <div className="flex items-center gap-2 text-[13px]">
+          <div className="flex items-center gap-2 text-[14px]">
             <Switch id="site-active" checked={f.is_active} onCheckedChange={set('is_active')} label="Active" />
             <label htmlFor="site-active">Active {f.is_active ? '(yes)' : '(no — the tablet cannot sign in)'}</label>
           </div>
 
           <div className="mt-2 flex flex-col gap-3 border-t pt-3">
-            <h3 className="font-display text-[15px] font-semibold">Tablet login</h3>
+            <h3 className="font-display text-[16px] font-semibold">Tablet login</h3>
             <Field label="Login ID" required error={errors.login} hint="4–32 letters, numbers or dashes. Not case-sensitive at sign-in.">
               {(id, invalid) => <Input id={id} className="font-mono" autoCapitalize="none" value={f.login} onChange={(e) => set('login')(e.target.value)} aria-invalid={invalid} />}
             </Field>
             {editing ? (
-              <p className="text-[12px] text-muted-foreground">To change the password, use Reset password on the site page.</p>
+              <p className="text-[13px] text-muted-foreground">To change the password, use Reset password on the site page.</p>
             ) : (
               <PasswordInput value={f.password} onChange={set('password')} error={errors.password} />
             )}
@@ -261,11 +261,11 @@ export function SiteFormDialog({ site, onClose, onCreated }) {
         <div className="flex flex-col gap-1">
           <SiteMap lat={f.lat} lng={f.lng} radius={f.radius_m} onChange={onMove} onRadius={set('radius_m')} />
           {(errors.lat || errors.lng || errors.radius_m) && (
-            <p className="text-[12px] text-destructive" role="alert">
+            <p className="text-[13px] text-destructive" role="alert">
               {errors.lat || errors.lng || errors.radius_m}
             </p>
           )}
-          {editing && <p className="text-[12px] text-muted-foreground">A new location or radius applies to the next sign-in and the next punch. Past punches keep their recorded distance.</p>}
+          {editing && <p className="text-[13px] text-muted-foreground">A new location or radius applies to the next sign-in and the next punch. Past punches keep their recorded distance.</p>}
         </div>
       </div>
     </Dialog>

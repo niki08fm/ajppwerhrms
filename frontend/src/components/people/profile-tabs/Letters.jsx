@@ -55,7 +55,7 @@ export function LettersTab({ e }) {
       ) : !q.data.length ? (
         <EmptyState title="No letters issued" body="The offer letter appears here once an offer is issued. Issue the joining letter during onboarding." />
       ) : (
-        <table className="data-table w-full">
+        <div className="overflow-x-auto"><table className="data-table w-full">
           <thead>
             <tr>
               <th>Letter</th>
@@ -80,7 +80,7 @@ export function LettersTab({ e }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
     </Card>
   );

@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { describeComponentRule, formatINR, pfMaxContribution } from '@ajpwer/shared';
 import { api, errorMessage } from '@/services/api';
 import { useLookups } from '@/hooks/useLookups';
-import { cn } from '@/utils';
+import { cn, longDate } from '@/utils';
 import { KV, Money, ProportionBar } from '@/components/bits';
 import { CHART, tooltipStyle } from '@/components/charts';
 import { Chip, ErrorState, Notice, SkeletonBlock } from '@/components/states';
@@ -74,7 +74,7 @@ export function PayTab({ e }) {
           </Notice>
         )}
         <Card>
-          <CardHeader title="How pay was agreed" description={`Effective from ${salary.valid_from}`} />
+          <CardHeader title="How pay was agreed" description={`Effective from ${longDate(salary.valid_from)}`} />
           <CardBody className="grid gap-3 sm:grid-cols-2">
             {['GROSS', 'CTC'].map((m) => (
               <button
@@ -88,10 +88,10 @@ export function PayTab({ e }) {
                   <span className="font-medium">{m === 'GROSS' ? 'Monthly gross' : 'Annual CTC'}</span>
                   {salary.mode === m && <Chip tone="info">Current</Chip>}
                 </div>
-                <div className="mt-1 font-display text-xl font-semibold">
+                <div className="mt-1 text-xl font-semibold num">
                   <Money value={m === 'GROSS' ? p.gross : p.ctc.annual_ctc} />
                 </div>
-                <p className="mt-1 text-[12px] text-muted-foreground">
+                <p className="mt-1 text-[13px] text-muted-foreground">
                   {m === 'GROSS'
                     ? 'The monthly gross is fixed. Employer PF and ESI are paid on top, so annual CTC is an output.'
                     : 'The annual cost is fixed. Employer contributions come out of it, so gross is solved backwards and can move if rates change.'}
@@ -117,7 +117,7 @@ export function PayTab({ e }) {
               title="Provident fund"
               description={`PF wage ${formatINR(p.pf.pf_wage)} — the components ticked as the PF base, ${st.pf_restrict_to_ceiling ? `capped at ${formatINR(rates.pf.ceiling)}` : 'uncapped'}.`}
             />
-            <CardBody className="flex flex-col gap-3 text-[13px]">
+            <CardBody className="flex flex-col gap-3 text-[14px]">
               <label className="flex items-center justify-between">
                 PF on
                 <Switch checked={st.pf_enabled} disabled={ro} onCheckedChange={(v) => patch.mutate({ pf_enabled: v })} label="PF on" />
@@ -152,7 +152,7 @@ export function PayTab({ e }) {
                 ]}
               />
 
-              <p className="text-[12px] text-muted-foreground">
+              <p className="text-[13px] text-muted-foreground">
                 PF is {rates.pf.employee_pct}% of the PF wage.{' '}
                 {st.pf_restrict_to_ceiling
                   ? `Restricted to the ${formatINR(rates.pf.ceiling)} ceiling, so it is never more than ${formatINR(pfMaxContribution(rates.pf).employee)} a month.`
@@ -167,13 +167,13 @@ export function PayTab({ e }) {
                 title="ESI"
                 description={st.esi_locked_until ? `Covered for the contribution period ending ${st.esi_locked_until}` : 'Decided at the start of each April–September and October–March period.'}
               />
-              <CardBody className="flex flex-col gap-2 text-[13px]">
+              <CardBody className="flex flex-col gap-2 text-[14px]">
                 <label className="flex items-center justify-between">
                   ESI on
                   <Switch checked={st.esi_enabled} disabled={ro || (!p.esi_within_ceiling && !st.esi_enabled)} onCheckedChange={(v) => patch.mutate({ esi_enabled: v })} label="ESI on" />
                 </label>
                 {!p.esi_within_ceiling && (
-                  <p className="text-[12px] text-muted-foreground">
+                  <p className="text-[13px] text-muted-foreground">
                     Not offered: monthly gross {formatINR(p.gross)} is above the {formatINR(rates.esi.ceiling)} ESI ceiling.{' '}
                     {st.esi_locked_until ? 'Contributions continue until the current period ends.' : ''}
                   </p>
@@ -190,12 +190,12 @@ export function PayTab({ e }) {
             </Card>
             <Card>
               <CardHeader title="Professional tax" description="Charged by the state the person works in — not the company's, not the site's." />
-              <CardBody className="flex flex-col gap-2 text-[13px]">
+              <CardBody className="flex flex-col gap-2 text-[14px]">
                 <label className="flex items-center justify-between">
                   Applies
                   <Switch checked={st.pt_applicable} disabled={ro} onCheckedChange={(v) => (v ? patch.mutate({ pt_applicable: true }) : setAskPtOff(true))} label="Professional tax applies" />
                 </label>
-                {!st.pt_applicable && <p className="text-[12px]">Exempt: {st.pt_exempt_reason}</p>}
+                {!st.pt_applicable && <p className="text-[13px]">Exempt: {st.pt_exempt_reason}</p>}
                 <label className="flex items-center justify-between gap-3">
                   State
                   <Select className="h-7 w-44" value={st.pt_state} disabled={ro} onChange={(ev) => patch.mutate({ pt_state: ev.target.value })} aria-label="PT state">
@@ -216,8 +216,8 @@ export function PayTab({ e }) {
                     )}
                   </span>
                 </div>
-                {p.pt.basis === 'NIL_SLAB' && <p className="text-[12px] text-muted-foreground">Nil at this salary — that is the state's first slab working, not an exemption. Keep the toggle on.</p>}
-                {p.pt.basis === 'NO_PT_STATE' && <p className="text-[12px] text-muted-foreground">{st.pt_state} levies no professional tax.</p>}
+                {p.pt.basis === 'NIL_SLAB' && <p className="text-[13px] text-muted-foreground">Nil at this salary — that is the state's first slab working, not an exemption. Keep the toggle on.</p>}
+                {p.pt.basis === 'NO_PT_STATE' && <p className="text-[13px] text-muted-foreground">{st.pt_state} levies no professional tax.</p>}
               </CardBody>
             </Card>
           </div>
@@ -292,7 +292,7 @@ export function PayTab({ e }) {
           </>
         }
       >
-        <p className="text-[13px]">
+        <p className="text-[14px]">
           {restate === 'CTC' ? (
             <>
               Annual CTC will be recorded as <Money value={p.ctc.annual_ctc} />. If statutory rates change later, gross will be re-solved from this figure.

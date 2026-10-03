@@ -80,9 +80,9 @@ export default function SiteDetail() {
                 </PieChart>
               </ResponsiveContainer>
             ) : (
-              <p className="py-8 text-center text-[13px] text-muted-foreground">No punches in 30 days.</p>
+              <p className="py-8 text-center text-[14px] text-muted-foreground">No punches in 30 days.</p>
             )}
-            <ul className="text-[12px]">
+            <ul className="text-[13px]">
               {d.department_mix.map((m, i) => (
                 <li key={m.department} className="flex items-center gap-2">
                   <span className="size-2 rounded-sm" style={{ background: CHART[i % CHART.length] }} /> {m.department} — {m.person_days}
@@ -106,7 +106,7 @@ export default function SiteDetail() {
         </Card>
         <Card>
           <CardHeader title="Movement, 14 days" description="People who worked here and at another site the same day" />
-          <ul className="divide-y text-[13px]">
+          <ul className="divide-y text-[14px]">
             {d.movement.map((m) => (
               <li key={m.site_id} className="flex justify-between px-4 py-2">
                 <Link to={`/sites/${m.site_id}`} className="hover:underline">
@@ -122,7 +122,7 @@ export default function SiteDetail() {
         </Card>
         <Card>
           <CardHeader title="On site now" />
-          <ul className="divide-y text-[13px]">
+          <ul className="divide-y text-[14px]">
             {d.on_site_now.map((p) => (
               <li key={p.id} className="flex justify-between px-4 py-1.5">
                 <PersonLink id={p.id} name={p.name} code={p.code} />
@@ -138,7 +138,7 @@ export default function SiteDetail() {
         {!d.punches.length ? (
           <EmptyState title="No punches" body="Punches from this site's tablet appear here." />
         ) : (
-          <table className="data-table w-full">
+          <div className="overflow-x-auto"><table className="data-table w-full">
             <thead>
               <tr>
                 <th>Time</th>
@@ -171,11 +171,11 @@ export default function SiteDetail() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         )}
       </Card>
       <TabletLogin site={d.site} manage={can('sites.manage')} />
-      <p className="text-[12px] text-muted-foreground">
+      <p className="text-[13px] text-muted-foreground">
         Centre <span className="num">{d.site.lat.toFixed(6)}, {d.site.lng.toFixed(6)}</span>. Distances are stored as metres from the centre — never a coordinate trail.
       </p>
     </div>
@@ -222,23 +222,23 @@ function TabletLogin({ site, manage }) {
           )
         }
       />
-      <dl className="grid grid-cols-2 gap-3 p-4 text-[13px] md:grid-cols-4">
+      <dl className="grid grid-cols-2 gap-3 p-4 text-[14px] md:grid-cols-4">
         <div>
-          <dt className="text-[12px] text-muted-foreground">Login ID</dt>
+          <dt className="text-[13px] text-muted-foreground">Login ID</dt>
           <dd>
             <Mono>{site.login}</Mono>
           </dd>
         </div>
         <div>
-          <dt className="text-[12px] text-muted-foreground">Login</dt>
+          <dt className="text-[13px] text-muted-foreground">Login</dt>
           <dd>{site.login_enabled ? <Chip tone="success">Enabled</Chip> : <Chip tone="warning">Disabled</Chip>}</dd>
         </div>
         <div>
-          <dt className="text-[12px] text-muted-foreground">Last sign-in</dt>
+          <dt className="text-[13px] text-muted-foreground">Last sign-in</dt>
           <dd className="num">{site.last_login_at ? istTime(site.last_login_at, true) : 'Never'}</dd>
         </div>
         <div>
-          <dt className="text-[12px] text-muted-foreground">Tablet signed in now</dt>
+          <dt className="text-[13px] text-muted-foreground">Tablet signed in now</dt>
           <dd>{site.tablet_signed_in ? <Chip tone="success">Yes</Chip> : <Chip tone="muted">No</Chip>}</dd>
         </div>
       </dl>

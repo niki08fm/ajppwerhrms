@@ -164,7 +164,7 @@ export function NewEmployeeDialog({ open, onOpenChange }) {
               onChoose={setChosen}
             />
           ) : (
-            <p className="text-[13px] text-muted-foreground">Pick a pay group to see the breakdown.</p>
+            <p className="text-[14px] text-muted-foreground">Pick a pay group to see the breakdown.</p>
           )}
         </div>
       </div>

@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { GitBranchPlus, History, Plus } from 'lucide-react';
 import { toast } from 'sonner';
-import { POLICY_KINDS, POLICY_KIND_LABELS } from '@ajpwer/shared';
+import { formatINR, MONTH_NAMES, POLICY_KINDS, POLICY_KIND_LABELS, upgradeLeaveRules } from '@ajpwer/shared';
 import { api, ApiError, errorMessage } from '@/services/api';
 import { PageHeader } from '@/components/bits';
 import { Chip, EmptyState, ErrorState, SkeletonRows } from '@/components/states';
@@ -17,18 +17,25 @@ function summary(p) {
   const r = p.rules; // eslint-disable-line @typescript-eslint/no-explicit-any
   switch (p.kind) {
     case 'ATTENDANCE':
-      return `${r.standard_min / 60}h day, half from ${r.half_day_min / 60}h, ${r.grace_min} min grace`;
+      return r.half_day_upto_min === null || r.half_day_upto_min === undefined
+        ? `${r.standard_min / 60}h day, half from ${r.half_day_min / 60}h, ${r.grace_min} min grace`
+        : `${r.standard_min / 60}h day, half day up to ${r.half_day_upto_min / 60}h, ${r.grace_min} min grace`;
     case 'OVERTIME':
-      return `${r.multiplier}× on ${r.base === 'BASIC_HRA' ? 'basic + HRA' : r.base.toLowerCase()}, after ${r.after_min} min, cap ${r.monthly_cap_min ? `${r.monthly_cap_min / 60}h` : 'none'}`;
+      return `${r.multiplier}× on ${r.base === 'BASIC_HRA' ? 'basic + HRA' : r.base.toLowerCase()}, ${r.counts_from === 'SHIFT_END' ? 'from shift end' : 'beyond the standard day'}, after ${r.after_min} min, cap ${r.monthly_cap_min ? `${r.monthly_cap_min / 60}h` : 'none'}`;
     case 'WEEKOFF_PAY':
     case 'HOLIDAY_PAY':
       return `${r.paid ? 'Paid' : 'Unpaid'}${r.sandwich ? ', sandwich' : ''}`;
     case 'HOLIDAY_WORK':
       return `Holiday ${r.holiday.mode === 'PAY' ? `${r.holiday.rate_pct}%` : 'none'}, weekly off ${r.weekly_off.mode === 'PAY' ? `${r.weekly_off.rate_pct}%` : 'none'}`;
-    case 'LATE_PENALTY':
-      return `${r.free_per_month} free, ${r.slabs.length} slabs`;
-    case 'LEAVE':
-      return r.types.map((t) => `${t.code} ${t.annual_days}`).join(', ');
+    case 'LEAVE': {
+      const u = upgradeLeaveRules(r);
+      return `Year from ${MONTH_NAMES[u.year_start_month - 1]} · ${u.types
+        .filter((t) => t.active)
+        .map((t) => `${t.code}${t.auto_apply ? ' (pays absences)' : ''}`)
+        .join(', ')}`;
+    }
+    case 'GRATUITY':
+      return `From ${r.min_years} years, ${r.days_per_year}/${r.divisor} of last ${r.base === 'BASIC_HRA' ? 'basic + HRA' : r.base.toLowerCase()} a year, ${r.max_amount === null ? 'no ceiling' : `up to ${formatINR(r.max_amount)}`}`;
   }
 }
 
@@ -82,7 +89,7 @@ export default function Policies() {
               {!latest.length ? (
                 <EmptyState title={`No ${POLICY_KIND_LABELS[k].toLowerCase()} policy`} body="Create one, then attach it to a pay group." />
               ) : (
-                <table className="data-table w-full">
+                <div className="overflow-x-auto"><table className="data-table w-full">
                   <thead>
                     <tr>
                       <th>Name</th>
@@ -123,7 +130,7 @@ export default function Policies() {
                       );
                     })}
                   </tbody>
-                </table>
+                </table></div>
               )}
             </Card>
           );
@@ -183,7 +190,7 @@ function Builder({ kind, from, onClose }) {
         </div>
         <PolicyForm kind={kind} rules={rules} onChange={setRules} />
         <WorkedExample kind={kind} rules={rules} s={sample} />
-        {error && <p className="text-[13px] text-destructive">{error}</p>}
+        {error && <p className="text-[14px] text-destructive">{error}</p>}
       </div>
     </Dialog>
   );
@@ -196,8 +203,8 @@ function HistoryDialog({ policyKey, onClose }) {
       {q.isLoading ? (
         <SkeletonRows rows={3} />
       ) : (
-        <table className="w-full text-[13px]">
-          <thead className="text-left text-[12px] text-muted-foreground">
+        <table className="w-full text-[14px]">
+          <thead className="text-left text-[13px] text-muted-foreground">
             <tr>
               <th className="py-1">Version</th>
               <th>From</th>

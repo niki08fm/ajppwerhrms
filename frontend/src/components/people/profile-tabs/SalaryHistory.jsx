@@ -37,7 +37,7 @@ export function SalaryHistoryTab({ e }) {
       ) : !q.data.length ? (
         <EmptyState title="No salary on record" body="Salary is created when onboarding starts." />
       ) : (
-        <table className="data-table w-full">
+        <div className="overflow-x-auto"><table className="data-table w-full">
           <thead>
             <tr>
               <th>From</th>
@@ -68,7 +68,7 @@ export function SalaryHistoryTab({ e }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
       {revising && <ReviseDialog e={e} onClose={() => setRevising(false)} />}
     </Card>
@@ -158,7 +158,7 @@ function ReviseDialog({ e, onClose }) {
             {(id) => <Input id={id} value={f.reason} onChange={(ev) => setF({ ...f, reason: ev.target.value })} placeholder="e.g. Annual increment" />}
           </Field>
           {a?.solution?.ambiguous && (
-            <div className="col-span-2 rounded-md border border-warning/40 bg-warning/10 p-2 text-[13px]">
+            <div className="col-span-2 rounded-md border border-warning/40 bg-warning/10 p-2 text-[14px]">
               This CTC has two valid grosses.
               {[
                 { g: a.solution.gross, l: 'without ESI' },
@@ -172,8 +172,8 @@ function ReviseDialog({ e, onClose }) {
           )}
         </div>
         <div>
-          <table className="w-full text-[13px]">
-            <thead className="text-left text-[12px] text-muted-foreground">
+          <table className="w-full text-[14px]">
+            <thead className="text-left text-[13px] text-muted-foreground">
               <tr>
                 <th className="py-1" />
                 <th className="text-right">Before</th>

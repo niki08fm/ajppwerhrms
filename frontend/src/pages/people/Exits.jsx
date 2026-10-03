@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useNewFromUrl } from '@/hooks';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { UserMinus } from 'lucide-react';
@@ -9,7 +10,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
 import { Dialog } from '@/components/ui/overlay';
 import { Select } from '@/components/ui/form';
-import { ResignDialog } from '../../components/people/profile-tabs/Exit';
+import { exitName, longDate, monthLabel } from '@/utils';
+import { ExitDialog } from '../../components/people/profile-tabs/Exit';
+import { fnfStatus } from './SettlementStatement';
 
 export default function Exits() {
   const q = useQuery({
@@ -17,37 +20,39 @@ export default function Exits() {
     queryFn: () => api.get('/settlements').then((r) => r.data),
   });
   const [picking, setPicking] = useState(false);
+  useNewFromUrl(useCallback(() => setPicking(true), []));
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Exits and settlement"
-        description="Settlements are computed live while someone is on notice and frozen when paid with the payroll run for the month their last day falls in."
+        description="Record an exit with its last working day — there is no notice period. On the person's exit screen, tick the checklist and process the F&F into a month's payroll, or record it as paid separately."
         actions={
           <Button onClick={() => setPicking(true)}>
-            <UserMinus /> Record a resignation
+            <UserMinus /> Record an exit
           </Button>
         }
       />
 
       <Card>
-        <CardHeader title="On notice" />
+        <CardHeader title="Leaving" description="Each F&F is worked out live until it is paid. Open a person to finish their exit." />
         {q.isLoading ? (
           <SkeletonRows rows={5} />
         ) : q.isError ? (
           <ErrorState error={q.error} onRetry={() => q.refetch()} />
         ) : !q.data.open.length ? (
-          <EmptyState title="Nobody is leaving" body="Record a resignation from here or from the person's Exit tab." />
+          <EmptyState title="Nobody is leaving" body="Record an exit from here or from the person's Exit tab." />
         ) : (
-          <table className="data-table w-full">
+          <div className="overflow-x-auto"><table className="data-table w-full">
             <thead>
               <tr>
                 <th>Name</th>
+                <th>Exit</th>
                 <th>Last day</th>
                 <th className="text-right">Earnings</th>
                 <th className="text-right">Deductions</th>
                 <th className="text-right">Net</th>
                 <th>Clearance</th>
-                <th>State</th>
+                <th>F&F</th>
               </tr>
             </thead>
             <tbody>
@@ -56,12 +61,13 @@ export default function Exits() {
                 return (
                   <tr key={r.employee.id}>
                     <td>
-                      <Link to={`/exits/${r.employee.id}`} className="font-medium hover:underline">
+                      <Link to={`/people/${r.employee.id}?tab=exit`} className="font-medium hover:underline">
                         {r.employee.name}
                       </Link>{' '}
-                      <span className="text-[12px] text-muted-foreground">{r.employee.department}</span>
+                      <span className="text-[13px] text-muted-foreground">{r.employee.department}</span>
                     </td>
-                    <td className="num">{r.last_day}</td>
+                    <td>{exitName(r.exit_reason)}</td>
+                    <td className="num">{longDate(r.last_day)}</td>
                     <td className="text-right">{live && <Money value={live.total_earnings} />}</td>
                     <td className="text-right">{live && <Money value={live.total_deductions} />}</td>
                     <td className="text-right font-medium">
@@ -70,7 +76,7 @@ export default function Exits() {
                     </td>
                     <td>
                       {r.live && 'error' in r.live ? (
-                        <span className="text-[12px] text-destructive">{r.live.error}</span>
+                        <span className="text-[13px] text-destructive">{r.live.error}</span>
                       ) : live?.clearance.length ? (
                         <span className="flex flex-wrap gap-1">
                           {live.clearance.map((c) => (
@@ -83,18 +89,18 @@ export default function Exits() {
                         <Chip tone="success">Clear</Chip>
                       )}
                     </td>
-                    <td>{r.settlement ? <Chip tone={r.settlement.state === 'INCLUDED' ? 'info' : 'default'}>{r.settlement.state === 'INCLUDED' ? 'Ticked for a run' : 'Open'}</Chip> : '—'}</td>
+                    <td>{r.settlement ? <Chip tone={r.settlement.state === 'INCLUDED' ? 'info' : 'muted'}>{fnfStatus(r.settlement)}</Chip> : '—'}</td>
                   </tr>
                 );
               })}
             </tbody>
-          </table>
+          </table></div>
         )}
       </Card>
       {q.data && q.data.recoverable.length > 0 && (
         <Card>
-          <CardHeader title="Recoverable" description="Negative settlements never enter the bank file. Each needs a deliberate decision to write off or pursue." />
-          <ul className="divide-y text-[13px]">
+          <CardHeader title="Recoverable" description="A negative F&F never goes in a bank file. Each needs a deliberate decision to write it off or pursue it." />
+          <ul className="divide-y text-[14px]">
             {q.data.recoverable.map((r) => (
               <li key={r.employee.id} className="flex items-center justify-between px-4 py-2">
                 <PersonLink id={r.employee.id} name={r.employee.name} />
@@ -109,7 +115,7 @@ export default function Exits() {
       {q.data && q.data.paid.length > 0 && (
         <Card>
           <CardHeader title="Settled" />
-          <table className="data-table w-full">
+          <div className="overflow-x-auto"><table className="data-table w-full">
             <tbody>
               {q.data.paid.map((s) => (
                 <tr key={s.id}>
@@ -118,15 +124,15 @@ export default function Exits() {
                       {s.employee.name}
                     </Link>
                   </td>
-                  <td className="num">Last day {s.last_day}</td>
+                  <td className="num">Last day {longDate(s.last_day)}</td>
                   <td className="text-right">
                     <Money value={s.net} />
                   </td>
-                  <td className="num text-muted-foreground">Paid {s.paid_at?.slice(0, 10)}</td>
+                  <td className="text-muted-foreground">{s.paid_separately ? `Paid separately on ${longDate(s.paid_separately.paid_on)} (${s.paid_separately.payment_ref})` : `Paid with ${monthLabel(s.period_ym)} payroll`}</td>
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         </Card>
       )}
       {picking && <PickPerson onClose={() => setPicking(false)} />}
@@ -139,18 +145,19 @@ function PickPerson({ onClose }) {
   const [id, setId] = useState('');
   const [go, setGo] = useState(false);
   const person = q.data?.find((p) => p.id === id);
-  if (go && person) return <ResignDialog e={{ id: person.id, name: person.name, notice_days: 30 }} onClose={onClose} />;
+  const exit = useQuery({ queryKey: ['exit', id], queryFn: () => api.get(`/employees/${id}/exit`).then((r) => r.data), enabled: go && !!id });
+  if (go && person && exit.data) return <ExitDialog e={{ id: person.id, name: person.name }} x={exit.data} onClose={onClose} />;
   return (
     <Dialog
       open
       onOpenChange={(o) => !o && onClose()}
-      title="Who is resigning?"
+      title="Who is leaving?"
       footer={
         <>
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button disabled={!id} onClick={() => setGo(true)}>
+          <Button disabled={!id} loading={go && exit.isLoading} onClick={() => setGo(true)}>
             Continue
           </Button>
         </>

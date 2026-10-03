@@ -23,7 +23,12 @@ const LABELS = {
   'employee.update': 'Details changed',
   'employee.pay_group_change': 'Pay group changed',
   'employee.activate': 'Activated',
-  'employee.resign': 'Put on notice',
+  'employee.resign': 'Exit recorded',
+  'settlement.process': 'F&F processed',
+  'settlement.unprocess': 'F&F taken back',
+  'salary.hold': 'Salary held',
+  'salary.release': 'Held salary released',
+  'salary.hold_stop': 'Salary hold stopped',
   'salary.revise': 'Salary revised',
   'salary.restate': 'Salary restated',
   'statutory.update': 'Statutory setup changed',
@@ -66,7 +71,7 @@ export function AuditDetail({ detail }) {
   const changes = detail.changes ?? null;
   if (changes && Object.keys(changes).length) {
     return (
-      <ul className="mt-0.5 text-[12px] text-muted-foreground">
+      <ul className="mt-0.5 text-[13px] text-muted-foreground">
         {Object.entries(changes).map(([k, v]) => (
           <li key={k}>
             {k.replace(/_/g, ' ')}: <span className="line-through">{fmt(v.from)}</span> → <span className="text-foreground">{fmt(v.to)}</span>
@@ -78,9 +83,9 @@ export function AuditDetail({ detail }) {
   const entries = Object.entries(detail).filter(([k]) => !['employee_id'].includes(k));
   if (!entries.length) return null;
   return (
-    <details className="mt-0.5 text-[12px] text-muted-foreground">
+    <details className="mt-0.5 text-[13px] text-muted-foreground">
       <summary className="cursor-pointer select-none">Details</summary>
-      <pre className="mt-1 max-w-full overflow-x-auto whitespace-pre-wrap rounded bg-muted p-2 font-mono text-[11px]">{JSON.stringify(Object.fromEntries(entries), null, 2)}</pre>
+      <pre className="mt-1 max-w-full overflow-x-auto whitespace-pre-wrap rounded bg-muted p-2 font-mono text-[12px]">{JSON.stringify(Object.fromEntries(entries), null, 2)}</pre>
     </details>
   );
 }

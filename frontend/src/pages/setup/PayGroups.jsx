@@ -53,22 +53,22 @@ export default function PayGroups() {
                 }
               />
 
-              <CardBody className="flex flex-col gap-3 text-[13px]">
+              <CardBody className="flex flex-col gap-3 text-[14px]">
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <div className="text-[12px] text-muted-foreground">Calendar</div>
+                    <div className="text-[13px] text-muted-foreground">Calendar</div>
                     {CALENDAR_METHOD_INFO[g.calendar_method].label} <span className="text-muted-foreground">(÷{g.divisor_this_month} this month)</span>
                   </div>
                   <div>
-                    <div className="text-[12px] text-muted-foreground">Weekly off</div>
+                    <div className="text-[13px] text-muted-foreground">Weekly off</div>
                     {g.weekly_off.join(', ') || 'None'}
                   </div>
                   <div>
-                    <div className="text-[12px] text-muted-foreground">Shift</div>
+                    <div className="text-[13px] text-muted-foreground">Shift</div>
                     {g.shift.name} ({hhmm(g.shift.start_min)}–{hhmm(g.shift.end_min)})
                   </div>
                   <div>
-                    <div className="text-[12px] text-muted-foreground">Structure</div>
+                    <div className="text-[13px] text-muted-foreground">Structure</div>
                     {g.structure ? (
                       <Link to="/setup/structures" className="hover:underline">
                         {g.structure.name}
@@ -79,7 +79,7 @@ export default function PayGroups() {
                   </div>
                 </div>
                 <div>
-                  <div className="mb-1 text-[12px] text-muted-foreground">Policies attached</div>
+                  <div className="mb-1 text-[13px] text-muted-foreground">Policies attached</div>
                   <ul className="flex flex-col gap-1">
                     {g.policies.map((p) => (
                       <li key={p.id} className="flex items-center justify-between gap-2">
@@ -97,7 +97,7 @@ export default function PayGroups() {
                 {g.warnings.length > 0 && (
                   <ul className="flex flex-col gap-1 rounded-md border border-warning/40 bg-warning/10 p-2">
                     {g.warnings.map((w, i) => (
-                      <li key={i} className="flex items-start gap-1.5 text-[12px]">
+                      <li key={i} className="flex items-start gap-1.5 text-[13px]">
                         <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />{' '}
                         <span>
                           <strong>{POLICY_KIND_LABELS[w.kind]}:</strong> {w.message}

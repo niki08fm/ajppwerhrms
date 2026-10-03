@@ -66,8 +66,8 @@ export default function Structures() {
 
               <CardBody className="flex flex-col gap-3">
                 <ProportionBar parts={s.sample.monthly.map((c, i) => ({ label: c.name, value: c.amount, colour: s.components.filter((x) => x.frequency === 'MONTHLY')[i]?.colour }))} />
-                <table className="w-full text-[13px]">
-                  <thead className="text-left text-[12px] text-muted-foreground">
+                <table className="w-full text-[14px]">
+                  <thead className="text-left text-[13px] text-muted-foreground">
                     <tr>
                       <th className="py-1">Component</th>
                       <th>Rule</th>
@@ -83,7 +83,7 @@ export default function Structures() {
                         <tr key={c.seq} className="border-t">
                           <td className="py-1">
                             {c.name}
-                            {c.frequency === 'YEARLY' && <span className="text-[11px] text-muted-foreground"> (yearly, month {c.pay_month})</span>}
+                            {c.frequency === 'YEARLY' && <span className="text-[12px] text-muted-foreground"> (yearly, month {c.pay_month})</span>}
                           </td>
                           <td className="text-muted-foreground">{ruleOf(c)}</td>
                           <td>{c.is_taxable ? 'Taxable' : 'Exempt'}</td>
@@ -101,7 +101,7 @@ export default function Structures() {
                     {w}
                   </Notice>
                 ))}
-                <p className="text-[11px] text-muted-foreground">
+                <p className="text-[12px] text-muted-foreground">
                   Sample at {formatINR(s.sample.gross)} a month{s.components.some((c) => c.calc_type === 'PCT_CTC') ? `, a CTC of ${formatINR(s.sample.annual_ctc)} a year` : ''}. Whatever is left of
                   gross is the Special Allowance.
                 </p>

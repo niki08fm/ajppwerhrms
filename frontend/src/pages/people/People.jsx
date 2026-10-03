@@ -1,11 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { LayoutGrid, List, Plus, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
 import { EMPLOYEE_STATUSES, PT_STATES } from '@ajpwer/shared';
 import { api, errorMessage, qs } from '@/services/api';
-import { useKeysetList, useListParams } from '@/hooks';
+import { useKeysetList, useListParams, useNewFromUrl } from '@/hooks';
 import { opts, useLookups } from '@/hooks/useLookups';
 import { initials } from '@/utils';
 import { Mono, PageHeader } from '@/components/bits';
@@ -28,6 +28,7 @@ export default function People() {
   const [allMatching, setAllMatching] = useState(false);
   const [bulk, setBulk] = useState(null);
   const [creating, setCreating] = useState(false);
+  useNewFromUrl(useCallback(() => setCreating(true), []));
   const list = useKeysetList(['people'], '/employees', lp.apiParams);
 
   const filters = useMemo(
@@ -76,7 +77,7 @@ export default function People() {
       width: 230,
       cell: (r) => (
         <Link to={`/people/${r.id}`} className="flex items-center gap-2 hover:underline" onClick={(e) => e.stopPropagation()}>
-          <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-secondary text-[10px] font-semibold">{initials(r.name)}</span>
+          <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-secondary text-[11px] font-semibold">{initials(r.name)}</span>
           <span className="truncate font-medium">{r.name}</span>
         </Link>
       ),
@@ -148,7 +149,7 @@ export default function People() {
         />
 
         {selCount > 0 && (
-          <div className="no-print flex flex-wrap items-center gap-2 border-b bg-accent/50 px-3 py-2 text-[13px]">
+          <div className="no-print flex flex-wrap items-center gap-2 border-b bg-accent/50 px-3 py-2 text-[14px]">
             <span className="font-medium">{selCount.toLocaleString('en-IN')} selected</span>
             {!allMatching && selected.size === list.rows.length && list.total > list.rows.length && (
               <button className="text-primary hover:underline" onClick={() => setAllMatching(true)}>
@@ -214,7 +215,7 @@ export default function People() {
                   </span>
                   <div className="min-w-0">
                     <div className="truncate font-medium">{r.name}</div>
-                    <div className="truncate text-[12px] text-muted-foreground">
+                    <div className="truncate text-[13px] text-muted-foreground">
                       {r.designation} · <Mono>{r.code}</Mono>
                     </div>
                   </div>
@@ -332,11 +333,11 @@ function BulkDialog({ action, ids, match, onClose, onDone }) {
         </Select>
         {preview && (
           <>
-            <p className="text-[13px]">
+            <p className="text-[14px]">
               <strong>{preview.count}</strong> of {preview.selected} selected will change. {preview.selected - preview.count > 0 && `${preview.selected - preview.count} already have this value.`}
             </p>
             <div className="max-h-72 overflow-y-auto rounded border">
-              <table className="w-full text-[12px]">
+              <table className="w-full text-[13px]">
                 <thead className="sticky top-0 bg-card">
                   <tr className="text-left text-muted-foreground">
                     <th className="px-2 py-1">Person</th>

@@ -70,7 +70,7 @@ function specialComponent(s, seq) {
 /** Two-way choice shown as buttons, so "percentage or fixed" is one click and always visible. */
 function KindToggle({ value, onChange, label }) {
   return (
-    <div role="radiogroup" aria-label={label} className="inline-flex h-9 overflow-hidden rounded-md border text-[12px]">
+    <div role="radiogroup" aria-label={label} className="inline-flex h-9 overflow-hidden rounded-md border text-[13px]">
       {[
         ['PERCENT', 'Percentage'],
         ['FIXED', 'Fixed'],
@@ -189,8 +189,8 @@ export default function StructureBuilder() {
                 {(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Site staff 2027" />}
               </Field>
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[880px] text-[13px]">
-                  <thead className="text-left text-[12px] text-muted-foreground">
+                <table className="w-full min-w-[880px] text-[14px]">
+                  <thead className="text-left text-[13px] text-muted-foreground">
                     <tr>
                       <th className="py-1" />
                       <th>Component name</th>
@@ -249,10 +249,10 @@ export default function StructureBuilder() {
                             {r.kind === 'PERCENT' ? (
                               <div className="flex flex-col gap-0.5">
                                 <MoneyInput value={r.max} onChange={(e) => set(i, { max: e.target.value })} placeholder="No limit" aria-label={`Maximum for ${r.name || 'component'}`} />
-                                {capped && <span className="text-[11px] text-muted-foreground">Capped at this gross</span>}
+                                {capped && <span className="text-[12px] text-muted-foreground">Capped at this gross</span>}
                               </div>
                             ) : (
-                              <span className="text-[12px] text-muted-foreground">—</span>
+                              <span className="text-[13px] text-muted-foreground">—</span>
                             )}
                           </td>
                           <td className="py-1.5 pr-2">
@@ -296,9 +296,9 @@ export default function StructureBuilder() {
                       </td>
                       <td className="py-2.5 pr-2 font-medium">{SPECIAL_ALLOWANCE}</td>
                       <td className="py-2.5 pr-2" colSpan={3}>
-                        <span className="text-[12px] text-muted-foreground">Automatic: whatever is left of gross after the components above. Never negative.</span>
+                        <span className="text-[13px] text-muted-foreground">Automatic: whatever is left of gross after the components above. Never negative.</span>
                       </td>
-                      <td className="py-2.5 pr-2 text-[12px] text-muted-foreground">Monthly</td>
+                      <td className="py-2.5 pr-2 text-[13px] text-muted-foreground">Monthly</td>
                       <td className="py-2.5">
                         <Switch checked={special.is_taxable} onCheckedChange={(v) => setSpecial({ ...special, is_taxable: v })} label="Special Allowance taxable" />
                       </td>
@@ -314,7 +314,7 @@ export default function StructureBuilder() {
                 <Button variant="outline" size="sm" onClick={() => setRows([...rows, blank(rows.length)])}>
                   <Plus /> Add component
                 </Button>
-                <p className="max-w-md text-right text-[12px] text-muted-foreground">
+                <p className="max-w-md text-right text-[13px] text-muted-foreground">
                   * PF wage: tick it on Basic, and on a dearness allowance if you use one. It decides which components form the PF base, and nothing else.
                 </p>
               </div>
@@ -326,7 +326,7 @@ export default function StructureBuilder() {
           <CardHeader title="Salary breakup" description="A sample person on this structure. Updates as you type." />
           <CardBody className="flex flex-col gap-3">
             <div className="flex flex-col gap-2">
-              <div role="radiogroup" aria-label="Sample entered as" className="inline-flex h-8 w-fit overflow-hidden rounded-md border text-[12px]">
+              <div role="radiogroup" aria-label="Sample entered as" className="inline-flex h-8 w-fit overflow-hidden rounded-md border text-[13px]">
                 {[
                   ['GROSS', 'Monthly gross'],
                   ['CTC', 'Annual CTC'],
@@ -348,7 +348,7 @@ export default function StructureBuilder() {
                 ))}
               </div>
               <Field label={sampleMode === 'CTC' ? 'Sample annual CTC' : 'Sample monthly gross'}>{(id) => <MoneyInput id={id} value={sample} onChange={(e) => setSample(e.target.value)} />}</Field>
-              <div className="grid grid-cols-2 gap-2 text-[13px]">
+              <div className="grid grid-cols-2 gap-2 text-[14px]">
                 <label className="flex items-center justify-between gap-2 rounded-md border px-2 py-1.5">
                   PF
                   <Switch checked={pfOn} onCheckedChange={setPfOn} label="PF on for the sample" />
@@ -371,7 +371,7 @@ export default function StructureBuilder() {
               </Field>
             </div>
             {usesCtc && p && (
-              <p className="text-[12px] text-muted-foreground">
+              <p className="text-[13px] text-muted-foreground">
                 “% of CTC” is a share of this annual CTC, <span className="num font-medium text-foreground">{formatINR(p.breakup.ctc.ctc_basis)}</span>, spread over twelve months.
               </p>
             )}
@@ -394,7 +394,7 @@ export default function StructureBuilder() {
               <div className={cn('flex flex-col gap-3', preview.isFetching && 'opacity-70')}>
                 <ProportionBar parts={p.breakup.structure.monthly.map((c) => ({ label: c.name, value: c.amount, colour: c.colour }))} />
                 <SalaryBreakup p={p.breakup} rates={p.rates} rules={ruleNames} capped={cappedNames} />
-                <p className="text-[11px] text-muted-foreground">Income tax on the new regime with no declarations. PF restricted to the {formatINR(p.rates.pf.ceiling)} ceiling.</p>
+                <p className="text-[12px] text-muted-foreground">Income tax on the new regime with no declarations. PF restricted to the {formatINR(p.rates.pf.ceiling)} ceiling.</p>
               </div>
             )}
             <Button size="lg" disabled={!name.trim() || blankNames || reservedName || !!p?.errors.length || preview.isError} loading={save.isPending} onClick={() => save.mutate()}>
@@ -437,8 +437,8 @@ function StatutoryCard({ rates }) {
       />
       <CardBody className="flex flex-col gap-3">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[560px] text-[13px]">
-            <thead className="text-left text-[12px] text-muted-foreground">
+          <table className="w-full min-w-[560px] text-[14px]">
+            <thead className="text-left text-[13px] text-muted-foreground">
               <tr>
                 <th className="py-1">Item</th>
                 <th>How it is worked out</th>
@@ -456,7 +456,7 @@ function StatutoryCard({ rates }) {
             </tbody>
           </table>
         </div>
-        <div className="grid gap-2 rounded-md bg-muted/50 p-3 text-[12px] sm:grid-cols-3">
+        <div className="grid gap-2 rounded-md bg-muted/50 p-3 text-[13px] sm:grid-cols-3">
           <div>
             <div className="font-semibold text-foreground">The rates</div>
             <p className="text-muted-foreground">

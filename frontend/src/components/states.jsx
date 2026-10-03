@@ -9,7 +9,7 @@ export function SkeletonRows({ rows = 8, cols = 6 }) {
   return (
     <div className="divide-y" aria-busy="true" aria-label="Loading">
       {Array.from({ length: rows }).map((_, r) => (
-        <div key={r} className="flex h-9 items-center gap-4 px-3">
+        <div key={r} className="flex h-10 items-center gap-4 px-3">
           {Array.from({ length: cols }).map((__, c) => (
             <div key={c} className="h-3 animate-pulse rounded bg-muted" style={{ width: `${c === 0 ? 18 : 8 + ((r * 7 + c * 13) % 12)}%` }} />
           ))}
@@ -29,7 +29,7 @@ export function EmptyState({ title, body, action, icon }) {
     <div className="flex flex-col items-center justify-center gap-2 px-6 py-14 text-center">
       <div className="rounded-full bg-muted p-3 text-muted-foreground">{icon ?? <Inbox className="size-6" />}</div>
       <h3 className="font-display text-base font-semibold">{title}</h3>
-      <p className="max-w-md text-[13px] text-muted-foreground">{body}</p>
+      <p className="max-w-md text-[14px] text-muted-foreground">{body}</p>
       {action && <div className="mt-2">{action}</div>}
     </div>
   );
@@ -59,7 +59,7 @@ export function ErrorState({ error, onRetry, compact }) {
       <div className="rounded-full bg-destructive/10 p-3 text-destructive">
         {error instanceof ApiError && error.code === 'NETWORK' ? <WifiOff className="size-6" /> : <AlertTriangle className="size-6" />}
       </div>
-      <p className="max-w-md text-[13px]">{message}</p>
+      <p className="max-w-md text-[14px]">{message}</p>
       {onRetry && (
         <Button variant="outline" size="sm" onClick={onRetry}>
           <RefreshCw /> Try again
@@ -77,7 +77,7 @@ export function PermissionDenied({ message }) {
         <ShieldAlert className="size-6" />
       </div>
       <h3 className="font-display text-base font-semibold">You do not have access to this</h3>
-      <p className="max-w-md text-[13px] text-muted-foreground">{message ?? 'Your role does not include this screen. Ask the HR administrator to change your role.'}</p>
+      <p className="max-w-md text-[14px] text-muted-foreground">{message ?? 'Your role does not include this screen. Ask the HR administrator to change your role.'}</p>
     </div>
   );
 }
@@ -87,7 +87,7 @@ export function LockedNotice({ title, children, action }) {
   return (
     <div className="flex items-start gap-3 rounded-md border border-warning/40 bg-warning/10 px-4 py-3">
       <Lock className="mt-0.5 size-4 shrink-0 text-warning-foreground dark:text-warning" />
-      <div className="flex-1 text-[13px]">
+      <div className="flex-1 text-[14px]">
         <p className="font-medium">{title}</p>
         <div className="mt-0.5 text-muted-foreground">{children}</div>
       </div>
@@ -104,7 +104,7 @@ export function Notice({ tone = 'info', children, icon }) {
     success: 'border-success/40 bg-success/10',
   };
   return (
-    <div className={cn('flex items-start gap-2 rounded-md border px-3 py-2 text-[13px]', tones[tone])} role={tone === 'destructive' ? 'alert' : undefined}>
+    <div className={cn('flex items-start gap-2 rounded-md border px-3 py-2 text-[14px]', tones[tone])} role={tone === 'destructive' ? 'alert' : undefined}>
       {icon ?? <AlertTriangle className="mt-0.5 size-4 shrink-0 opacity-70" />}
       <div className="flex-1">{children}</div>
     </div>
@@ -124,7 +124,7 @@ const TONE_CLASS = {
 
 export function Chip({ tone = 'default', children, className, title }) {
   return (
-    <span title={title} className={cn('inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium leading-4', TONE_CLASS[tone], className)}>
+    <span title={title} className={cn('inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-[12px] font-medium leading-4', TONE_CLASS[tone], className)}>
       {children}
     </span>
   );
@@ -142,7 +142,8 @@ export function DayChip({ status, overridden }) {
 const EMP_TONE = { OFFER: 'info', ACCEPTED: 'info', ONBOARDING: 'warning', ACTIVE: 'success', NOTICE: 'warning', EXITED: 'muted' };
 export function EmployeeStatusChip({ status }) {
   const label = status.charAt(0) + status.slice(1).toLowerCase();
-  return <Chip tone={EMP_TONE[status] ?? 'default'}>{label === 'Notice' ? 'On notice' : label}</Chip>;
+  // NOTICE is the stored status between recording an exit and the last day; there is no notice period.
+  return <Chip tone={EMP_TONE[status] ?? 'default'}>{label === 'Notice' ? 'Leaving' : label}</Chip>;
 }
 
 const PERIOD_TONE = { DRAFT: 'muted', RUN: 'info', LOCKED: 'warning', PAID: 'success' };
@@ -156,7 +157,7 @@ export function SeverityChip({ severity }) {
 
 export function OfflineBanner() {
   return (
-    <div className="no-print flex items-center justify-center gap-2 bg-destructive px-4 py-1.5 text-[13px] text-destructive-foreground" role="status">
+    <div className="no-print flex items-center justify-center gap-2 bg-destructive px-4 py-1.5 text-[14px] text-destructive-foreground" role="status">
       <WifiOff className="size-4" /> You are offline. Nothing is saved until the connection returns — changes are not queued in the admin app.
     </div>
   );

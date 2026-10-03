@@ -1,6 +1,6 @@
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { formatINR, formatMinutes, formatLongDate, formatYearMonth } from '@ajpwer/shared';
+import { EXIT_REASON_LABELS, formatINR, formatMinutes, formatLongDate, formatYearMonth } from '@ajpwer/shared';
 
 export function cn(...inputs) {
   return twMerge(clsx(inputs));
@@ -10,6 +10,19 @@ export const inr = (p, paise = false) => formatINR(p ?? null, { paise });
 export const mins = formatMinutes;
 export const longDate = (d) => (d ? formatLongDate(d) : '—');
 export const monthLabel = formatYearMonth;
+export const exitName = (reason) => EXIT_REASON_LABELS[reason] ?? reason;
+
+const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** A date range in as few words as it needs: "8 Oct 2026", "6–8 Oct 2026", "21 Sep – 2 Oct 2026". */
+export function dateSpan(from, to = from) {
+  const [fy, fm, fd] = from.split('-').map(Number);
+  const [ty, tm, td] = to.split('-').map(Number);
+  const end = `${td} ${SHORT_MONTHS[tm - 1]} ${ty}`;
+  if (from === to) return end;
+  if (fy === ty && fm === tm) return `${fd}–${end}`;
+  return fy === ty ? `${fd} ${SHORT_MONTHS[fm - 1]} – ${end}` : `${fd} ${SHORT_MONTHS[fm - 1]} ${fy} – ${end}`;
+}
 
 export function hhmm(minOfDay) {
   if (minOfDay === null || minOfDay === undefined) return '—';

@@ -59,8 +59,8 @@ export default function Sites() {
               <Link to={`/sites/${s.id}`} className="flex-1 p-4 hover:bg-accent/40">
                 <div className="flex items-start justify-between">
                   <div>
-                    <div className="font-display text-[15px] font-semibold">{s.name}</div>
-                    <div className="text-[12px] text-muted-foreground">
+                    <div className="font-display text-[16px] font-semibold">{s.name}</div>
+                    <div className="text-[13px] text-muted-foreground">
                       <Mono>{s.code}</Mono> · {s.state} · {s.radius_m} m
                     </div>
                   </div>
@@ -68,16 +68,16 @@ export default function Sites() {
                 </div>
                 <div className="mt-3 grid grid-cols-3 gap-2 text-center">
                   <div>
-                    <div className="font-display text-xl font-semibold num">{s.today.on_site_now}</div>
-                    <div className="text-[11px] text-muted-foreground">on site now</div>
+                    <div className="text-xl font-semibold num">{s.today.on_site_now}</div>
+                    <div className="text-[12px] text-muted-foreground">on site now</div>
                   </div>
                   <div>
-                    <div className="font-display text-xl font-semibold num">{s.today.punched_in}</div>
-                    <div className="text-[11px] text-muted-foreground">in today</div>
+                    <div className="text-xl font-semibold num">{s.today.punched_in}</div>
+                    <div className="text-[12px] text-muted-foreground">in today</div>
                   </div>
                   <div>
-                    <div className="font-display text-xl font-semibold num">{mins(s.today.worked_min)}</div>
-                    <div className="text-[11px] text-muted-foreground">hours here</div>
+                    <div className="text-xl font-semibold num">{mins(s.today.worked_min)}</div>
+                    <div className="text-[12px] text-muted-foreground">hours here</div>
                   </div>
                 </div>
                 <div className="mt-2 h-10" aria-label="People per day over 14 days">
@@ -87,9 +87,9 @@ export default function Sites() {
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
-                <div className="mt-1 text-[12px] text-muted-foreground">{s.project ? `Project ${s.project.name}` : 'No project'}</div>
+                <div className="mt-1 text-[13px] text-muted-foreground">{s.project ? `Project ${s.project.name}` : 'No project'}</div>
               </Link>
-              <div className="flex items-center justify-between border-t px-4 py-2 text-[12px]">
+              <div className="flex items-center justify-between border-t px-4 py-2 text-[13px]">
                 <Mono className="text-muted-foreground">{s.login}</Mono>
                 {manage && (
                   <Button size="sm" variant="ghost" onClick={() => setResetting(s)}>

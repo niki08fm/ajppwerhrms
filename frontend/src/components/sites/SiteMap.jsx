@@ -122,7 +122,7 @@ export function SiteMap({ lat, lng, radius, onChange, onRadius }) {
         </Button>
       </div>
       {results && (
-        <div className="max-h-40 overflow-y-auto rounded-md border text-[13px]">
+        <div className="max-h-40 overflow-y-auto rounded-md border text-[14px]">
           {results.length === 0 ? (
             <p className="px-3 py-2 text-muted-foreground">No places found. Try a shorter name, or paste coordinates.</p>
           ) : (
@@ -168,7 +168,7 @@ export function SiteMap({ lat, lng, radius, onChange, onRadius }) {
           )}
         </MapContainer>
       </div>
-      <p className="text-[12px] text-muted-foreground num" aria-live="polite">
+      <p className="text-[13px] text-muted-foreground num" aria-live="polite">
         {centre ? `Latitude ${centre.lat.toFixed(6)}, longitude ${centre.lng.toFixed(6)}` : 'No location yet — click the map, search, paste or use your location.'}
       </p>
 

@@ -52,7 +52,7 @@ export function ListToolbar({ q, onQ, placeholder, searching, filters, values, o
           >
             <div className="flex flex-col gap-3">
               {filters.map((f) => (
-                <label key={f.key} className="flex flex-col gap-1 text-[12px] font-medium">
+                <label key={f.key} className="flex flex-col gap-1 text-[13px] font-medium">
                   {f.label}
                   {f.type === 'date' ? (
                     <Input type="date" value={values[f.key] ?? ''} onChange={(e) => onFilter(f.key, e.target.value || null)} />
@@ -81,7 +81,7 @@ export function ListToolbar({ q, onQ, placeholder, searching, filters, values, o
         )}
       </div>
       {(active.length > 0 || q) && (
-        <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
+        <div className="flex flex-wrap items-center gap-1.5 text-[13px]">
           {q && searching && (
             <span className="text-muted-foreground">
               Searching {searching} for “{q}”.

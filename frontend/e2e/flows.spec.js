@@ -65,7 +65,7 @@ test('a month runs end to end: five steps, run, reports, lock, paid', async ({ p
   await resetMonth(page, ym);
 });
 
-test('a day is corrected from the register, with a reason, and reverted', async ({ page }) => {
+test('a day is marked from the register, with a reason, and reverted', async ({ page }) => {
   await signIn(page);
   const date = await page.evaluate(async () => {
     const t = (await (await fetch('/api/v1/lookups')).json()).data.today;
@@ -77,17 +77,16 @@ test('a day is corrected from the register, with a reason, and reverted', async 
   await page.goto(`/attendance?date=${date}`);
   await page.getByRole('button', { name: 'Correct' }).first().click();
   const drawer = page.getByRole('dialog');
-  await expect(drawer.getByText('1. What the punches say')).toBeVisible();
-  await drawer.getByLabel('Status').selectOption('HALF_DAY');
-  await drawer.getByLabel('Day value').selectOption('0.5');
-  await drawer.getByLabel('Category').selectOption('SITE_INSTRUCTION');
-  await drawer.getByLabel('Explanation').fill('Sent home at noon by the site engineer (e2e)');
+  await expect(drawer.getByText('What the punches say')).toBeVisible();
+  await drawer.getByRole('radio', { name: 'Mark the day' }).click();
+  await drawer.getByRole('radio', { name: 'Half day' }).click();
+  await drawer.getByLabel('Reason').fill('Sent home at noon by the site engineer (e2e)');
   await drawer.getByRole('button', { name: 'Save correction' }).click();
-  await expect(page.getByText(/Correction saved/)).toBeVisible();
+  await expect(page.getByText(/Day corrected/)).toBeVisible();
 
   await page.getByRole('button', { name: 'Correct' }).first().click();
   await page.getByRole('dialog').getByRole('button', { name: 'Revert' }).click();
-  await expect(page.getByText('Reverted to what the punches say')).toBeVisible();
+  await expect(page.getByText('Back to what the punches say')).toBeVisible();
 });
 
 test('people: search, filter chips in the URL, open a full-screen profile', async ({ page }) => {
@@ -98,6 +97,8 @@ test('people: search, filter chips in the URL, open a full-screen profile', asyn
   await expect(page).toHaveURL(/q=AJ00/);
   await page.locator('table tbody tr').first().click();
   await expect(page).toHaveURL(/\/people\/[0-9a-f-]{36}/);
-  await page.getByRole('tab', { name: 'Income tax' }).click();
+  // Income tax is a section of the Pay tab, reached from its section bar.
+  await page.getByRole('tab', { name: 'Pay', exact: true }).click();
+  await page.getByRole('button', { name: 'Income tax', exact: true }).click();
   await expect(page.getByText(/regime is cheaper|same tax/)).toBeVisible();
 });

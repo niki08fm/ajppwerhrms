@@ -14,14 +14,14 @@ export function Dialog({ open, onOpenChange, title, description, children, foote
   return (
     <D.Root open={open} onOpenChange={onOpenChange}>
       <D.Portal>
-        <D.Overlay className="fixed inset-0 z-50 bg-black/40 data-[state=open]:animate-in" />
+        <D.Overlay className="fixed inset-0 z-50 bg-[oklch(0.2_0.03_240/0.45)] data-[state=open]:animate-in" />
         <D.Content
           className={cn('fixed left-1/2 top-[8vh] z-50 flex max-h-[84vh] w-[calc(100vw-2rem)] -translate-x-1/2 flex-col rounded-lg border bg-card shadow-xl', wide ? 'max-w-4xl' : 'max-w-lg')}
         >
           <div className="flex items-start justify-between gap-4 border-b px-5 py-4">
             <div>
-              <D.Title className="font-display text-lg font-semibold">{title}</D.Title>
-              {description && <D.Description className="mt-1 text-[13px] text-muted-foreground">{description}</D.Description>}
+              <D.Title className="font-display text-xl font-semibold">{title}</D.Title>
+              {description && <D.Description className="mt-1 text-sm leading-relaxed text-muted-foreground">{description}</D.Description>}
             </div>
             <D.Close className="rounded p-1 text-muted-foreground hover:bg-accent" aria-label="Close">
               <X className="size-4" />
@@ -44,8 +44,8 @@ export function Drawer({ open, onOpenChange, title, description, children, foote
         <D.Content className="fixed inset-y-0 right-0 z-50 flex w-full max-w-xl flex-col border-l bg-card shadow-2xl">
           <div className="flex items-start justify-between gap-4 border-b px-5 py-4">
             <div>
-              <D.Title className="font-display text-lg font-semibold">{title}</D.Title>
-              {description && <D.Description className="mt-1 text-[13px] text-muted-foreground">{description}</D.Description>}
+              <D.Title className="font-display text-xl font-semibold">{title}</D.Title>
+              {description && <D.Description className="mt-1 text-sm leading-relaxed text-muted-foreground">{description}</D.Description>}
             </div>
             <D.Close className="rounded p-1 text-muted-foreground hover:bg-accent" aria-label="Close">
               <X className="size-4" />
@@ -71,7 +71,7 @@ export function TabsList({ tabs, className }) {
         <Tabs.Trigger
           key={t.value}
           value={t.value}
-          className="relative -mb-px flex items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-3 py-2 text-[13px] font-medium text-muted-foreground hover:text-foreground data-[state=active]:border-primary data-[state=active]:text-foreground"
+          className="relative -mb-px flex items-center gap-1.5 border-b-2 border-transparent px-4 py-2.5 text-sm font-medium whitespace-nowrap text-muted-foreground transition-colors hover:text-foreground data-[state=active]:border-primary data-[state=active]:text-foreground"
         >
           {t.label}
           {t.badge}
@@ -89,7 +89,7 @@ export function Tooltip({ content, children }) {
       <Tip.Root>
         <Tip.Trigger asChild>{children}</Tip.Trigger>
         <Tip.Portal>
-          <Tip.Content sideOffset={4} className="z-50 max-w-xs rounded-md bg-foreground px-2 py-1 text-[12px] text-background shadow">
+          <Tip.Content sideOffset={4} className="z-50 max-w-xs rounded-md bg-foreground px-2 py-1 text-[13px] text-background shadow">
             {content}
           </Tip.Content>
         </Tip.Portal>
@@ -159,7 +159,7 @@ export function Menu({ trigger, items, align = 'end' }) {
                 disabled={it.disabled}
                 onSelect={it.onSelect}
                 className={cn(
-                  'flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-[13px] outline-none data-[highlighted]:bg-accent data-[disabled]:opacity-50',
+                  'flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-[14px] outline-none data-[highlighted]:bg-accent data-[disabled]:opacity-50',
                   it.destructive && 'text-destructive',
                 )}
               >

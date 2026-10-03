@@ -83,7 +83,7 @@ export default function Documents() {
           <DataTable columns={cols} rows={d.issues} rowId={(r) => `${r.employee.id}${r.doc_type}${r.kind}`} maxHeight="60vh" />
         )}
         {q.data && (
-          <p className="border-t px-3 py-2 text-[12px] text-muted-foreground num">
+          <p className="border-t px-3 py-2 text-[13px] text-muted-foreground num">
             Showing {d.issues.length} of {q.data.meta.total}
           </p>
         )}

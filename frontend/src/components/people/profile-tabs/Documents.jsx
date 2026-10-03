@@ -46,7 +46,7 @@ export function DocumentsTab({ e }) {
       ) : !q.data.length ? (
         <EmptyState title="No documents collected" body="Add PAN, Aadhaar, bank proof and certificates as they are collected." action={<Button onClick={() => setAdding(true)}>Add document</Button>} />
       ) : (
-        <table className="data-table w-full">
+        <div className="overflow-x-auto"><table className="data-table w-full">
           <thead>
             <tr>
               <th>Document</th>
@@ -85,7 +85,7 @@ export function DocumentsTab({ e }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
       {adding && <AddDocDialog e={e} onClose={() => setAdding(false)} />}
     </Card>

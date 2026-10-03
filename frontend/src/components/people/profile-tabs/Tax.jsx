@@ -37,7 +37,7 @@ function WorkingCard({ w, current, onPick, disabled }) {
       />
 
       <CardBody>
-        <table className="w-full text-[13px]">
+        <table className="w-full text-[14px]">
           <tbody>
             {row('Gross taxable salary', w.gross)}
             {row('Standard deduction', w.std_deduction, true)}
@@ -47,7 +47,7 @@ function WorkingCard({ w, current, onPick, disabled }) {
             {row('Taxable income', w.taxable, false, true)}
           </tbody>
         </table>
-        <table className="mt-3 w-full text-[12px]">
+        <table className="mt-3 w-full text-[13px]">
           <thead className="text-left text-muted-foreground">
             <tr>
               <th className="py-1">Band</th>
@@ -73,7 +73,7 @@ function WorkingCard({ w, current, onPick, disabled }) {
             ))}
           </tbody>
         </table>
-        <table className="mt-3 w-full text-[13px]">
+        <table className="mt-3 w-full text-[14px]">
           <tbody>
             {row('Slab tax', w.slab_tax)}
             {row('Rebate under 87A', w.rebate, true)}
@@ -144,7 +144,7 @@ export function TaxTab({ e }) {
               Save declarations
             </Button>
           </div>
-          <p className="mt-2 text-[12px] text-muted-foreground">
+          <p className="mt-2 text-[13px] text-muted-foreground">
             TDS is a projection: it assumes salary continues unchanged and spreads the year's tax evenly. Surcharge above ₹50 lakh and quarterly true-up are not built.
           </p>
         </CardBody>

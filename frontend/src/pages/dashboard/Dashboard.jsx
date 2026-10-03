@@ -1,13 +1,16 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { DAY_STATUS_LABELS } from '@ajpwer/shared';
+import { addDays, DAY_STATUS_LABELS } from '@ajpwer/shared';
 import { api } from '@/services/api';
-import { mins, monthLabel } from '@/utils';
-import { PageHeader, PersonLink, Stat } from '@/components/bits';
+import { useLookups } from '@/hooks/useLookups';
+import { hhmm, mins, monthLabel } from '@/utils';
+import { Money, PageHeader, PersonLink, Stat } from '@/components/bits';
 import { axis, CHART, grid, QueryCard, rupeesShort, tooltipStyle } from '@/components/charts';
 import { SiteNetwork } from '@/components/network';
 import { Chip, ErrorState, SkeletonBlock } from '@/components/states';
+import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 
 function TodayTiles() {
@@ -28,10 +31,104 @@ function TodayTiles() {
       <Stat label="Headcount" value={t.headcount} sub={`${t.off} on an off day`} to="/people?status=ACTIVE" />
       <Stat label="Present" value={t.present} sub={`${t.on_site_now} on site now`} tone="success" to={d} />
       <Stat label="Absent" value={t.absent} tone={t.absent ? 'destructive' : undefined} sub={t.missing_punch ? `${t.missing_punch} missing a punch` : undefined} to={`${d}&status=ABSENT`} />
-      <Stat label="Late" value={t.late} tone={t.late ? 'warning' : undefined} to={`${d}&late=yes`} />
+      <Stat label="Late" value={t.late} tone={t.late ? 'warning' : undefined} sub={t.early ? `${t.early} left early` : undefined} to={`${d}&late=yes`} />
       <Stat label="On leave" value={t.on_leave} to={`${d}&status=ON_LEAVE`} />
       <Stat label="Overtime today" value={mins(t.ot_min)} to="/overtime" />
     </div>
+  );
+}
+
+const SHOWN = 8;
+
+function PunctualityList({ title, rows, empty, to }) {
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between">
+        <span className="text-[14px] font-semibold">
+          {title} <span className="num text-muted-foreground">{rows.length}</span>
+        </span>
+        {rows.length > 0 && (
+          <Link to={to} className="text-[13px] text-primary hover:underline">
+            {rows.length > SHOWN ? `All ${rows.length} in the register` : 'Open in the register'}
+          </Link>
+        )}
+      </div>
+      {rows.length ? (
+        <ul className="divide-y text-[14px]">
+          {rows.slice(0, SHOWN).map((r) => (
+            <li key={r.employee.id} className="flex items-center justify-between gap-2 py-1.5">
+              <span className="flex min-w-0 flex-col">
+                <PersonLink id={r.employee.id} name={r.employee.name} code={r.employee.code} tab="attendance" />
+                <span className="text-[13px] text-muted-foreground">{r.sub}</span>
+              </span>
+              <span className="flex shrink-0 items-center gap-2">
+                <span className="num text-muted-foreground">{r.time}</span>
+                <Chip tone="warning">{r.chip}</Chip>
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="py-6 text-center text-[14px] text-muted-foreground">{empty}</p>
+      )}
+    </div>
+  );
+}
+
+/** Late logins and early punch-outs: for HR to follow up. Nothing here is deducted from pay. */
+function Punctuality() {
+  const { data: lk } = useLookups();
+  const [yesterday, setYesterday] = useState(false);
+  const date = lk?.today ? (yesterday ? addDays(lk.today, -1) : lk.today) : null;
+  const q = useQuery({
+    queryKey: ['dashboard', 'punctuality', date],
+    queryFn: () => api.get('/dashboard/punctuality', { date }).then((r) => r.data),
+    enabled: !!date,
+    refetchInterval: yesterday ? false : 60_000,
+  });
+  return (
+    <QueryCard
+      title="Late logins and early punch-outs"
+      description="Late is in after the grace period. Early is out before the day was done: the shift end, or a full day after a late arrival. For follow-up; nothing is deducted."
+      query={q}
+      actions={
+        <span className="flex gap-1">
+          <Button size="sm" variant={yesterday ? 'ghost' : 'secondary'} aria-pressed={!yesterday} onClick={() => setYesterday(false)}>
+            Today
+          </Button>
+          <Button size="sm" variant={yesterday ? 'secondary' : 'ghost'} aria-pressed={yesterday} onClick={() => setYesterday(true)}>
+            Yesterday
+          </Button>
+        </span>
+      }
+    >
+      {(d) => (
+        <div className="grid gap-4 md:grid-cols-2">
+          <PunctualityList
+            title="Late in"
+            to={`/attendance?date=${d.date}&late=yes&sort=-late`}
+            empty="Nobody came in late."
+            rows={d.late.map((r) => ({
+              employee: r.employee,
+              time: `In ${hhmm(r.in_min)}`,
+              chip: `${mins(r.late_min)} late`,
+              sub: `${r.open_now ? 'On site; their' : 'Their'} day ends ${hhmm(r.due_out_min)}`,
+            }))}
+          />
+          <PunctualityList
+            title="Left early"
+            to={`/attendance?date=${d.date}&early=yes&sort=-early`}
+            empty={yesterday ? 'Nobody left early.' : 'Nobody has left early so far today.'}
+            rows={d.early.map((r) => ({
+              employee: r.employee,
+              time: `Out ${hhmm(r.out_min)}`,
+              chip: `${mins(r.early_min)} early`,
+              sub: `Day ended ${hhmm(r.due_out_min)} · worked ${mins(r.worked_min)} · ${DAY_STATUS_LABELS[r.status].toLowerCase()}`,
+            }))}
+          />
+        </div>
+      )}
+    </QueryCard>
   );
 }
 
@@ -50,8 +147,8 @@ export default function Dashboard() {
     <div className="flex flex-col gap-4">
       <PageHeader title="Today" description="The morning glance: who is in, where, and what needs attention." />
       <TodayTiles />
-      {people.data && (people.data.held_back.length > 0 || people.data.approvals.face + people.data.approvals.leave > 0) && (
-        <div className="flex flex-wrap gap-2 text-[13px]">
+      {people.data && (people.data.held_back.length > 0 || people.data.held_salaries?.people.length > 0 || people.data.held_salaries?.unpaid_months > 0 || people.data.approvals.face + people.data.approvals.leave > 0) && (
+        <div className="flex flex-wrap gap-2 text-[14px]">
           {people.data.approvals.face > 0 && (
             <Link to="/approvals" className="rounded-md border border-warning/40 bg-warning/10 px-3 py-1.5 hover:bg-warning/20">
               {people.data.approvals.face} face exception{people.data.approvals.face > 1 ? 's' : ''} waiting
@@ -62,9 +159,22 @@ export default function Dashboard() {
               {people.data.approvals.leave} leave request{people.data.approvals.leave > 1 ? 's' : ''} pending
             </Link>
           )}
+          {(people.data.held_salaries?.people.length > 0 || people.data.held_salaries?.unpaid_months > 0) && (
+            <Link to="/held-salaries" className="rounded-md border border-warning/40 bg-warning/10 px-3 py-1.5 hover:bg-warning/20">
+              {people.data.held_salaries.people.length > 0
+                ? `${people.data.held_salaries.people.length} salar${people.data.held_salaries.people.length > 1 ? 'ies' : 'y'} on hold`
+                : 'Held salary waiting'}
+              {people.data.held_salaries.unpaid > 0 && (
+                <>
+                  {' '}
+                  · <Money value={people.data.held_salaries.unpaid} /> not yet released
+                </>
+              )}
+            </Link>
+          )}
           {people.data.held_back.length > 0 && (
             <span className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-1.5">
-              {people.data.held_back.length} held back from payroll and not yet paid:{' '}
+              {people.data.held_back.length} left out of payroll and not yet paid:{' '}
               {people.data.held_back.slice(0, 3).map((h, i) => (
                 <span key={h.id}>
                   {i > 0 && ', '}
@@ -75,6 +185,7 @@ export default function Dashboard() {
           )}
         </div>
       )}
+      <Punctuality />
       <div className="grid gap-4 xl:grid-cols-5">
         <QueryCard
           className="xl:col-span-3"
@@ -88,11 +199,11 @@ export default function Dashboard() {
           {(rows) => {
             const sites = [...new Map(rows.map((r) => [r.site_id, r.site])).entries()];
             const depts = [...new Set(rows.map((r) => r.department))];
-            if (!rows.length) return <p className="py-10 text-center text-[13px] text-muted-foreground">No punches yet today.</p>;
+            if (!rows.length) return <p className="py-10 text-center text-[14px] text-muted-foreground">No punches yet today.</p>;
             const max = Math.max(...rows.map((r) => r.people));
             return (
               <div className="overflow-x-auto">
-                <table className="w-full text-[12px]">
+                <table className="w-full text-[13px]">
                   <thead>
                     <tr>
                       <th className="px-2 py-1 text-left font-medium text-muted-foreground">Department</th>
@@ -174,7 +285,7 @@ export default function Dashboard() {
                 </BarChart>
               </ResponsiveContainer>
             ) : (
-              <p className="py-10 text-center text-[13px] text-muted-foreground">No payroll has been run yet.</p>
+              <p className="py-10 text-center text-[14px] text-muted-foreground">No payroll has been run yet.</p>
             )
           }
         </QueryCard>
@@ -184,7 +295,7 @@ export default function Dashboard() {
           title="Hiring pipeline"
           query={people}
           actions={
-            <Link to="/offers" className="text-[12px] text-primary hover:underline">
+            <Link to="/offers" className="text-[13px] text-primary hover:underline">
               Open
             </Link>
           }
@@ -193,8 +304,8 @@ export default function Dashboard() {
             <div className="grid grid-cols-3 gap-3">
               {['OFFER', 'ACCEPTED', 'ONBOARDING'].map((s) => (
                 <Card key={s} className="px-3 py-2">
-                  <div className="text-[12px] text-muted-foreground">{s === 'OFFER' ? 'Offered' : s === 'ACCEPTED' ? 'Accepted' : 'Onboarding'}</div>
-                  <div className="font-display text-2xl font-semibold num">{d.pipeline[s] ?? 0}</div>
+                  <div className="text-[13px] text-muted-foreground">{s === 'OFFER' ? 'Offered' : s === 'ACCEPTED' ? 'Accepted' : 'Onboarding'}</div>
+                  <div className="text-2xl font-semibold num">{d.pipeline[s] ?? 0}</div>
                 </Card>
               ))}
             </div>
@@ -202,17 +313,17 @@ export default function Dashboard() {
         </QueryCard>
         <QueryCard
           title="Leavers"
-          description="On notice, by last day."
+          description="Leaving, by last day."
           query={people}
           actions={
-            <Link to="/exits" className="text-[12px] text-primary hover:underline">
+            <Link to="/exits" className="text-[13px] text-primary hover:underline">
               Open
             </Link>
           }
         >
           {(d) =>
             d.leavers.length ? (
-              <ul className="divide-y text-[13px]">
+              <ul className="divide-y text-[14px]">
                 {d.leavers.map((l) => (
                   <li key={l.id} className="flex items-center justify-between py-1.5">
                     <PersonLink id={l.id} name={l.name} code={l.code} tab="exit" />
@@ -221,7 +332,7 @@ export default function Dashboard() {
                 ))}
               </ul>
             ) : (
-              <p className="py-6 text-center text-[13px] text-muted-foreground">Nobody is on notice.</p>
+              <p className="py-6 text-center text-[14px] text-muted-foreground">Nobody is leaving.</p>
             )
           }
         </QueryCard>

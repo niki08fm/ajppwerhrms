@@ -60,11 +60,11 @@ export function OnboardingTab({ e }) {
             <li key={it.code} className="flex items-center gap-3 px-4 py-2.5">
               <Checkbox label={it.label} checked={!!it.done_at} disabled={e.read_only || tick.isPending} onCheckedChange={(v) => tick.mutate({ code: it.code, done: v })} />
               <div className="flex-1">
-                <div className="flex items-center gap-2 text-[13px]">
+                <div className="flex items-center gap-2 text-[14px]">
                   {it.label} {it.required ? <Chip tone="info">Required</Chip> : <Chip>Optional</Chip>}
                 </div>
                 {it.done_at && (
-                  <div className="text-[12px] text-muted-foreground">
+                  <div className="text-[13px] text-muted-foreground">
                     Done {istTime(it.done_at, true)} by {it.done_by}
                   </div>
                 )}
@@ -81,7 +81,7 @@ export function OnboardingTab({ e }) {
       </Card>
       <Card className="h-fit">
         <CardHeader title="Activate" />
-        <div className="flex flex-col gap-3 p-4 text-[13px]">
+        <div className="flex flex-col gap-3 p-4 text-[14px]">
           {e.status === 'ONBOARDING' ? (
             <>
               <p className="text-muted-foreground">Nobody is paid before activation. Activating adds {e.name.split(' ')[0]} to attendance from the joining date and to the next payroll run.</p>
@@ -180,7 +180,7 @@ function FaceEnrolDialog({ e, onClose, onDone }) {
         </>
       }
     >
-      <div className="flex flex-col gap-3 text-[13px]">
+      <div className="flex flex-col gap-3 text-[14px]">
         <Notice tone="info">
           <p className="font-medium">How this data is kept</p>
           <p>

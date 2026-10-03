@@ -22,7 +22,7 @@ export function PayslipsTab({ e }) {
       ) : !q.data.length ? (
         <EmptyState title="No payslips yet" body="A payslip appears here once a payroll run that includes this person has been run." />
       ) : (
-        <table className="data-table w-full">
+        <div className="overflow-x-auto"><table className="data-table w-full">
           <thead>
             <tr>
               <th>Month</th>
@@ -65,7 +65,7 @@ export function PayslipsTab({ e }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
     </Card>
   );

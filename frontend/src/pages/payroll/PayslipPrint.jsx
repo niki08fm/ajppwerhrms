@@ -75,6 +75,8 @@ export default function PayslipPrint() {
             <span className="text-muted-foreground">Worked</span> {mins(m.attendance?.worked_min ?? 0)}
           </div>
         </div>
+        {m.held && <p className="rounded border px-2 py-1 text-[12px]">Salary on hold: calculated for this month and paid when it is released.</p>}
+        {m.final_month_ym && <p className="text-[12px] text-muted-foreground">Final month's salary, paid with the full and final settlement.</p>}
         <PayslipBody lines={s.lines} totals={s} basis={{ paid_days: s.paid_days, lop_days: s.lop_days, divisor: s.divisor, rule: m.lop_rule_text }} />
         {m.ot && m.ot.excess_min > 0 && <p className="text-[12px]">{mins(m.ot.excess_min)} of overtime above the monthly cap is unpaid.</p>}
         <footer className="border-t pt-2 text-[11px] text-muted-foreground">

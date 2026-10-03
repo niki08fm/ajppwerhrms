@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Wrench } from 'lucide-react';
 import { toast } from 'sonner';
-import { addDays, DAY_STATUSES, DAY_STATUS_LABELS, OVERRIDE_REASONS, OVERRIDE_REASON_LABELS } from '@ajpwer/shared';
+import { addDays, DAY_STATUSES, DAY_STATUS_LABELS } from '@ajpwer/shared';
 import { api, errorMessage, qs } from '@/services/api';
 import { useKeysetList, useListParams } from '@/hooks';
 import { opts, useLookups } from '@/hooks/useLookups';
@@ -14,7 +14,7 @@ import { ListToolbar } from '@/components/list-toolbar';
 import { Chip, DayChip, EmptyState, ErrorState, LockedNotice, NoMatches, SkeletonRows } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Field, Input, Select, Textarea } from '@/components/ui/form';
+import { Field, Input, Segmented, Select } from '@/components/ui/form';
 import { Dialog } from '@/components/ui/overlay';
 import { CorrectionDrawer } from '../../components/attendance/CorrectionDrawer';
 
@@ -44,6 +44,7 @@ export default function Register() {
     { key: 'status', label: 'Status', options: DAY_STATUSES.map((s) => ({ value: s, label: DAY_STATUS_LABELS[s] })) },
     { key: 'corrected', label: 'Has correction', options: [{ value: 'yes', label: 'Corrected' }] },
     { key: 'late', label: 'Late only', options: [{ value: 'yes', label: 'Late' }] },
+    { key: 'early', label: 'Left early only', options: [{ value: 'yes', label: 'Left early' }] },
     { key: 'ot', label: 'Overtime only', options: [{ value: 'yes', label: 'Overtime' }] },
   ];
   const cols = [
@@ -52,7 +53,14 @@ export default function Register() {
     { id: 'in', header: 'In', sortKey: 'in', align: 'right', cell: (r) => hhmm(r.in_min) },
     { id: 'out', header: 'Out', align: 'right', cell: (r) => (r.open_now ? <Chip tone="info">On site</Chip> : hhmm(r.out_min)) },
     { id: 'worked', header: 'Hours', sortKey: 'worked', align: 'right', cell: (r) => (r.day.worked_min ? mins(r.day.worked_min) : '—') },
-    { id: 'late', header: 'Late', sortKey: 'late', align: 'right', cell: (r) => (r.day.late_min ? <span className="text-warning-foreground dark:text-warning">{r.day.late_min}m</span> : '—') },
+    { id: 'late', header: 'Late', sortKey: 'late', align: 'right', cell: (r) => (r.day.late_min ? <span className="text-warning-foreground dark:text-warning">{mins(r.day.late_min)}</span> : '—') },
+    {
+      id: 'early',
+      header: 'Left early',
+      sortKey: 'early',
+      align: 'right',
+      cell: (r) => (r.day.early_min ? <span className="text-warning-foreground dark:text-warning" title={`Day ended ${hhmm(r.day.due_out_min)}`}>{mins(r.day.early_min)}</span> : '—'),
+    },
     { id: 'ot', header: 'OT', sortKey: 'ot', align: 'right', cell: (r) => (r.day.ot_min ? mins(r.day.ot_min) : '—') },
     { id: 'sites', header: 'Sites', cell: (r) => (r.day.sites.length ? r.day.sites.map(siteName).join(' + ') : '—') },
     {
@@ -110,7 +118,7 @@ export default function Register() {
           .map(([s, n]) => (
             <button key={s} onClick={() => lp.set({ status: lp.filters.status === s ? null : s })} className={`rounded-full ${lp.filters.status === s ? 'ring-2 ring-ring' : ''}`}>
               <DayChip status={s} /> <span className="sr-only">{n}</span>
-              <span className="ml-0.5 text-[12px] num">{n}</span>
+              <span className="ml-0.5 text-[13px] num">{n}</span>
             </button>
           ))}
       </div>
@@ -184,20 +192,18 @@ export default function Register() {
 
 function BulkCorrect({ ids, date, onClose, onDone }) {
   const qc = useQueryClient();
-  const [f, setF] = useState({ status: 'PRESENT', day_value: '1', worked_min: '480', reason_code: '', reason_text: '' });
+  const [f, setF] = useState({ status: 'PRESENT', ot: '0', reason_text: '' });
   const save = useMutation({
     mutationFn: () =>
       api.post('/attendance/overrides/bulk', {
         items: ids.map((employee_id) => ({ employee_id, work_date: date })),
         status: f.status,
-        day_value: Number(f.day_value),
-        worked_min: Number(f.worked_min),
-        reason_code: f.reason_code,
+        ot_min: f.status === 'PRESENT' ? Math.round(Number(f.ot || 0) * 60) : 0,
         reason_text: f.reason_text,
       }),
     onSuccess: (r) => {
       const failed = r.data.results.filter((x) => !x.ok);
-      toast.success(`Corrected ${r.data.applied} of ${ids.length}.${failed.length ? ` ${failed.length} skipped: ${failed[0].message}` : ''}`);
+      toast.success(`Marked ${r.data.applied} of ${ids.length}.${failed.length ? ` ${failed.length} skipped: ${failed[0].message}` : ''}`);
       qc.invalidateQueries({ queryKey: ['register'] });
       onDone();
       onClose();
@@ -208,55 +214,39 @@ function BulkCorrect({ ids, date, onClose, onDone }) {
     <Dialog
       open
       onOpenChange={(o) => !o && onClose()}
-      title={`Correct ${ids.length} days on ${longDate(date)}`}
-      description="The same correction and one reason, applied to each. One audit entry per person."
+      title={`Mark ${ids.length} ${ids.length === 1 ? 'person' : 'people'} for ${longDate(date)}`}
+      description="The same mark and one reason for each. To give someone their own in and out times, open their day instead."
       footer={
         <>
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button loading={save.isPending} disabled={!f.reason_code || f.reason_text.trim().length < 8} onClick={() => save.mutate()}>
-            Apply to {ids.length}
+          <Button loading={save.isPending} disabled={f.reason_text.trim().length < 3} onClick={() => save.mutate()}>
+            Mark {ids.length}
           </Button>
         </>
       }
     >
-      <div className="grid gap-3 sm:grid-cols-3">
-        <Field label="Status">
-          {(id) => (
-            <Select id={id} value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })}>
-              {DAY_STATUSES.filter((s) => s !== 'NOT_JOINED' && s !== 'EXITED').map((s) => (
-                <option key={s} value={s}>
-                  {DAY_STATUS_LABELS[s]}
-                </option>
-              ))}
-            </Select>
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-wrap items-end gap-3">
+          <Segmented
+            label="Mark"
+            value={f.status}
+            onChange={(status) => setF({ ...f, status })}
+            options={[
+              { value: 'PRESENT', label: 'Full day' },
+              { value: 'HALF_DAY', label: 'Half day' },
+              { value: 'ABSENT', label: 'Absent' },
+            ]}
+          />
+          {f.status === 'PRESENT' && (
+            <Field label="Overtime (hours)" className="w-36">
+              {(id) => <Input id={id} type="number" min={0} step={0.5} value={f.ot} onChange={(e) => setF({ ...f, ot: e.target.value })} />}
+            </Field>
           )}
-        </Field>
-        <Field label="Day value">
-          {(id) => (
-            <Select id={id} value={f.day_value} onChange={(e) => setF({ ...f, day_value: e.target.value })}>
-              {['0', '0.5', '1'].map((v) => (
-                <option key={v}>{v}</option>
-              ))}
-            </Select>
-          )}
-        </Field>
-        <Field label="Worked (min)">{(id) => <Input id={id} type="number" value={f.worked_min} onChange={(e) => setF({ ...f, worked_min: e.target.value })} />}</Field>
-        <Field label="Category" className="sm:col-span-3">
-          {(id) => (
-            <Select id={id} value={f.reason_code} onChange={(e) => setF({ ...f, reason_code: e.target.value })}>
-              <option value="">Choose…</option>
-              {OVERRIDE_REASONS.map((r) => (
-                <option key={r} value={r}>
-                  {OVERRIDE_REASON_LABELS[r]}
-                </option>
-              ))}
-            </Select>
-          )}
-        </Field>
-        <Field label="Explanation" className="sm:col-span-3" hint="At least eight characters">
-          {(id) => <Textarea id={id} value={f.reason_text} onChange={(e) => setF({ ...f, reason_text: e.target.value })} />}
+        </div>
+        <Field label="Reason" required>
+          {(id) => <Input id={id} value={f.reason_text} placeholder="e.g. Tablet at the site was down all day" onChange={(e) => setF({ ...f, reason_text: e.target.value })} />}
         </Field>
       </div>
     </Dialog>

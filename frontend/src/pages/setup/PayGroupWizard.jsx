@@ -96,11 +96,11 @@ export default function PayGroupWizard() {
               onClick={() => i <= step && setStep(i)}
               disabled={i > step}
               className={cn(
-                'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px]',
+                'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px]',
                 i === step ? 'bg-primary text-primary-foreground' : i < step ? 'hover:bg-accent' : 'opacity-50',
               )}
             >
-              <span className="flex size-5 shrink-0 items-center justify-center rounded-full border text-[11px]">{i < step ? <Check className="size-3" /> : i + 1}</span>
+              <span className="flex size-5 shrink-0 items-center justify-center rounded-full border text-[12px]">{i < step ? <Check className="size-3" /> : i + 1}</span>
               <span className="truncate">{s}</span>
             </button>
           </li>
@@ -127,7 +127,7 @@ export default function PayGroupWizard() {
           )}
           {step === 1 && (
             <div className="flex flex-col gap-3">
-              <p className="text-[13px] text-muted-foreground">
+              <p className="text-[14px] text-muted-foreground">
                 The single most consequential setting: it decides what an absence costs.{cal.data && ` Figures for ${monthLabelSafe(cal.data.meta.month)} on ₹26,000 a month.`}
               </p>
               <div className="grid gap-3 md:grid-cols-2">
@@ -144,9 +144,9 @@ export default function PayGroupWizard() {
                         <span className="font-display text-lg font-semibold">{CALENDAR_METHOD_INFO[m].label}</span>
                         {f.calendar_method === m && <Chip tone="info">Selected</Chip>}
                       </div>
-                      <p className="mt-1 text-[13px] text-muted-foreground">{CALENDAR_METHOD_INFO[m].explain}</p>
+                      <p className="mt-1 text-[14px] text-muted-foreground">{CALENDAR_METHOD_INFO[m].explain}</p>
                       {row && (
-                        <p className="mt-2 text-[13px]">
+                        <p className="mt-2 text-[14px]">
                           One day's pay is <strong>{formatINR(row.day_rate)}</strong> (÷{row.divisor}); a day's absence costs the same.
                         </p>
                       )}
@@ -159,20 +159,20 @@ export default function PayGroupWizard() {
           {step === 2 && (
             <div className="flex max-w-xl flex-col gap-4">
               <div>
-                <div className="mb-1 text-[12px] font-medium">Weekly off</div>
+                <div className="mb-1 text-[13px] font-medium">Weekly off</div>
                 <div className="flex flex-wrap gap-1.5">
                   {DAY_NAMES.map((d) => (
                     <button
                       key={d}
                       onClick={() => setF({ ...f, weekly_off: f.weekly_off.includes(d) ? f.weekly_off.filter((x) => x !== d) : [...f.weekly_off, d] })}
-                      className={cn('rounded-md border px-3 py-1.5 text-[13px]', f.weekly_off.includes(d) ? 'border-primary bg-primary text-primary-foreground' : 'hover:bg-accent')}
+                      className={cn('rounded-md border px-3 py-1.5 text-[14px]', f.weekly_off.includes(d) ? 'border-primary bg-primary text-primary-foreground' : 'hover:bg-accent')}
                       aria-pressed={f.weekly_off.includes(d)}
                     >
                       {d.charAt(0) + d.slice(1).toLowerCase()}
                     </button>
                   ))}
                 </div>
-                <p className="mt-1 text-[12px] text-muted-foreground">Whether the weekly off is paid is a policy, chosen in the next step.</p>
+                <p className="mt-1 text-[13px] text-muted-foreground">Whether the weekly off is paid is a policy, chosen in the next step.</p>
               </div>
               <Field label="Shift">
                 {(i) => (
@@ -194,17 +194,17 @@ export default function PayGroupWizard() {
                 return (
                   <div key={k}>
                     <div className="mb-1 flex items-center justify-between">
-                      <span className="text-[13px] font-semibold">{POLICY_KIND_LABELS[k]}</span>
-                      <Link to={`/setup/policies?kind=${k}&new=1`} target="_blank" className="text-[12px] text-primary hover:underline">
+                      <span className="text-[14px] font-semibold">{POLICY_KIND_LABELS[k]}</span>
+                      <Link to={`/setup/policies?kind=${k}&new=1`} target="_blank" className="text-[13px] text-primary hover:underline">
                         Create a {POLICY_KIND_LABELS[k].toLowerCase()} policy
                       </Link>
                     </div>
                     {!list.length ? (
-                      <p className="text-[12px] text-muted-foreground">None exist yet.</p>
+                      <p className="text-[13px] text-muted-foreground">None exist yet.</p>
                     ) : (
                       <ul className="grid gap-1 md:grid-cols-2">
                         {list.map((p) => (
-                          <li key={p.id} className="flex items-center gap-2 rounded-md border px-2 py-1.5 text-[13px]">
+                          <li key={p.id} className="flex items-center gap-2 rounded-md border px-2 py-1.5 text-[14px]">
                             <Checkbox
                               label={`${p.name} v${p.version}`}
                               checked={f.policy_ids.includes(p.id)}
@@ -213,7 +213,7 @@ export default function PayGroupWizard() {
                             <span className="flex-1">
                               {p.name} <span className="text-muted-foreground">v{p.version}</span>
                             </span>
-                            <span className="text-[11px] text-muted-foreground num">
+                            <span className="text-[12px] text-muted-foreground num">
                               {p.valid_from} → {p.valid_to ?? ''}
                             </span>
                           </li>
@@ -223,7 +223,7 @@ export default function PayGroupWizard() {
                   </div>
                 );
               })}
-              <p className="text-[12px] text-muted-foreground">Two versions of one policy can both be attached; the engine picks by date. Attach every version you want history to use.</p>
+              <p className="text-[13px] text-muted-foreground">Two versions of one policy can both be attached; the engine picks by date. Attach every version you want history to use.</p>
             </div>
           )}
           {step === 4 && (
@@ -233,7 +233,7 @@ export default function PayGroupWizard() {
                   <button
                     key={s.id}
                     onClick={() => setF({ ...f, structure_id: s.id })}
-                    className={cn('rounded-md border p-3 text-left text-[13px]', f.structure_id === s.id ? 'border-primary ring-2 ring-primary' : 'hover:bg-accent')}
+                    className={cn('rounded-md border p-3 text-left text-[14px]', f.structure_id === s.id ? 'border-primary ring-2 ring-primary' : 'hover:bg-accent')}
                   >
                     <span className="font-medium">{s.name}</span>
                   </button>
@@ -243,9 +243,9 @@ export default function PayGroupWizard() {
                 <div className="flex flex-col gap-3">
                   {structureChanged && <MovePanel plan={move.data} loading={move.isFetching} error={move.error} onMonth={setMoveFrom} structureName={structure.name} />}
                   <div className="rounded-md border p-3">
-                    <div className="mb-2 text-[13px] font-semibold">At ₹24,000 a month</div>
+                    <div className="mb-2 text-[14px] font-semibold">At ₹24,000 a month</div>
                     <ProportionBar parts={structure.sample.monthly.map((c) => ({ label: c.name, value: c.amount }))} />
-                    <table className="mt-2 w-full text-[13px]">
+                    <table className="mt-2 w-full text-[14px]">
                       <tbody>
                         {structure.sample.monthly.map((c) => (
                           <tr key={c.name} className="border-t">
@@ -263,35 +263,35 @@ export default function PayGroupWizard() {
             </div>
           )}
           {step === 5 && (
-            <div className="flex flex-col gap-4 text-[13px]">
+            <div className="flex flex-col gap-4 text-[14px]">
               <div className="grid gap-3 sm:grid-cols-3">
                 <div>
-                  <div className="text-[12px] text-muted-foreground">Name</div>
+                  <div className="text-[13px] text-muted-foreground">Name</div>
                   {f.name}
                 </div>
                 <div>
-                  <div className="text-[12px] text-muted-foreground">Calendar</div>
+                  <div className="text-[13px] text-muted-foreground">Calendar</div>
                   {CALENDAR_METHOD_INFO[f.calendar_method].label}
                 </div>
                 <div>
-                  <div className="text-[12px] text-muted-foreground">Weekly off</div>
+                  <div className="text-[13px] text-muted-foreground">Weekly off</div>
                   {f.weekly_off.join(', ') || 'None'}
                 </div>
                 <div>
-                  <div className="text-[12px] text-muted-foreground">Shift</div>
+                  <div className="text-[13px] text-muted-foreground">Shift</div>
                   {lk?.shifts.find((s) => s.id === f.shift_id)?.name}
                 </div>
                 <div>
-                  <div className="text-[12px] text-muted-foreground">Structure</div>
+                  <div className="text-[13px] text-muted-foreground">Structure</div>
                   {structure?.name}
                 </div>
                 <div>
-                  <div className="text-[12px] text-muted-foreground">Pay day</div>
+                  <div className="text-[13px] text-muted-foreground">Pay day</div>
                   {f.pay_day}
                 </div>
               </div>
               <div>
-                <div className="mb-1 text-[12px] text-muted-foreground">Policies</div>
+                <div className="mb-1 text-[13px] text-muted-foreground">Policies</div>
                 <ul>
                   {attached.map((p) => (
                     <li key={p.id}>
@@ -350,9 +350,9 @@ export default function PayGroupWizard() {
 function MovePanel({ plan, loading, error, onMonth, structureName }) {
   const months = plan ? Array.from({ length: 12 }, (_, i) => addMonths(plan.first_open_month, i)) : [];
   return (
-    <div className="rounded-md border border-primary/40 bg-primary/5 p-3 text-[13px]">
+    <div className="rounded-md border border-primary/40 bg-primary/5 p-3 text-[14px]">
       <div className="font-semibold">Move this group to {structureName}</div>
-      <p className="mt-0.5 text-[12px] text-muted-foreground">
+      <p className="mt-0.5 text-[13px] text-muted-foreground">
         Everyone in the group is paid on it from the month you pick, as a dated change in their salary history. Agreed pay stays the same: a gross stays the gross, a CTC stays the CTC. Months already
         run keep their payslips.
       </p>
@@ -379,7 +379,7 @@ function MovePanel({ plan, loading, error, onMonth, structureName }) {
             {plan.skipped.length > 0 && <Chip tone="warning">{plan.skipped.length} cannot move</Chip>}
           </div>
           {plan.move.some((m) => m.from_gross !== m.to_gross) && (
-            <ul className="text-[12px] text-muted-foreground">
+            <ul className="text-[13px] text-muted-foreground">
               {plan.move
                 .filter((m) => m.from_gross !== m.to_gross)
                 .map((m) => (
@@ -391,7 +391,7 @@ function MovePanel({ plan, loading, error, onMonth, structureName }) {
             </ul>
           )}
           {plan.skipped.length > 0 && (
-            <ul className="list-disc pl-5 text-[12px]">
+            <ul className="list-disc pl-5 text-[13px]">
               {plan.skipped.map((x) => (
                 <li key={x.employee.id}>
                   <Link to={`/people/${x.employee.id}?tab=salary`} className="font-medium hover:underline">

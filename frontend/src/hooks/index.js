@@ -27,7 +27,24 @@ export function useOnline() {
   return online;
 }
 
-const RESERVED = new Set(['q', 'sort', 'limit', 'tab', 'view']);
+/** Opens a page's "new" dialog when the URL asks for it (?new=1, from the + New menu), then tidies the URL. */
+export function useNewFromUrl(open) {
+  const [sp, setSp] = useSearchParams();
+  useEffect(() => {
+    if (sp.get('new') !== '1') return;
+    open();
+    setSp(
+      (p) => {
+        const n = new URLSearchParams(p);
+        n.delete('new');
+        return n;
+      },
+      { replace: true },
+    );
+  }, [sp, setSp, open]);
+}
+
+const RESERVED = new Set(['q', 'sort', 'limit', 'tab', 'view', 'new']);
 
 /**
  * The list contract, client side. Filter state lives in the URL

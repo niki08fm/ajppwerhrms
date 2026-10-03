@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -41,7 +42,7 @@ export default function Statutory() {
         <div className="grid gap-4 lg:grid-cols-3">
           <Card>
             <CardHeader title="Provident fund" description={`Effective ${c.valid_from}`} />
-            <CardBody className="text-[13px]">
+            <CardBody className="text-[14px]">
               <table className="w-full">
                 <tbody>
                   {[
@@ -59,7 +60,7 @@ export default function Statutory() {
                   ))}
                 </tbody>
               </table>
-              <p className="mt-2 text-[12px] text-muted-foreground">
+              <p className="mt-2 text-[13px] text-muted-foreground">
                 The ceiling is the only limit. With restrict-to-ceiling on, PF runs on at most {formatINR(c.pf.ceiling)} of wages, so the most anyone pays is {c.pf.employee_pct}% of that —{' '}
                 {formatINR(pfMaxContribution(c.pf).employee)} — and the company matches it ({formatINR(pfMaxContribution(c.pf).total)} together). Pension stays on the statutory{' '}
                 {formatINR(c.pf.eps_wage_ceiling)}. Which components form the base is one tick per component in the salary structure.
@@ -68,7 +69,7 @@ export default function Statutory() {
           </Card>
           <Card>
             <CardHeader title="ESI" />
-            <CardBody className="text-[13px]">
+            <CardBody className="text-[14px]">
               <table className="w-full">
                 <tbody>
                   <tr className="border-b">
@@ -85,40 +86,35 @@ export default function Statutory() {
                   </tr>
                 </tbody>
               </table>
-              <p className="mt-2 text-[12px] text-muted-foreground">
+              <p className="mt-2 text-[13px] text-muted-foreground">
                 Both rounded up to the rupee. Eligibility is decided once per April–September and October–March period on fixed gross; contribution is on earned gross.
               </p>
             </CardBody>
           </Card>
           <Card>
-            <CardHeader title="Gratuity and recovery" />
-            <CardBody className="text-[13px]">
+            <CardHeader title="Recovery and gratuity" />
+            <CardBody className="text-[14px]">
               <table className="w-full">
                 <tbody>
-                  <tr className="border-b">
-                    <td className="py-1.5 text-muted-foreground">Qualifies after</td>
-                    <td className="text-right">
-                      {c.gratuity.min_years} years (flag from {c.gratuity.flag_from_years})
-                    </td>
-                  </tr>
-                  <tr className="border-b">
-                    <td className="py-1.5 text-muted-foreground">Formula</td>
-                    <td className="text-right">
-                      last basic × {c.gratuity.days_per_year} × years ÷ {c.gratuity.divisor}
-                    </td>
-                  </tr>
                   <tr>
                     <td className="py-1.5 text-muted-foreground">Recovery cap</td>
                     <td className="text-right num">{c.recovery_cap_pct}% of gross − statutory</td>
                   </tr>
                 </tbody>
               </table>
+              <p className="mt-2 text-[13px] text-muted-foreground">
+                Gratuity is set per pay group: create a gratuity policy under{' '}
+                <Link to="/setup/policies" className="text-primary hover:underline">
+                  Setup → Policies
+                </Link>{' '}
+                and attach it to the group.
+              </p>
             </CardBody>
           </Card>
         </div>
       )}
       {rates.data && rates.data.versions.length > 1 && (
-        <p className="text-[12px] text-muted-foreground">
+        <p className="text-[13px] text-muted-foreground">
           Earlier versions:{' '}
           {rates.data.versions
             .filter((v) => v.id !== c?.id)
@@ -138,7 +134,7 @@ export default function Statutory() {
         ) : (
           <div className="grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-3">
             {pt.data.map((s) => (
-              <div key={s.state} className="rounded-md border p-3 text-[13px]">
+              <div key={s.state} className="rounded-md border p-3 text-[14px]">
                 <div className="mb-1 flex items-center justify-between">
                   <span className="font-medium">{s.state}</span>
                   <span className="flex items-center gap-2">
@@ -151,7 +147,7 @@ export default function Statutory() {
                 {!s.slabs.length ? (
                   <p className="text-muted-foreground">No professional tax</p>
                 ) : (
-                  <table className="w-full text-[12px]">
+                  <table className="w-full text-[13px]">
                     <tbody>
                       {s.slabs.map((x, i) => {
                         const prev = s.slabs
@@ -184,7 +180,7 @@ export default function Statutory() {
             ))}
             <button
               onClick={() => setEditPt({ state: '', headcount: 0, slabs: [] })}
-              className="flex items-center justify-center gap-2 rounded-md border border-dashed p-3 text-[13px] text-muted-foreground hover:bg-accent"
+              className="flex items-center justify-center gap-2 rounded-md border border-dashed p-3 text-[14px] text-muted-foreground hover:bg-accent"
             >
               <Plus className="size-4" /> Add a state
             </button>
@@ -203,12 +199,12 @@ export default function Statutory() {
         ) : (
           <div className="grid gap-4 p-3 md:grid-cols-2">
             {regimes.data.map((r) => (
-              <div key={r.id} className="rounded-md border p-3 text-[13px]">
+              <div key={r.id} className="rounded-md border p-3 text-[14px]">
                 <div className="mb-2 flex items-center justify-between">
                   <span className="font-display font-semibold">{r.name}</span>
                   <Chip>{r.headcount} people</Chip>
                 </div>
-                <table className="w-full text-[12px]">
+                <table className="w-full text-[13px]">
                   <tbody>
                     {r.slabs.map((s, i) => (
                       <tr key={i} className="border-t">
@@ -220,7 +216,7 @@ export default function Statutory() {
                     ))}
                   </tbody>
                 </table>
-                <p className="mt-2 text-[12px] text-muted-foreground">
+                <p className="mt-2 text-[13px] text-muted-foreground">
                   Standard deduction {formatINR(r.std_deduction)} · rebate {r.rebate_max === null ? 'in full' : `up to ${formatINR(r.rebate_max)}`} up to {formatINR(r.rebate_limit)} taxable · marginal
                   relief {r.marginal_relief ? 'yes' : 'no'} · 80C/HRA {r.allows_80c ? 'allowed' : 'not allowed'} · cess {r.cess_pct}%
                 </p>
@@ -265,7 +261,6 @@ function RatesDialog({ current, onClose }) {
           admin_pct: Number(f.admin),
         },
         esi: { ceiling: toPaise(f.esi_ceiling), employee_pct: Number(f.esi_emp), employer_pct: Number(f.esi_er) },
-        gratuity: current.gratuity,
         recovery_cap_pct: Number(f.cap),
       }),
     onSuccess: () => {
@@ -375,8 +370,8 @@ function PtDialog({ state, onClose }) {
     >
       <div className="flex flex-col gap-3">
         {!state.state && <Field label="State">{(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} />}</Field>}
-        <table className="text-[13px]">
-          <thead className="text-left text-[12px] text-muted-foreground">
+        <table className="text-[14px]">
+          <thead className="text-left text-[13px] text-muted-foreground">
             <tr>
               <th>Applies to</th>
               <th>Up to (monthly gross)</th>
