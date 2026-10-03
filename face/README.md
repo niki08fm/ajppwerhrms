@@ -17,7 +17,7 @@ src/                     JavaScript used by the backend (and guidance.js by the 
   session.js               createPunchSession — tries, the head-turn challenge, identification
   messages.js              messageFor — every sentence the tablet shows
   guidance.js              browser only: Tiny Face Detector guidance and frame capture
-models/                  tiny_face_detector — the only model the browser loads (served at /face-models)
+models/                  tiny_face_detector and face_landmark_68 — the models the browser loads (served at /face-models)
 deploy/ajpwer-face.service   systemd unit (700 MB memory limit, restarts itself)
 INTEGRATION.md           rules, database, routes, tablet, hosting
 ```

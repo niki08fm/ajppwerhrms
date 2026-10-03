@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { addDays, bulkOverrideSchema, DAY_STATUS_LABELS, faceExceptionDecideSchema, formatMinutes, isoDate, istDate, overrideCreateSchema, siteChangeReviewSchema, yearMonth, ymOf } from '@ajpwer/shared';
+import { addDays, bulkOverrideSchema, DAY_STATUS_LABELS, faceExceptionDecideSchema, formatMinutes, isoDate, istDate, overrideCreateSchema, overridePreviewSchema, siteChangeReviewSchema, yearMonth, ymOf } from '@ajpwer/shared';
 import { assignWorkDate, overrideDiffers, pickPolicy } from '../calculations/index.js';
 import { audit, who } from '../utils/audit.js';
 import { fromDbDate, toDbDate } from '../utils/dbDates.js';
@@ -23,6 +23,7 @@ export const getRegister = asyncHandler(async (req, res) => {
       { key: 'name', field: 'name', type: 'string' },
       { key: 'worked', field: 'worked', type: 'number' },
       { key: 'late', field: 'late', type: 'number' },
+      { key: 'early', field: 'early', type: 'number' },
       { key: 'ot', field: 'ot', type: 'number' },
       { key: 'in', field: 'in', type: 'number' },
     ],
@@ -45,6 +46,7 @@ export const getRegister = asyncHandler(async (req, res) => {
   if (site.length) rows = rows.filter((r) => r.day.sites.some((s) => site.includes(s)));
   if (filterOne(p.filter, 'corrected') === 'yes') rows = rows.filter((r) => r.override);
   if (filterOne(p.filter, 'late') === 'yes') rows = rows.filter((r) => r.day.late_min > 0);
+  if (filterOne(p.filter, 'early') === 'yes') rows = rows.filter((r) => r.day.early_min > 0);
   if (filterOne(p.filter, 'ot') === 'yes') rows = rows.filter((r) => r.day.ot_min > 0);
 
   const key = (r) =>
@@ -54,9 +56,11 @@ export const getRegister = asyncHandler(async (req, res) => {
         ? r.day.worked_min
         : p.sort.key === 'late'
           ? r.day.late_min
-          : p.sort.key === 'ot'
-            ? r.day.ot_min
-            : (r.in_min ?? 99999);
+          : p.sort.key === 'early'
+            ? r.day.early_min
+            : p.sort.key === 'ot'
+              ? r.day.ot_min
+              : (r.in_min ?? 99999);
   rows.sort((a, b) => {
     const ka = key(a);
     const kb = key(b);
@@ -77,6 +81,7 @@ export const getRegister = asyncHandler(async (req, res) => {
         out: r.out_min === null ? '' : `${String(Math.floor(r.out_min / 60) % 24).padStart(2, '0')}:${String(r.out_min % 60).padStart(2, '0')}`,
         worked: formatMinutes(r.day.worked_min),
         late: r.day.late_min,
+        early: r.day.early_min,
         ot: r.day.ot_min,
         sites: r.day.sites.map(code).join(' + '),
         corrected: r.override ? 'yes' : '',
@@ -90,6 +95,7 @@ export const getRegister = asyncHandler(async (req, res) => {
         { key: 'out', label: 'Out' },
         { key: 'worked', label: 'Worked' },
         { key: 'late', label: 'Late (min)' },
+        { key: 'early', label: 'Left early (min)' },
         { key: 'ot', label: 'Overtime (min)' },
         { key: 'sites', label: 'Sites' },
         { key: 'corrected', label: 'Corrected' },
@@ -122,7 +128,7 @@ export const getRegister = asyncHandler(async (req, res) => {
   });
 });
 
-/** Everything the correction drawer needs for one person-day. */
+/** Everything the correction drawer needs for one person-day: the punches, what they make the day, and the rules it is judged by. */
 export const getDay = asyncHandler(async (req, res) => {
   const q = z.object({ employee_id: z.string().uuid(), date: isoDate }).parse(req.query);
   const [row] = await dayRegister(prisma, q.date, [q.employee_id]);
@@ -139,9 +145,23 @@ export const getDay = asyncHandler(async (req, res) => {
       employee,
       date: q.date,
       punches: punches.map((p) => ({ ...p, match_score: p.match_score === null ? null : Number(p.match_score), work_date: fromDbDate(p.work_date) })),
-      computed: row ? { ...row.computed, flags: row.day.flags.filter((f) => f !== 'OVERRIDDEN'), sites: row.day.sites, pairs: row.day.pairs.length, break_min: row.day.break_min } : null,
+      computed: row
+        ? {
+            ...row.computed,
+            flags: row.day.flags.filter((f) => f !== 'OVERRIDDEN'),
+            sites: row.day.sites,
+            pairs: row.day.pairs.length,
+            break_min: row.day.break_min,
+            first_punch_min: row.day.first_punch_min,
+            last_punch_min: row.day.last_punch_min,
+          }
+        : null,
       not_in_employment: !row,
       override: override && !override.deleted_at ? { ...override, day_value: Number(override.day_value), work_date: fromDbDate(override.work_date) } : null,
+      // The day's times as they stand: HR's once corrected by times, otherwise the first IN and last OUT.
+      in_min: row?.in_min ?? null,
+      out_min: row?.out_min ?? null,
+      context: row?.context ?? null,
       frozen,
     },
   });
@@ -152,26 +172,71 @@ async function assertNotFrozen(date) {
   if (f.frozen) throw new AppError('ATTENDANCE_FROZEN', f.reason, 409);
 }
 
+/**
+ * A day worked out from HR's times, by the same rules as punches. Given the out time, the
+ * overtime follows. Given the overtime instead, the out time follows: the end of the day
+ * (the shift end, or a full day after a late arrival) plus the overtime.
+ */
+async function dayFromTimes(db, employeeId, date, t) {
+  let out = t.out_min;
+  if (out === undefined) {
+    // The end of the day depends only on the in time.
+    const [probe] = await dayRegister(db, date, [employeeId], undefined, { times: { in_min: t.in_min, out_min: t.in_min + 1 } });
+    if (!probe) throw new AppError('VALIDATION', 'This person was not employed on that date.', 422);
+    if (probe.computed.due_out_min === null) throw new AppError('VALIDATION', 'There is no overtime on an off day: enter the out time instead.', 422, 'ot_min');
+    out = probe.computed.due_out_min + (t.ot_min ?? 0);
+  }
+  if (out <= t.in_min) throw new AppError('VALIDATION', 'The out time must be after the in time.', 422, 'out_min');
+  const [row] = await dayRegister(db, date, [employeeId], undefined, { times: { in_min: t.in_min, out_min: out } });
+  if (!row) throw new AppError('VALIDATION', 'This person was not employed on that date.', 422);
+  // Off days are paid as their policy says, worked or not; the hours worked are paid by the off-day work policy.
+  const c = row.context.kind === 'WORKING' ? row.computed : { ...row.computed, day_value: row.context.off_day_paid ? 1 : 0, ot_min: 0 };
+  return { row, values: { status: c.status, day_value: c.day_value, worked_min: c.worked_min, ot_min: c.ot_min, late_min: c.late_min }, early_min: c.early_min, due_out_min: c.due_out_min, in_min: t.in_min, out_min: out };
+}
+
+/**
+ * A day HR marks instead of giving times. On a working day: a full day (with any overtime
+ * entered directly), a half day, or absent. On an off day the mark says whether it was
+ * worked; the off day itself is paid as its policy says.
+ */
+function markedDay(row, status, otMin) {
+  const c = row.context;
+  const full = c.standard_min;
+  const worked = status === 'PRESENT' ? full : status === 'HALF_DAY' ? Math.round(full / 2) : 0;
+  if (c.kind !== 'WORKING') {
+    const offStatus = c.kind === 'HOLIDAY' ? (worked ? 'HOLIDAY_WORKED' : 'HOLIDAY') : worked ? 'OFF_WORKED' : 'WEEKLY_OFF';
+    return { status: offStatus, day_value: c.off_day_paid ? 1 : 0, worked_min: worked, ot_min: 0, late_min: 0 };
+  }
+  return { status, day_value: status === 'PRESENT' ? 1 : status === 'HALF_DAY' ? 0.5 : 0, worked_min: worked, ot_min: status === 'PRESENT' ? otMin : 0, late_min: 0 };
+}
+
 async function writeOverride(tx, b, actor, ip) {
   const [row] = await dayRegister(tx, b.work_date, [b.employee_id]);
   if (!row) throw new AppError('VALIDATION', 'This person was not employed on that date.', 422);
-  const computed = row.computed;
-  const proposed = { status: b.status, day_value: b.day_value, worked_min: b.worked_min, ot_min: b.ot_min, late_min: b.late_min };
-  // Compare against the current effective values: an override that changes nothing is noise in the audit trail.
-  const current = row.override ? { status: row.day.status, day_value: row.day.day_value, worked_min: row.day.worked_min, ot_min: row.day.ot_min, late_min: row.day.late_min } : computed;
-  if (!overrideDiffers(current, proposed)) {
-    throw new AppError('NO_CHANGE', 'Nothing differs from the current values, so there is nothing to correct.', 422);
+  let proposed;
+  let times = { in_min: null, out_min: null };
+  if (b.mode === 'TIMES') {
+    const r = await dayFromTimes(tx, b.employee_id, b.work_date, { in_min: b.in_min, out_min: b.out_min });
+    proposed = r.values;
+    times = { in_min: r.in_min, out_min: r.out_min };
+  } else {
+    if (b.ot_min > 0 && (b.status !== 'PRESENT' || row.context.kind !== 'WORKING')) throw new AppError('VALIDATION', 'Overtime goes with a full working day.', 422, 'ot_min');
+    proposed = markedDay(row, b.status, b.ot_min);
+  }
+  // Compare against the day as it stands: a correction that changes nothing is noise in the audit trail.
+  const current = row.override ? { status: row.day.status, day_value: row.day.day_value, worked_min: row.day.worked_min, ot_min: row.day.ot_min, late_min: row.day.late_min } : row.computed;
+  const currentTimes = row.override ? { in_min: row.override.in_min, out_min: row.override.out_min } : { in_min: row.in_min, out_min: row.out_min };
+  const timesChanged = b.mode === 'TIMES' && (currentTimes.in_min !== times.in_min || currentTimes.out_min !== times.out_min);
+  if (!overrideDiffers(current, proposed) && !timesChanged) {
+    throw new AppError('NO_CHANGE', 'Nothing differs from the day as it stands, so there is nothing to correct.', 422);
   }
   const data = {
-    status: b.status,
-    day_value: b.day_value,
-    worked_min: b.worked_min,
-    ot_min: b.ot_min,
-    late_min: b.late_min,
-    reason_code: b.reason_code,
+    ...proposed,
+    ...times,
+    reason_code: 'OTHER',
     reason_text: b.reason_text.trim(),
     created_by: actor,
-    computed_snapshot: JSON.parse(JSON.stringify({ ...computed, flags: row.day.flags, sites: row.day.sites })),
+    computed_snapshot: JSON.parse(JSON.stringify({ ...row.computed, flags: row.day.flags, sites: row.day.sites, first_punch_min: row.day.first_punch_min, last_punch_min: row.day.last_punch_min })),
     deleted_at: null,
   };
   const o = await tx.attendanceOverride.upsert({
@@ -185,7 +250,7 @@ async function writeOverride(tx, b, actor, ip) {
     action: 'attendance.override',
     entity_type: 'attendance_override',
     entity_id: o.id,
-    detail: { employee_id: b.employee_id, work_date: b.work_date, computed, overridden: proposed, reason_code: b.reason_code, reason_text: b.reason_text },
+    detail: { employee_id: b.employee_id, work_date: b.work_date, mode: b.mode, computed: row.computed, overridden: proposed, ...times, reason_text: b.reason_text },
   });
   return o;
 }
@@ -198,7 +263,14 @@ export const createOverride = asyncHandler(async (req, res) => {
   res.status(201).json({ data: { ...o, day_value: Number(o.day_value), work_date: fromDbDate(o.work_date) } });
 });
 
-/** The same correction with one reason applied to many days. */
+/** What a day becomes with HR's times, before it is saved. */
+export const previewOverride = asyncHandler(async (req, res) => {
+  const b = overridePreviewSchema.parse(req.body);
+  const r = await dayFromTimes(prisma, b.employee_id, b.work_date, b);
+  res.json({ data: { ...r.values, early_min: r.early_min, due_out_min: r.due_out_min, in_min: r.in_min, out_min: r.out_min, kind: r.row.context.kind } });
+});
+
+/** The same mark with one reason, applied to many days. */
 export const createBulkOverrides = asyncHandler(async (req, res) => {
   const b = bulkOverrideSchema.parse(req.body);
   for (const ym of new Set(b.items.map((i) => ymOf(i.work_date)))) await assertNotFrozen(`${ym}-01`);
@@ -207,28 +279,8 @@ export const createBulkOverrides = asyncHandler(async (req, res) => {
     async (tx) => {
       const out = [];
       for (const it of b.items) {
-        const [row] = await dayRegister(tx, it.work_date, [it.employee_id]);
-        if (!row) {
-          out.push({ ...it, ok: false, message: 'Not employed on that date' });
-          continue;
-        }
         try {
-          await writeOverride(
-            tx,
-            {
-              employee_id: it.employee_id,
-              work_date: it.work_date,
-              status: b.status,
-              day_value: b.day_value,
-              worked_min: b.worked_min ?? row.computed.worked_min,
-              ot_min: b.ot_min ?? 0,
-              late_min: b.late_min ?? 0,
-              reason_code: b.reason_code,
-              reason_text: b.reason_text,
-            },
-            actor,
-            ip,
-          );
+          await writeOverride(tx, { mode: 'MARK', employee_id: it.employee_id, work_date: it.work_date, status: b.status, ot_min: b.ot_min, reason_text: b.reason_text }, actor, ip);
           out.push({ ...it, ok: true });
         } catch (err) {
           out.push({ ...it, ok: false, message: err instanceof Error ? err.message : 'failed' });
@@ -258,7 +310,7 @@ export const revertOverride = asyncHandler(async (req, res) => {
       detail: {
         employee_id: o.employee_id,
         work_date: fromDbDate(o.work_date),
-        removed: { status: o.status, day_value: Number(o.day_value), worked_min: o.worked_min, ot_min: o.ot_min, late_min: o.late_min },
+        removed: { status: o.status, day_value: Number(o.day_value), worked_min: o.worked_min, ot_min: o.ot_min, late_min: o.late_min, in_min: o.in_min, out_min: o.out_min },
         restored: o.computed_snapshot,
       },
     });

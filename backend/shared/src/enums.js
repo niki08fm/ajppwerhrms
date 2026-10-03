@@ -2,7 +2,9 @@ export const EMPLOYEE_STATUSES = ['OFFER', 'ACCEPTED', 'ONBOARDING', 'ACTIVE', '
 
 export const GENDERS = ['MALE', 'FEMALE', 'OTHER'];
 
-export const POLICY_KINDS = ['ATTENDANCE', 'OVERTIME', 'WEEKOFF_PAY', 'HOLIDAY_PAY', 'HOLIDAY_WORK', 'LATE_PENALTY', 'LEAVE'];
+/** Lateness is recorded and flagged, never deducted: there is no late-penalty kind. */
+/** Exits have no policy: there is no notice period, and the checklist is the same for everyone (EXIT_CHECKLIST). */
+export const POLICY_KINDS = ['ATTENDANCE', 'OVERTIME', 'WEEKOFF_PAY', 'HOLIDAY_PAY', 'HOLIDAY_WORK', 'LEAVE', 'GRATUITY'];
 
 export const POLICY_KIND_LABELS = {
   ATTENDANCE: 'Attendance',
@@ -10,8 +12,8 @@ export const POLICY_KIND_LABELS = {
   WEEKOFF_PAY: 'Weekly off pay',
   HOLIDAY_PAY: 'Holiday pay',
   HOLIDAY_WORK: 'Off-day work',
-  LATE_PENALTY: 'Late penalty',
   LEAVE: 'Leave',
+  GRATUITY: 'Gratuity',
 };
 
 /** What it means in practice when a pay group has no policy of this kind. */
@@ -21,8 +23,8 @@ export const POLICY_KIND_MISSING_WARNING = {
   WEEKOFF_PAY: 'Weekly offs are unpaid for everyone in this group.',
   HOLIDAY_PAY: 'Holidays are unpaid for everyone in this group.',
   HOLIDAY_WORK: 'Working a holiday or weekly off earns nothing extra.',
-  LATE_PENALTY: 'Lateness is recorded but never charged.',
   LEAVE: 'No leave types exist, so approved leave cannot be paid.',
+  GRATUITY: 'Nobody in this group is paid gratuity when they leave.',
 };
 
 export const POLICY_STATUSES = ['ACTIVE', 'RETIRED'];
@@ -159,6 +161,41 @@ export const DOCUMENT_TYPES = ['PAN', 'AADHAAR', 'BANK_PROOF', 'PHOTO', 'EDUCATI
 export const LETTER_KINDS = ['OFFER', 'JOINING', 'REVISION', 'RELIEVING', 'EXPERIENCE', 'SETTLEMENT'];
 
 export const EXIT_REASONS = ['RESIGNATION', 'TERMINATION', 'CONTRACT_END', 'RETIREMENT', 'ABSCONDING', 'DEATH', 'OTHER'];
+
+export const EXIT_REASON_LABELS = {
+  RESIGNATION: 'Resignation',
+  TERMINATION: 'Termination',
+  CONTRACT_END: 'Contract end',
+  RETIREMENT: 'Retirement',
+  ABSCONDING: 'Absconding',
+  DEATH: 'Death',
+  OTHER: 'Other',
+};
+
+/**
+ * The exit checklist: the same tasks for every exit. The F&F cannot be processed, nor the
+ * relieving letter issued, until every required task is ticked.
+ */
+export const EXIT_CHECKLIST = [
+  { code: 'HANDOVER', label: 'Work and documents handed over', required: true },
+  { code: 'ASSETS', label: 'Tools, safety gear and ID card returned', required: true },
+  { code: 'NO_DUES', label: 'No dues from stores and accounts', required: true },
+  { code: 'EXIT_INTERVIEW', label: 'Exit interview', required: false },
+];
+
+/** A held salary: calculated in its month's payroll, kept out of the bank file until released. */
+export const HELD_PAY_STATES = ['HELD', 'QUEUED', 'PAID', 'PAID_SEPARATELY'];
+export const HELD_PAY_STATE_LABELS = {
+  HELD: 'Held',
+  QUEUED: 'Released into payroll',
+  PAID: 'Paid with payroll',
+  PAID_SEPARATELY: 'Paid separately',
+};
+
+/** How HR corrects a day: by the times worked, or by marking it. */
+export const OVERRIDE_MODES = ['TIMES', 'MARK'];
+/** What HR can mark a working day as. On an off day, PRESENT and HALF_DAY mean it was worked. */
+export const OVERRIDE_MARKS = ['PRESENT', 'HALF_DAY', 'ABSENT'];
 
 /** The onboarding checklist is a constant, not a table. */
 export const ONBOARDING_TASKS = [

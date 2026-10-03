@@ -9,9 +9,15 @@ size are left alone. All four are Apache 2.0 licensed; none is committed to git.
 
 import hashlib
 import os
+import ssl
 import sys
 import urllib.request
 from pathlib import Path
+
+try:
+    import certifi
+except ModuleNotFoundError:  # pragma: no cover - fallback for minimal Python installs
+    certifi = None
 
 HERE = Path(__file__).resolve().parent
 MODELS_DIR = Path(os.environ.get("FACE_SERVICE_MODELS_DIR") or HERE / "models")
@@ -83,7 +89,9 @@ def download(m) -> None:
     path = MODELS_DIR / m["file"]
     tmp = path.with_suffix(path.suffix + ".part")
     req = urllib.request.Request(m["url"], headers={"User-Agent": "AJPWER-Workforce model download"})
-    with urllib.request.urlopen(req, timeout=120) as r, tmp.open("wb") as out:
+    cafile = certifi.where() if certifi is not None else None
+    context = ssl.create_default_context(cafile=cafile) if cafile else ssl.create_default_context()
+    with urllib.request.urlopen(req, timeout=120, context=context) as r, tmp.open("wb") as out:
         while chunk := r.read(1 << 20):
             out.write(chunk)
     tmp.replace(path)

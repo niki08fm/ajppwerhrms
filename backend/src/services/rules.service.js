@@ -1,4 +1,4 @@
-import { esiRatesSchema, gratuityRatesSchema, parsePolicyRules, pfRatesSchema } from '@ajpwer/shared';
+import { esiRatesSchema, parsePolicyRules, pfRatesSchema } from '@ajpwer/shared';
 import { AppError } from '../utils/errors.js';
 import { fromDbDate, n, toDbDate } from '../utils/dbDates.js';
 
@@ -14,7 +14,6 @@ export async function ratesOn(db, date) {
     valid_from: fromDbDate(row.valid_from),
     pf: pfRatesSchema.parse(row.pf),
     esi: esiRatesSchema.parse(row.esi),
-    gratuity: gratuityRatesSchema.parse(row.gratuity),
     recovery_cap_pct: Number(row.recovery_cap_pct),
   };
 }
@@ -26,7 +25,6 @@ export async function ratesById(db, id) {
     valid_from: fromDbDate(row.valid_from),
     pf: pfRatesSchema.parse(row.pf),
     esi: esiRatesSchema.parse(row.esi),
-    gratuity: gratuityRatesSchema.parse(row.gratuity),
     recovery_cap_pct: Number(row.recovery_cap_pct),
   };
 }

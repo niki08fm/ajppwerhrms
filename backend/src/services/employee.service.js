@@ -95,8 +95,6 @@ export async function employeeView(db, e, today, fullPii) {
     joined_on: fromDbDate(e.joined_on),
     resigned_on: fromDbDate(e.resigned_on),
     last_day: fromDbDate(e.last_day),
-    notice_days: e.notice_days,
-    notice_served_days: e.notice_served_days,
     exit_reason: e.exit_reason,
     activated_at: e.activated_at,
     updated_at: e.updated_at?.toISOString() ?? e.created_at.toISOString(),

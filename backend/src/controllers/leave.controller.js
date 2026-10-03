@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { istDate, leaveCreateSchema, leaveDecideSchema, ymOf } from '@ajpwer/shared';
-import { pickPolicy } from '../calculations/index.js';
+import { formatYearMonth, istDate, leaveAdjustmentSchema, leaveCreateSchema, leaveDecideSchema, uuid, ymOf } from '@ajpwer/shared';
+import { hasBalance, pickPolicy } from '../calculations/index.js';
 import { audit, who } from '../utils/audit.js';
 import { fromDbDate, toDbDate } from '../utils/dbDates.js';
 import { AppError, notFound } from '../utils/errors.js';
@@ -8,8 +8,16 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { filterOne, filterValues, keysetOrder, keysetWhere, page, parseList } from '../utils/list.js';
 import { prisma } from '../config/db.js';
 import { attendanceFrozen } from '../services/attendance.service.js';
-import { leaveBalances } from '../services/leave.service.js';
+import { leaveBalancesFor, leaveCheck, leaveTypesInUse } from '../services/leave.service.js';
 import { payGroupRules } from '../services/rules.service.js';
+
+const today = () => istDate(new Date());
+
+async function mustLoadEmployee(id) {
+  const e = await prisma.employee.findFirst({ where: { id, deleted_at: null } });
+  if (!e) throw notFound('That person');
+  return e;
+}
 
 const SORTS = [
   { key: 'from', field: 'from_date', type: 'date' },
@@ -33,7 +41,7 @@ export const listLeave = asyncHandler(async (req, res) => {
   if (emp) and.push({ employee_id: emp });
   if (p.q) and.push({ employee: { OR: [{ name: { contains: p.q, mode: 'insensitive' } }, { code: { contains: p.q, mode: 'insensitive' } }] } });
   const where = { AND: and };
-  const [rows, total] = await Promise.all([
+  const [rows, total, types] = await Promise.all([
     prisma.leaveRequest.findMany({
       where: { AND: [where, keysetWhere(p) ?? {}] },
       orderBy: keysetOrder(p),
@@ -41,33 +49,39 @@ export const listLeave = asyncHandler(async (req, res) => {
       include: { employee: { select: { id: true, code: true, name: true, department: { select: { name: true } } } } },
     }),
     prisma.leaveRequest.count({ where }),
+    leaveTypesInUse(prisma, today()),
   ]);
-  res.json(page(rows, p, total, (r) => ({ ...r, days: Number(r.days), from_date: fromDbDate(r.from_date), to_date: fromDbDate(r.to_date) })));
+  const nameOf = (code) => types.find((t) => t.code === code)?.name ?? code;
+  res.json(page(rows, p, total, (r) => ({ ...r, leave_name: nameOf(r.leave_type), days: Number(r.days), from_date: fromDbDate(r.from_date), to_date: fromDbDate(r.to_date) })));
+});
+
+/** What recording this leave would do — checked before saving, so HR sees it first. */
+export const previewLeave = asyncHandler(async (req, res) => {
+  const b = leaveCreateSchema.parse(req.body);
+  const e = await mustLoadEmployee(b.employee_id);
+  const c = await leaveCheck(prisma, e, b);
+  res.json({ data: { errors: c.errors, warnings: c.warnings, working_days: c.working_days, balance: c.balance, type: c.type ? { code: c.type.code, name: c.type.name, paid: c.type.paid } : null } });
 });
 
 export const createLeave = asyncHandler(async (req, res) => {
   const b = leaveCreateSchema.parse(req.body);
-  const e = await prisma.employee.findFirst({ where: { id: b.employee_id, deleted_at: null } });
-  if (!e) throw notFound('That person');
-  const rules = await payGroupRules(prisma, e.pay_group_id);
-  const pol = pickPolicy(rules.policies, 'LEAVE', b.from_date);
-  const types = pol?.rules?.types ?? [];
-  if (!types.some((t) => t.code === b.leave_type)) {
-    throw new AppError('NO_POLICY_ATTACHED', `${b.leave_type} is not a leave type in ${rules.name}'s leave policy on ${b.from_date}.`, 422, 'leave_type');
-  }
+  const e = await mustLoadEmployee(b.employee_id);
+  const c = await leaveCheck(prisma, e, b);
+  if (c.errors.length) throw new AppError('VALIDATION', c.errors.join(' '), 422, 'leave_type');
   const overlap = await prisma.leaveRequest.findFirst({
     where: { employee_id: b.employee_id, deleted_at: null, status: { in: ['PENDING', 'APPROVED'] }, from_date: { lte: toDbDate(b.to_date) }, to_date: { gte: toDbDate(b.from_date) } },
   });
   if (overlap) throw new AppError('CONFLICT', `This overlaps a ${overlap.status.toLowerCase()} request from ${fromDbDate(overlap.from_date)} to ${fromDbDate(overlap.to_date)}.`, 409);
   const { actor, ip } = who(req);
   const r = await prisma.$transaction(async (tx) => {
+    // The days are the working days the range covers (or half of a single day).
     const created = await tx.leaveRequest.create({
-      data: { employee_id: b.employee_id, leave_type: b.leave_type, from_date: toDbDate(b.from_date), to_date: toDbDate(b.to_date), days: b.days, reason: b.reason ?? null },
+      data: { employee_id: b.employee_id, leave_type: b.leave_type, from_date: toDbDate(b.from_date), to_date: toDbDate(b.to_date), days: c.working_days, reason: b.reason ?? null },
     });
-    await audit(tx, { actor, ip, action: 'leave.request', entity_type: 'leave_request', entity_id: created.id, detail: { ...b } });
+    await audit(tx, { actor, ip, action: 'leave.request', entity_type: 'leave_request', entity_id: created.id, detail: { ...b, days: c.working_days, warnings: c.warnings } });
     return created;
   });
-  res.status(201).json({ data: r });
+  res.status(201).json({ data: { ...r, days: Number(r.days) }, warnings: c.warnings });
 });
 
 async function decide(id, decision, note, actor, ip) {
@@ -108,9 +122,12 @@ export const bulkDecideLeave = asyncHandler(async (req, res) => {
   res.json({ data: { applied: results.filter((r) => r.ok).length, results } });
 });
 
-/** Balances per type for everyone (or one department), derived from policy and requests. */
+/**
+ * Balances for everyone (or one department), worked out month by month from the leave
+ * policy, recorded leave, attendance and HR's adjustments.
+ */
 export const getBalances = asyncHandler(async (req, res) => {
-  const asOf = req.query.date || istDate(new Date());
+  const asOf = req.query.date || today();
   const dept = req.query.dept;
   const q = req.query.q?.trim();
   const people = await prisma.employee.findMany({
@@ -120,11 +137,70 @@ export const getBalances = asyncHandler(async (req, res) => {
       ...(dept ? { department_id: dept } : {}),
       ...(q ? { OR: [{ name: { contains: q, mode: 'insensitive' } }, { code: { contains: q, mode: 'insensitive' } }] } : {}),
     },
-    select: { id: true, code: true, name: true, joined_on: true, pay_group_id: true },
+    select: { id: true, code: true, name: true, joined_on: true, last_day: true, pay_group_id: true },
     orderBy: { name: 'asc' },
     take: 200,
   });
-  const rows = [];
-  for (const p of people) rows.push({ employee: { id: p.id, code: p.code, name: p.name }, balances: await leaveBalances(prisma, p, asOf) });
-  res.json({ data: rows, meta: { total: rows.length, nextCursor: null } });
+  const balances = await leaveBalancesFor(prisma, people, asOf);
+  const rows = people.map((p) => ({ employee: { id: p.id, code: p.code, name: p.name }, ...balances.get(p.id) }));
+  res.json({ data: rows, meta: { total: rows.length, nextCursor: null, date: asOf } });
+});
+
+/** The leave types a person can be given now, with what is left of each; or every type in use. */
+export const listLeaveTypes = asyncHandler(async (req, res) => {
+  const id = req.query.employee_id;
+  if (!id) return res.json({ data: await leaveTypesInUse(prisma, today()) });
+  const e = await mustLoadEmployee(uuid.parse(id));
+  const rules = await payGroupRules(prisma, e.pay_group_id);
+  const pol = pickPolicy(rules.policies, 'LEAVE', today());
+  const balances = (await leaveBalancesFor(prisma, [e], today())).get(e.id);
+  const data = (pol?.rules?.types ?? [])
+    .filter((t) => t.active && (t.gender === 'ALL' || t.gender === e.gender))
+    .map((t) => ({ ...t, balance: hasBalance(t) ? (balances?.types.find((x) => x.code === t.code)?.balance ?? 0) : null }));
+  res.json({ data, meta: { pay_group: rules.name, year_start_month: pol?.rules?.year_start_month ?? null } });
+});
+
+/** A month that is locked keeps its leave; an adjustment has to be dated in a later one. */
+async function assertMonthOpen(date) {
+  const p = await prisma.payrollPeriod.findUnique({ where: { period_ym: ymOf(date) } });
+  if (p && (p.state === 'LOCKED' || p.state === 'PAID')) {
+    throw new AppError('PERIOD_LOCKED', `${formatYearMonth(ymOf(date))} is ${p.state.toLowerCase()} and keeps its leave balances. Date the adjustment in a month that is still open.`, 409, 'date');
+  }
+}
+
+export const listAdjustments = asyncHandler(async (req, res) => {
+  const id = uuid.parse(req.query.employee_id);
+  const rows = await prisma.leaveAdjustment.findMany({ where: { employee_id: id, deleted_at: null }, orderBy: [{ date: 'desc' }, { created_at: 'desc' }] });
+  res.json({ data: rows.map((r) => ({ ...r, date: fromDbDate(r.date), days: Number(r.days) })) });
+});
+
+/** HR adds days to a balance or takes them away: an opening balance, or a correction. */
+export const createAdjustment = asyncHandler(async (req, res) => {
+  const b = leaveAdjustmentSchema.parse(req.body);
+  const e = await mustLoadEmployee(b.employee_id);
+  const rules = await payGroupRules(prisma, e.pay_group_id);
+  const type = pickPolicy(rules.policies, 'LEAVE', b.date)?.rules?.types.find((t) => t.code === b.leave_type);
+  if (!type || !hasBalance(type)) throw new AppError('VALIDATION', `${b.leave_type} has no balance in ${rules.name}'s leave policy on ${b.date}.`, 422, 'leave_type');
+  await assertMonthOpen(b.date);
+  const { actor, ip } = who(req);
+  const row = await prisma.$transaction(async (tx) => {
+    const created = await tx.leaveAdjustment.create({
+      data: { employee_id: e.id, leave_type: b.leave_type, date: toDbDate(b.date), days: b.days, reason: b.reason.trim(), created_by: actor },
+    });
+    await audit(tx, { actor, ip, action: 'leave.adjust', entity_type: 'leave_adjustment', entity_id: created.id, detail: { ...b } });
+    return created;
+  });
+  res.status(201).json({ data: { ...row, date: fromDbDate(row.date), days: Number(row.days) } });
+});
+
+export const deleteAdjustment = asyncHandler(async (req, res) => {
+  const a = await prisma.leaveAdjustment.findFirst({ where: { id: req.params.id, deleted_at: null } });
+  if (!a) throw notFound('That adjustment');
+  await assertMonthOpen(fromDbDate(a.date));
+  const { actor, ip } = who(req);
+  await prisma.$transaction(async (tx) => {
+    await tx.leaveAdjustment.update({ where: { id: a.id }, data: { deleted_at: new Date() } });
+    await audit(tx, { actor, ip, action: 'leave.adjust.remove', entity_type: 'leave_adjustment', entity_id: a.id, detail: { employee_id: a.employee_id, leave_type: a.leave_type, date: fromDbDate(a.date), days: Number(a.days) } });
+  });
+  res.json({ data: { ok: true } });
 });

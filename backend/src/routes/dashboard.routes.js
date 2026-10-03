@@ -5,6 +5,7 @@ import * as dashboardController from '../controllers/dashboard.controller.js';
 export const dashboardRouter = Router();
 
 dashboardRouter.get('/dashboard/today', requirePerm('attendance.read'), dashboardController.getToday);
+dashboardRouter.get('/dashboard/punctuality', requirePerm('attendance.read'), dashboardController.getPunctuality);
 dashboardRouter.get('/dashboard/trend', requirePerm('attendance.read'), dashboardController.getTrend);
 dashboardRouter.get('/dashboard/matrix', requirePerm('attendance.read'), dashboardController.getMatrix);
 dashboardRouter.get('/dashboard/status-mix', requirePerm('attendance.read'), dashboardController.getStatusMix);

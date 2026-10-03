@@ -47,70 +47,102 @@ describe('Salary records never overlap', () => {
 });
 
 describe('Attendance corrections', () => {
-  it('rejects an override that changes nothing, stores computed and overridden values, and reverts exactly', async () => {
-    const date = `${YM}-03`;
-    const day = await f.agent.get(`/api/v1/attendance/day?employee_id=${f.employees.A}&date=${date}`);
-    const c = day.body.data.computed;
-    const same = await f.agent
-      .post('/api/v1/attendance/overrides')
-      .send({
-        employee_id: f.employees.A,
-        work_date: date,
-        status: c.status,
-        day_value: c.day_value,
-        worked_min: c.worked_min,
-        ot_min: c.ot_min,
-        late_min: c.late_min,
-        reason_code: 'DATA_ERROR',
-        reason_text: 'Nothing actually changes here',
-      });
+  // A Monday: Person A punched 09:00–17:30. The shift is 09:00–17:30, an 8-hour day, 15 minutes' grace.
+  const D = `${YM}-03`;
+  const correct = (body, date = D) => f.agent.post('/api/v1/attendance/overrides').send({ employee_id: f.employees.A, work_date: date, ...body });
+  const preview = (body) => f.agent.post('/api/v1/attendance/overrides/preview').send({ employee_id: f.employees.A, work_date: D, ...body });
+  const dayOf = async (date = D) => (await f.agent.get(`/api/v1/attendance/day?employee_id=${f.employees.A}&date=${date}`)).body.data;
+
+  it('rejects a correction that changes nothing, stores computed and corrected values, and reverts exactly', async () => {
+    const day = await dayOf();
+    const c = day.computed;
+    expect([day.in_min, day.out_min]).toEqual([540, 1050]);
+    expect(day.context).toMatchObject({ kind: 'WORKING', shift_start_min: 540, grace_min: 15, standard_min: 480 });
+    const same = await correct({ mode: 'TIMES', in_min: 540, out_min: 1050, reason_text: 'Nothing actually changes here' });
     expect(same.status).toBe(422);
     expect(same.body.error.code).toBe('NO_CHANGE');
+    expect((await correct({ mode: 'MARK', status: 'HALF_DAY', reason_text: 'ok' })).status).toBe(422);
 
-    const short = await f.agent
-      .post('/api/v1/attendance/overrides')
-      .send({ employee_id: f.employees.A, work_date: date, status: 'HALF_DAY', day_value: 0.5, worked_min: 240, ot_min: 0, late_min: 0, reason_code: 'OTHER', reason_text: 'short' });
-    expect(short.status).toBe(422);
-
-    const ok = await f.agent
-      .post('/api/v1/attendance/overrides')
-      .send({
-        employee_id: f.employees.A,
-        work_date: date,
-        status: 'HALF_DAY',
-        day_value: 0.5,
-        worked_min: 240,
-        ot_min: 0,
-        late_min: 0,
-        reason_code: 'SITE_INSTRUCTION',
-        reason_text: 'Sent home at noon by the site engineer',
-      });
+    const ok = await correct({ mode: 'MARK', status: 'HALF_DAY', reason_text: 'Sent home at noon by the site engineer' });
     expect(ok.status).toBe(201);
-    const stored = await prisma.attendanceOverride.findFirstOrThrow({ where: { employee_id: f.employees.A } });
+    expect(ok.body.data).toMatchObject({ status: 'HALF_DAY', day_value: 0.5, worked_min: 240, in_min: null, out_min: null });
+    const stored = await prisma.attendanceOverride.findUniqueOrThrow({ where: { id: ok.body.data.id } });
     expect(stored.computed_snapshot).toMatchObject({ status: c.status, worked_min: c.worked_min });
 
     const rev = await f.agent.delete(`/api/v1/attendance/overrides/${stored.id}`);
     expect(rev.status).toBe(200);
-    const after = await f.agent.get(`/api/v1/attendance/day?employee_id=${f.employees.A}&date=${date}`);
-    expect(after.body.data.override).toBeNull();
-    expect(after.body.data.computed.status).toBe(c.status);
+    const after = await dayOf();
+    expect(after.override).toBeNull();
+    expect(after.computed.status).toBe(c.status);
+  });
+
+  it('times decide late minutes, the day and overtime; given the overtime, the out time follows', async () => {
+    // Overtime from the end of the day, in half hours, nothing under half an hour.
+    const pol = await f.agent.post('/api/v1/policies').send({
+      kind: 'OVERTIME',
+      name: 'Overtime',
+      valid_from: '2025-01-01',
+      rules: { base: 'BASIC_HRA', divisor: null, after_min: 30, multiplier: 2, counts_from: 'SHIFT_END', rounding_min: 30, hours_per_day: 8, monthly_cap_min: 3000 },
+    });
+    expect(pol.status).toBe(201);
+    const ids = (await f.agent.get(`/api/v1/pay-groups/${f.payGroupId}`)).body.data.policies.map((p) => p.id);
+    expect((await f.agent.patch(`/api/v1/pay-groups/${f.payGroupId}`).send({ policy_ids: [...ids, pol.body.data.id] })).status).toBe(200);
+
+    // In at 09:40, past the grace: 40 minutes late, and the day ends a full day later, at 17:40.
+    const late = await preview({ in_min: 580, out_min: 1150 });
+    expect(late.status).toBe(200);
+    expect(late.body.data).toMatchObject({ status: 'PRESENT', late_min: 40, due_out_min: 1060, ot_min: 90, worked_min: 570 });
+    // Given an hour of overtime instead, the out time is the end of the day plus the hour.
+    expect((await preview({ in_min: 540, ot_min: 60 })).body.data).toMatchObject({ out_min: 1110, ot_min: 60, late_min: 0 });
+    expect((await preview({ in_min: 580, ot_min: 60 })).body.data).toMatchObject({ out_min: 1120, ot_min: 60, late_min: 40 });
+    // Five hours: a half day.
+    expect((await preview({ in_min: 540, out_min: 840 })).body.data).toMatchObject({ status: 'HALF_DAY', day_value: 0.5, ot_min: 0 });
+
+    const saved = await correct({ mode: 'TIMES', in_min: 580, out_min: 1150, reason_text: "Punched out on a colleague's phone" });
+    expect(saved.status).toBe(201);
+    expect(saved.body.data).toMatchObject({ status: 'PRESENT', late_min: 40, ot_min: 90, in_min: 580, out_min: 1150 });
+    // The day now shows HR's times.
+    expect(await dayOf()).toMatchObject({ in_min: 580, out_min: 1150 });
+    expect((await correct({ mode: 'TIMES', in_min: 600, out_min: 590, reason_text: 'Out before in' })).status).toBe(422);
+    expect((await f.agent.delete(`/api/v1/attendance/overrides/${saved.body.data.id}`)).status).toBe(200);
+    expect((await f.agent.patch(`/api/v1/pay-groups/${f.payGroupId}`).send({ policy_ids: ids })).status).toBe(200);
+  });
+
+  it('a marked day takes overtime directly; on an off day the mark says it was worked', async () => {
+    const full = await correct({ mode: 'MARK', status: 'PRESENT', ot_min: 120, reason_text: 'Worked late on the substation' });
+    expect(full.status).toBe(201);
+    expect(full.body.data).toMatchObject({ status: 'PRESENT', day_value: 1, worked_min: 480, ot_min: 120 });
+    expect((await correct({ mode: 'MARK', status: 'HALF_DAY', ot_min: 30, reason_text: 'Half day with overtime' })).status).toBe(422);
+    expect((await f.agent.delete(`/api/v1/attendance/overrides/${full.body.data.id}`)).status).toBe(200);
+
+    // A Sunday, the weekly off, paid by its policy.
+    const sunday = await correct({ mode: 'MARK', status: 'PRESENT', reason_text: 'Called in on Sunday' }, `${YM}-02`);
+    expect(sunday.status).toBe(201);
+    expect(sunday.body.data).toMatchObject({ status: 'OFF_WORKED', day_value: 1, worked_min: 480, ot_min: 0 });
+    expect((await f.agent.delete(`/api/v1/attendance/overrides/${sunday.body.data.id}`)).status).toBe(200);
+  });
+
+  it('the same mark for many days at once', async () => {
+    const date = `${YM}-04`;
+    const r = await f.agent.post('/api/v1/attendance/overrides/bulk').send({
+      items: [
+        { employee_id: f.employees.A, work_date: date },
+        { employee_id: f.employees.B, work_date: date },
+      ],
+      status: 'ABSENT',
+      reason_text: 'Site shut by the client',
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.data.applied).toBe(2);
+    for (const key of ['A', 'B']) {
+      const o = await prisma.attendanceOverride.findFirstOrThrow({ where: { employee_id: f.employees[key], status: 'ABSENT' } });
+      expect((await f.agent.delete(`/api/v1/attendance/overrides/${o.id}`)).status).toBe(200);
+    }
   });
 
   it('once step 1 is submitted, corrections stop until it is reopened', async () => {
     await submitSteps(f.agent, YM, 1);
-    const r = await f.agent
-      .post('/api/v1/attendance/overrides')
-      .send({
-        employee_id: f.employees.A,
-        work_date: `${YM}-04`,
-        status: 'ABSENT',
-        day_value: 0,
-        worked_min: 0,
-        ot_min: 0,
-        late_min: 0,
-        reason_code: 'DATA_ERROR',
-        reason_text: 'Was not actually on site',
-      });
+    const r = await correct({ mode: 'MARK', status: 'ABSENT', reason_text: 'Was not actually on site' }, `${YM}-04`);
     expect(r.status).toBe(409);
     expect(r.body.error.code).toBe('ATTENDANCE_FROZEN');
     expect(r.body.error.message).toMatch(/Reopen step 1/);
@@ -244,7 +276,7 @@ describe('PF has one limit: the ceiling', () => {
     expect(cur.pf).not.toHaveProperty('max_contribution');
     const r = await f.agent
       .patch('/api/v1/statutory-rates')
-      .send({ valid_from: '2027-04-01', pf: { ...cur.pf, max_contribution: R(6000) }, esi: cur.esi, gratuity: cur.gratuity, recovery_cap_pct: 40 });
+      .send({ valid_from: '2027-04-01', pf: { ...cur.pf, max_contribution: R(6000) }, esi: cur.esi, recovery_cap_pct: 40 });
     expect(r.status).toBe(422);
   });
 });

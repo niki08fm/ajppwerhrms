@@ -19,7 +19,7 @@ import {
   generateSitePassword,
   addDays,
   addMonths,
-  AJPWER_LEAVE_TYPES,
+  AJPWER_LEAVE_RULES,
   AJPWER_RATES,
   dayName,
   firstOfMonth,
@@ -29,6 +29,7 @@ import {
   monthDates,
   SEED_PT_SLABS,
   SEED_TAX_REGIMES,
+  STATUTORY_GRATUITY_RULES,
   STATUTORY_MINIMUM_RATES,
   ymOf,
   PERMISSIONS,
@@ -80,10 +81,15 @@ async function main() {
   });
   const email = (process.env.ADMIN_EMAIL ?? 'hr@ajpwer.in').toLowerCase();
   const password = process.env.ADMIN_PASSWORD ?? 'change-me-now';
+  const adminName = process.env.ADMIN_NAME ?? 'HR Admin';
   await prisma.appUser.upsert({
     where: { email },
-    update: {},
-    create: { email, name: process.env.ADMIN_NAME ?? 'HR Admin', password_hash: await hashPassword(password), role_id: role.id },
+    update: {
+      name: adminName,
+      password_hash: await hashPassword(password),
+      role_id: role.id,
+    },
+    create: { email, name: adminName, password_hash: await hashPassword(password), role_id: role.id },
   });
 
   await prisma.company.create({
@@ -110,9 +116,10 @@ async function main() {
       ].map(async ([name, colour]) => [name, await prisma.department.create({ data: { name, colour } })]),
     ),
   );
-  const general = await prisma.shift.create({ data: { name: 'General 09:00–17:30', start_min: 540, end_min: 1050, break_min: 30 } });
-  await prisma.shift.create({ data: { name: 'Early 07:00–15:30', start_min: 420, end_min: 930, break_min: 30 } });
-  await prisma.shift.create({ data: { name: 'Night 21:00–05:30', start_min: 1260, end_min: 330, break_min: 30, crosses_midnight: true } });
+  // Nine-hour shifts with an hour's break inside them.
+  const general = await prisma.shift.create({ data: { name: 'General 09:00–18:00', start_min: 540, end_min: 1080, break_min: 60 } });
+  await prisma.shift.create({ data: { name: 'Early 07:00–16:00', start_min: 420, end_min: 960, break_min: 60 } });
+  await prisma.shift.create({ data: { name: 'Night 21:00–06:00', start_min: 1260, end_min: 360, break_min: 60, crosses_midnight: true } });
 
   const holidays = [
     ['2026-01-26', 'Republic Day'],
@@ -140,7 +147,7 @@ async function main() {
 
   // ── Statutory ─────────────────────────────────────────────────────────────
   await prisma.statutoryRates.create({
-    data: { valid_from: toDbDate('2025-04-01'), pf: AJPWER_RATES.pf, esi: AJPWER_RATES.esi, gratuity: AJPWER_RATES.gratuity, recovery_cap_pct: AJPWER_RATES.recovery_cap_pct },
+    data: { valid_from: toDbDate('2025-04-01'), pf: AJPWER_RATES.pf, esi: AJPWER_RATES.esi, recovery_cap_pct: AJPWER_RATES.recovery_cap_pct },
   });
   void STATUTORY_MINIMUM_RATES;
   await prisma.ptSlab.createMany({
@@ -214,32 +221,22 @@ async function main() {
     },
   });
 
-  // ── Policies (grace changes 15 → 10 minutes on 1 April 2026: two versions) ─
+  // ── Policies ──────────────────────────────────────────────────────────────
+  // A 9-hour day with 15 minutes' grace: more than 4 hours is a full day, up to 4 a half day.
+  // Lateness and early punch-outs are flagged for HR, never deducted.
   const key = () => crypto.randomUUID();
-  const attKey = key();
-  const att1 = await prisma.policy.create({
+  const att = await prisma.policy.create({
     data: {
-      policy_key: attKey,
+      policy_key: key(),
       kind: 'ATTENDANCE',
-      name: 'Standard 8-hour day',
+      name: 'General 9-hour day',
       version: 1,
       valid_from: toDbDate('2025-04-01'),
-      valid_to: toDbDate('2026-03-31'),
-      rules: { standard_min: 480, half_day_min: 240, grace_min: 15 },
+      rules: { standard_min: 540, half_day_min: 0, half_day_upto_min: 240, grace_min: 15 },
       created_by: 'seed',
     },
   });
-  const att2 = await prisma.policy.create({
-    data: {
-      policy_key: attKey,
-      kind: 'ATTENDANCE',
-      name: 'Standard 8-hour day',
-      version: 2,
-      valid_from: toDbDate('2026-04-01'),
-      rules: { standard_min: 480, half_day_min: 240, grace_min: 10 },
-      created_by: 'seed',
-    },
-  });
+  // Overtime from shift end (18:00); after a late arrival, once 9 hours are done.
   const ot = await prisma.policy.create({
     data: {
       policy_key: key(),
@@ -247,7 +244,7 @@ async function main() {
       name: 'Site overtime 2× basic + HRA',
       version: 1,
       valid_from: toDbDate('2025-04-01'),
-      rules: { multiplier: 2, base: 'BASIC_HRA', divisor: null, hours_per_day: 8, after_min: 30, rounding_min: 30, monthly_cap_min: 3000 },
+      rules: { multiplier: 2, base: 'BASIC_HRA', divisor: null, hours_per_day: 8, after_min: 30, rounding_min: 30, monthly_cap_min: 3000, counts_from: 'SHIFT_END' },
       created_by: 'seed',
     },
   });
@@ -271,26 +268,12 @@ async function main() {
       created_by: 'seed',
     },
   });
-  const late = await prisma.policy.create({
-    data: {
-      policy_key: key(),
-      kind: 'LATE_PENALTY',
-      name: 'Three free, then slabs',
-      version: 1,
-      valid_from: toDbDate('2025-04-01'),
-      rules: {
-        free_per_month: 3,
-        slabs: [
-          { from_min: 1, to_min: 30, deduct_days: 0.25 },
-          { from_min: 31, to_min: 120, deduct_days: 0.5 },
-          { from_min: 121, to_min: null, deduct_days: 1 },
-        ],
-      },
-      created_by: 'seed',
-    },
-  });
   const leave = await prisma.policy.create({
-    data: { policy_key: key(), kind: 'LEAVE', name: 'AJPWER leave', version: 1, valid_from: toDbDate('2025-04-01'), rules: { types: AJPWER_LEAVE_TYPES }, created_by: 'seed' },
+    // April–March leave year; paid leave pays absences, HR records the other kinds.
+    data: { policy_key: key(), kind: 'LEAVE', name: 'AJPWER leave', version: 1, valid_from: toDbDate('2025-04-01'), rules: AJPWER_LEAVE_RULES, created_by: 'seed' },
+  });
+  const gratuity = await prisma.policy.create({
+    data: { policy_key: key(), kind: 'GRATUITY', name: 'Statutory gratuity', version: 1, valid_from: toDbDate('2025-04-01'), rules: STATUTORY_GRATUITY_RULES, created_by: 'seed' },
   });
 
   const siteGroup = await prisma.payGroup.create({
@@ -301,7 +284,7 @@ async function main() {
       shift_id: general.id,
       structure_id: site.id,
       pay_day: 7,
-      policies: { create: [att1, att2, ot, woff, hpay, hwork, late, leave].map((p) => ({ policy_id: p.id })) },
+      policies: { create: [att, ot, woff, hpay, hwork, leave, gratuity].map((p) => ({ policy_id: p.id })) },
     },
   });
   const officeGroup = await prisma.payGroup.create({
@@ -313,7 +296,7 @@ async function main() {
       structure_id: office.id,
       pay_day: 1,
       // No overtime policy: the group card warns that nobody here earns overtime.
-      policies: { create: [att1, att2, woffOffice, hpay, late, leave].map((p) => ({ policy_id: p.id })) },
+      policies: { create: [att, woffOffice, hpay, leave, gratuity].map((p) => ({ policy_id: p.id })) },
     },
   });
 
@@ -424,7 +407,7 @@ async function main() {
   people[6].tag = 'big-loan';
   // Expired document.
   people[7].tag = 'expired-doc';
-  // Near the gratuity threshold (4 years 9 months at the end of this month) — on notice.
+  // Near the gratuity threshold (4 years 9 months at the end of this month) — leaving.
   people.push({
     name: 'Bhaskar Rao',
     gender: 'MALE',
@@ -567,7 +550,6 @@ async function main() {
         status,
         joined_on: toDbDate(p.joined),
         activated_at: status === 'ACTIVE' ? new Date() : null,
-        notice_days: 30,
         statutory: {
           create: {
             pf_enabled: true,
@@ -662,11 +644,22 @@ async function main() {
   });
 
   // ── Leave ─────────────────────────────────────────────────────────────────
+  // Leave is tracked from the first payroll run (M3): opening balances carried over from the
+  // old records, as HR would enter them. Absences nobody applies for are paid from paid leave.
+  const trackFrom = firstOfMonth(M3);
+  await prisma.leaveAdjustment.createMany({
+    data: created
+      .filter((c) => c.p.joined < trackFrom)
+      .flatMap((c) => [
+        { employee_id: c.id, leave_type: 'PL', date: toDbDate(trackFrom), days: 2 + Math.floor(rand() * 17) / 2, reason: 'Opening balance from the previous records', created_by: 'seed' },
+        { employee_id: c.id, leave_type: 'SL', date: toDbDate(trackFrom), days: 2 + Math.floor(rand() * 4), reason: 'Opening balance from the previous records', created_by: 'seed' },
+      ]),
+  });
   const onLeave = created[9];
   await prisma.leaveRequest.create({
     data: {
       employee_id: onLeave.id,
-      leave_type: 'CL',
+      leave_type: 'PL',
       from_date: toDbDate(`${M1}-11`),
       to_date: toDbDate(`${M1}-12`),
       days: 2,
@@ -691,6 +684,21 @@ async function main() {
   });
   await prisma.leaveRequest.create({
     data: { employee_id: created[12].id, leave_type: 'PL', from_date: toDbDate(addDays(TODAY, 5)), to_date: toDbDate(addDays(TODAY, 7)), days: 3, reason: 'Travel home', status: 'PENDING' },
+  });
+  // Bereavement: paid for its own days, recorded by HR — not out of paid leave.
+  const bereaved = created[13];
+  await prisma.leaveRequest.create({
+    data: {
+      employee_id: bereaved.id,
+      leave_type: 'BRV',
+      from_date: toDbDate(`${M1}-21`),
+      to_date: toDbDate(`${M1}-22`),
+      days: 2,
+      reason: 'Death in the family',
+      status: 'APPROVED',
+      decided_by: email,
+      decided_at: new Date(),
+    },
   });
 
   // ── Punches ───────────────────────────────────────────────────────────────
@@ -730,26 +738,37 @@ async function main() {
         }
         continue;
       }
-      const leaveDay = (c.id === onLeave.id && (d === `${M1}-11` || d === `${M1}-12`)) || (c.id === created[11].id && d === `${M0}-08`);
+      const leaveDay =
+        (c.id === onLeave.id && (d === `${M1}-11` || d === `${M1}-12`)) || (c.id === created[11].id && d === `${M0}-08`) || (c.id === bereaved.id && (d === `${M1}-21` || d === `${M1}-22`));
       if (leaveDay) continue;
       const r = rand();
       if (r < 0.04) continue; // absent
-      const lateArrival = rand() < 0.1;
-      const inMin = lateArrival ? 556 + Math.floor(rand() * 40) : 520 + Math.floor(rand() * 18);
+      // Most come in before 09:00, some inside the 15-minute grace, one in ten after it.
+      const a = rand();
+      const lateArrival = a < 0.1;
+      const inMin = lateArrival ? 556 + Math.floor(rand() * 40) : a < 0.2 ? 541 + Math.floor(rand() * 15) : 520 + Math.floor(rand() * 18);
+      // The day ends at 18:00, or nine hours after a late arrival.
+      const dueOut = lateArrival ? inMin + 540 : 1080;
       const home = c.p.home;
       if (c.p.tag === 'cross-site' && ymOf(d) >= M1 && rand() < 0.5) {
         // Morning at Alpha, afternoon at Beta: one day, both sites, cost split by minutes.
         add(c.id, d, inMin, 'IN', 'ALPHA');
         add(c.id, d, 780, 'OUT', 'ALPHA');
         add(c.id, d, 830, 'IN', 'BETA');
-        if (!isToday) add(c.id, d, 1060 + Math.floor(rand() * 40), 'OUT', 'BETA');
+        if (!isToday) add(c.id, d, 1080 + Math.floor(rand() * 40), 'OUT', 'BETA');
         continue;
       }
       add(c.id, d, inMin, 'IN', home);
       if (isToday) continue; // still on site
       if (rand() < 0.02) continue; // forgot to punch out
       const overtime = c.p.group === 'site' && rand() < 0.18;
-      const outMin = overtime ? 1110 + Math.floor(rand() * 90) : rand() < 0.03 ? 780 : 1052 + Math.floor(rand() * 25);
+      const e = rand();
+      let outMin;
+      if (overtime) outMin = dueOut + 30 + Math.floor(rand() * 90);
+      else if (e < 0.03) outMin = 750; // out at 12:30: a half day
+      else if (e < 0.07) outMin = 1020 + Math.floor(rand() * 45); // out before 18:00
+      else if (lateArrival && e < 0.5) outMin = 1080 + Math.floor(rand() * 15); // in late, out at the usual time: short of nine hours
+      else outMin = dueOut + Math.floor(rand() * 20);
       add(c.id, d, outMin, 'OUT', home);
     }
   }
@@ -760,12 +779,14 @@ async function main() {
     data: { site_id: alpha.id, occurred_at: at(TODAY, 492), best_match_id: created[0].id, score: 0.41, reason: 'Match below confidence threshold (helmet and glare)', direction: 'IN', distance_m: 35 },
   });
 
-  // ── The leaver: on notice, last day mid-month ─────────────────────────────
+  // ── The leaver: last day mid-month ─────────────────────────────────────────
   const leaver = created.find((c) => c.p.tag === 'leaver');
   await prisma.employee.update({
     where: { id: leaver.id },
-    data: { resigned_on: toDbDate(addDays(leaverLastDay, -20)), last_day: toDbDate(leaverLastDay), notice_served_days: 21, exit_reason: 'RESIGNATION' },
+    data: { resigned_on: toDbDate(addDays(leaverLastDay, -20)), last_day: toDbDate(leaverLastDay), exit_reason: 'RESIGNATION' },
   });
+  // Work handed over; tools and dues still to clear.
+  await prisma.exitTask.create({ data: { employee_id: leaver.id, task_code: 'HANDOVER', done_at: new Date(), done_by: email } });
 
   console.log(`Seeded ${created.length} people and ${punches.length} punches from ${START} to ${TODAY}.`);
 

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requirePerm } from '../middleware/auth.js';
 import { idempotent } from '../middleware/idempotency.js';
 import * as payrollController from '../controllers/payroll.controller.js';
+import * as holdController from '../controllers/hold.controller.js';
 
 export const payrollRouter = Router();
 
@@ -20,6 +21,7 @@ payrollRouter.get('/payroll/periods/:ym/issues', requirePerm('payroll.read'), pa
 payrollRouter.post('/payroll/periods/:ym/exclusions', requirePerm('payroll.run'), payrollController.excludeEmployee);
 payrollRouter.delete('/payroll/periods/:ym/exclusions/:employeeId', requirePerm('payroll.run'), payrollController.removeExclusion);
 payrollRouter.get('/payroll/held-back', requirePerm('payroll.read'), payrollController.listHeldBack);
+payrollRouter.get('/held-salaries', requirePerm('payroll.read'), holdController.listHeldSalaries);
 
 // ─── Step gates ─────────────────────────────────────────────────────────────
 payrollRouter.post('/payroll/periods/:ym/steps/:n/submit', requirePerm('payroll.run'), payrollController.submitPayrollStep);

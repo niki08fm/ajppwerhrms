@@ -237,11 +237,9 @@ describe('Tablet sign-in, check by check', () => {
     expect(r.body.error.message).toContain('Ask HR to reset it');
   });
 
-  it('locked out after five failures in fifteen minutes, even with the right password', async () => {
-    for (let i = 0; i < 5; i++) expect((await signIn(request.agent(app), 'site-a-tab', 'wrongPass1')).status).toBe(401);
-    const r = await signIn(request.agent(app), 'site-a-tab', 'rightPass1');
-    expect(r.status).toBe(429);
-    expect(r.body.error.code).toBe('RATE_LIMITED');
+  it('never locks out: any number of wrong passwords, then the right one signs in', async () => {
+    for (let i = 0; i < 8; i++) expect((await signIn(request.agent(app), 'site-a-tab', 'wrongPass1')).status).toBe(401);
+    expect((await signIn(request.agent(app), 'site-a-tab', 'rightPass1')).status).toBe(200);
   });
 
   it('poor GPS accuracy', async () => {
@@ -272,6 +270,26 @@ describe('Tablet sign-in, check by check', () => {
     const far = await tablet.post('/api/v1/punches/sessions').send(OUTSIDE);
     expect(far.status).toBe(403);
     expect(far.body.error.message).toMatch(/Punch from inside the site \(within 200 m\)/);
+  });
+});
+
+describe('Picking an employee on the tablet', () => {
+  it('needs a signed-in site, two typed characters, and shows only name, ID and designation', async () => {
+    await createSite({ password: 'rightPass1' });
+    expect((await request(app).get('/api/v1/tablet/employees').query({ q: 'Person' })).status).toBe(401);
+    const tablet = request.agent(app);
+    expect((await signIn(tablet, 'site-a-tab', 'rightPass1')).status).toBe(200);
+    expect((await tablet.get('/api/v1/tablet/employees').query({ q: 'P' })).body.data).toEqual([]);
+    const r = await tablet.get('/api/v1/tablet/employees').query({ q: 'person' });
+    const names = r.body.data.map((p) => p.name);
+    // Active people, and those still onboarding (they register a face before their first day).
+    expect(names).toEqual(expect.arrayContaining(['Person A', 'Person B', 'Person C', 'Person ONBOARD']));
+    expect(names).not.toContain('Person OFFER');
+    expect(Object.keys(r.body.data[0]).sort()).toEqual(['code', 'designation', 'name']);
+    // By employee ID too.
+    expect((await tablet.get('/api/v1/tablet/employees').query({ q: 'T002' })).body.data.map((p) => p.name)).toEqual(['Person B']);
+    // Registering lists only people with no face yet: all four, here.
+    expect((await tablet.get('/api/v1/tablet/employees').query({ q: 'person', for: 'register' })).body.data.length).toBe(4);
   });
 });
 

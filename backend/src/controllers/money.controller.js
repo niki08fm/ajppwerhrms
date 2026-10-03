@@ -6,6 +6,7 @@ import { AppError, notFound } from '../utils/errors.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { filterValues } from '../utils/list.js';
 import { prisma } from '../config/db.js';
+import { assertSettlementEditable } from '../services/exit.service.js';
 import { computeSettlementFor, upsertSettlement } from '../services/settlement.service.js';
 
 // ─── Advances and loans ─────────────────────────────────────────────────────
@@ -98,7 +99,7 @@ export const createLoan = asyncHandler(async (req, res) => {
 export const listSettlements = asyncHandler(async (_req, res) => {
   const people = await prisma.employee.findMany({
     where: { deleted_at: null, OR: [{ status: 'NOTICE' }, { status: 'EXITED', settlements: { some: { state: { not: 'PAID' } } } }] },
-    include: { department: { select: { name: true } }, settlements: { where: { deleted_at: null }, orderBy: { created_at: 'desc' }, take: 1 } },
+    include: { department: { select: { name: true } }, settlements: { where: { deleted_at: null }, orderBy: { created_at: 'desc' }, take: 1, include: { period: { select: { period_ym: true } } } } },
     orderBy: { last_day: 'asc' },
   });
   const rows = [];
@@ -115,15 +116,20 @@ export const listSettlements = asyncHandler(async (_req, res) => {
       resigned_on: fromDbDate(p.resigned_on),
       last_day: fromDbDate(p.last_day),
       exit_reason: p.exit_reason,
-      settlement: s ? { id: s.id, state: s.state, recoverable_decision: s.recoverable_decision } : null,
+      settlement: s ? { id: s.id, state: s.state, recoverable_decision: s.recoverable_decision, period_ym: s.period?.period_ym ?? null, paid_separately: s.paid_separately ?? null } : null,
       live,
     });
   }
-  const paid = await prisma.settlement.findMany({ where: { state: 'PAID' }, include: { employee: { select: { id: true, code: true, name: true } } }, orderBy: { paid_at: 'desc' }, take: 50 });
+  const paid = await prisma.settlement.findMany({
+    where: { state: 'PAID' },
+    include: { employee: { select: { id: true, code: true, name: true } }, period: { select: { period_ym: true } } },
+    orderBy: { paid_at: 'desc' },
+    take: 50,
+  });
   res.json({
     data: {
       open: rows,
-      paid: paid.map((s) => ({ id: s.id, employee: s.employee, last_day: fromDbDate(s.last_day), net: n(s.net), paid_at: s.paid_at })),
+      paid: paid.map((s) => ({ id: s.id, employee: s.employee, last_day: fromDbDate(s.last_day), net: n(s.net), paid_at: s.paid_at, period_ym: s.period?.period_ym ?? null, paid_separately: s.paid_separately ?? null })),
       recoverable: rows.filter((r) => r.live && 'net' in r.live && r.live.net < 0).map((r) => ({ employee: r.employee, amount: -r.live.net, decision: r.settlement?.recoverable_decision ?? null })),
     },
   });
@@ -132,32 +138,50 @@ export const listSettlements = asyncHandler(async (_req, res) => {
 export const getSettlement = asyncHandler(async (req, res) => {
   const e = await prisma.employee.findUnique({
     where: { id: req.params.employeeId },
-    select: { id: true, code: true, name: true, status: true, joined_on: true, last_day: true, notice_days: true, notice_served_days: true, exit_reason: true },
+    select: { id: true, code: true, name: true, status: true, joined_on: true, last_day: true, exit_reason: true },
   });
   if (!e) throw notFound('That person');
-  const stored = await prisma.settlement.findFirst({ where: { employee_id: e.id, deleted_at: null }, orderBy: { created_at: 'desc' } });
-  // Live while on notice, frozen once paid.
+  const stored = await prisma.settlement.findFirst({ where: { employee_id: e.id, deleted_at: null }, orderBy: { created_at: 'desc' }, include: { period: { select: { period_ym: true } } } });
+  const employee = { ...e, joined_on: fromDbDate(e.joined_on), last_day: fromDbDate(e.last_day) };
+  // Live while leaving, frozen once paid.
   if (stored?.state === 'PAID') {
     return res.json({
       data: {
-        employee: { ...e, joined_on: fromDbDate(e.joined_on), last_day: fromDbDate(e.last_day) },
+        employee,
         frozen: true,
+        period_ym: stored.period?.period_ym ?? null,
+        paid_separately: stored.paid_separately ?? null,
         settlement: { ...stored, total_earnings: n(stored.total_earnings), total_deductions: n(stored.total_deductions), net: n(stored.net), last_day: fromDbDate(stored.last_day) },
       },
     });
   }
-  const { result, ym } = await computeSettlementFor(prisma, e.id);
-  const s = await upsertSettlement(prisma, e.id);
+  // HR can change it until it is paid, and once processed only until step 2 of that payroll is submitted.
+  let locked = e.status === 'NOTICE' ? null : 'Only the settlement of someone leaving can be changed.';
+  if (!locked) {
+    try {
+      await assertSettlementEditable(prisma, stored);
+    } catch (err) {
+      locked = err.message;
+    }
+  }
+  const { result, checklist, adjustments } = await computeSettlementFor(prisma, e.id);
+  // The stored amounts follow the live ones until the payroll it is processed in moves past step 2.
+  const s = locked && stored ? stored : await upsertSettlement(prisma, e.id);
+  const period = s.period_id ? await prisma.payrollPeriod.findUnique({ where: { id: s.period_id }, select: { period_ym: true } }) : null;
   const company = await prisma.company.findFirst();
   res.json({
     data: {
-      employee: { ...e, joined_on: fromDbDate(e.joined_on), last_day: fromDbDate(e.last_day) },
+      employee,
       frozen: false,
       settlement_id: s.id,
       state: s.state,
       recoverable_decision: s.recoverable_decision,
-      period_ym: ym,
+      period_ym: period?.period_ym ?? null,
+      paid_separately: s.paid_separately ?? null,
       result,
+      exit: { reason: e.exit_reason, checklist },
+      adjustments,
+      locked,
       company,
     },
   });

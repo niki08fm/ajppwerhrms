@@ -20,6 +20,7 @@ export function faceConfig() {
     matchMin: env.FACE_MATCH_MIN,
     matchMargin: env.FACE_MATCH_MARGIN,
     liveMin: env.FACE_LIVE_MIN,
+    registerLiveMin: env.FACE_REGISTER_LIVE_MIN,
     turnMinDeg: env.FACE_TURN_MIN_DEG,
     samePersonMin: env.FACE_SAME_PERSON_MIN,
     duplicateMin: env.FACE_DUPLICATE_MIN,
@@ -116,3 +117,5 @@ export function saveCrop(base64Jpeg) {
   writeFileSync(path.join(snapshotDir, key), Buffer.from(base64Jpeg, 'base64'));
   return key;
 }
+
+export { MODEL_VERSION };

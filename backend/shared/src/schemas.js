@@ -4,12 +4,11 @@ import {
   ADHOC_TARGETS,
   CALC_TYPES,
   CALENDAR_METHODS,
-  DAY_STATUSES,
   DOCUMENT_TYPES,
   EXIT_REASONS,
   FREQUENCIES,
   GENDERS,
-  OVERRIDE_REASONS,
+  OVERRIDE_MARKS,
   POLICY_KINDS,
   PT_GENDER_SCOPES,
   SALARY_MODES,
@@ -18,7 +17,7 @@ import {
   isPercentCalc,
 } from './enums.js';
 import { DAY_NAMES, isISODate, isYearMonth } from './dates.js';
-import { esiRatesSchema, gratuityRatesSchema, pfRatesSchema } from './statutory.js';
+import { esiRatesSchema, pfRatesSchema } from './statutory.js';
 
 /** Shared request schemas. Every one is strict: unknown fields are rejected, not ignored. */
 
@@ -251,7 +250,6 @@ export const statutoryRatesCreateSchema = z
     valid_from: isoDate,
     pf: pfRatesSchema,
     esi: esiRatesSchema,
-    gratuity: gratuityRatesSchema,
     recovery_cap_pct: z.number().min(0).max(100),
   })
   .strict();
@@ -284,7 +282,6 @@ export const employeeCoreSchema = z
     department_id: uuid,
     designation: z.string().min(1).max(80),
     pay_group_id: uuid,
-    notice_days: z.number().int().min(0).max(180).default(30),
   })
   .strict();
 
@@ -384,11 +381,53 @@ export const resignSchema = z
   .object({
     resigned_on: isoDate,
     last_day: isoDate,
-    notice_served_days: z.number().int().min(0).max(365).optional(),
     exit_reason: z.enum(EXIT_REASONS),
     note: z.string().max(500).optional(),
   })
   .strict();
+
+const why = z.string().trim().min(8, 'Say why in at least eight characters').max(300);
+
+/** Taking back an exit: the person is active again. */
+export const exitWithdrawSchema = z.object({ reason: why }).strict();
+
+/** Ticking an exit checklist task, or un-ticking it. */
+export const exitTaskTickSchema = z.object({ done: z.boolean(), note: z.string().max(300).optional() }).strict();
+
+/** One change HR makes to a settlement. Every change gives a reason and is audited. */
+export const settlementAdjustSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('EXCLUDE'), code: z.string().min(1).max(80), reason: why }).strict(),
+  z.object({ action: z.literal('INCLUDE'), code: z.string().min(1).max(80) }).strict(),
+  z.object({ action: z.literal('SET_DAYS'), code: z.string().min(1).max(80), days: z.number().min(0).max(366).multipleOf(0.25), reason: why }).strict(),
+  z.object({ action: z.literal('CLEAR_DAYS'), code: z.string().min(1).max(80) }).strict(),
+  z.object({ action: z.literal('ADD_LINE'), kind: z.enum(['EARNING', 'DEDUCTION']), name: z.string().trim().min(2).max(80), amount: paise.min(1), reason: why }).strict(),
+  z.object({ action: z.literal('REMOVE_LINE'), id: z.string().min(1).max(40) }).strict(),
+]);
+
+/**
+ * Processing a full and final settlement into a month's payroll: paid in that month's bank
+ * file, or paid separately — recorded in that month's payroll but never in a bank file.
+ */
+export const settlementProcessSchema = z
+  .object({
+    period_ym: yearMonth,
+    paid_separately: z
+      .object({ paid_on: isoDate, payment_ref: z.string().trim().min(2, 'Enter the cheque or transfer reference').max(100) })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+/** Holding someone's salary from a payroll month until HR releases it. */
+export const salaryHoldSchema = z.object({ from_ym: yearMonth, reason: z.string().trim().min(3, 'Say why in a few words').max(300) }).strict();
+
+/** Releasing a held salary: into a payroll month and its bank file, or paid separately. */
+export const salaryReleaseSchema = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('PAYROLL'), pay_ym: yearMonth, note: z.string().max(300).optional() }).strict(),
+  z
+    .object({ mode: z.literal('SEPARATE'), paid_on: isoDate, payment_ref: z.string().trim().min(2, 'Enter the cheque or transfer reference').max(100), note: z.string().max(300).optional() })
+    .strict(),
+]);
 
 export const documentCreateSchema = z
   .object({
@@ -409,60 +448,44 @@ export const faceEnrolSchema = z
 
 // ─── Attendance ──────────────────────────────────────────────────────────────
 
-export const overrideCreateSchema = z
-  .object({
-    employee_id: uuid,
-    work_date: isoDate,
-    status: z.enum(DAY_STATUSES),
-    day_value: z.number().min(0).max(1).multipleOf(0.25),
-    worked_min: z
-      .number()
-      .int()
-      .min(0)
-      .max(24 * 60),
-    ot_min: z
-      .number()
-      .int()
-      .min(0)
-      .max(24 * 60),
-    late_min: z
-      .number()
-      .int()
-      .min(0)
-      .max(24 * 60),
-    reason_code: z.enum(OVERRIDE_REASONS),
-    reason_text: z.string().trim().min(8, 'Write at least eight characters explaining the correction').max(500),
-  })
+/** Minutes from midnight of the work date. An out time may pass midnight. */
+const minuteOfDay = z
+  .number()
+  .int()
+  .min(0)
+  .max(36 * 60);
+const otMinutes = z
+  .number()
+  .int()
+  .min(0)
+  .max(16 * 60);
+const correctionWhy = z.string().trim().min(3, 'Say why in a few words').max(500);
+
+/**
+ * HR's correction of one day. Either the times worked — late minutes, half or full day and
+ * overtime then follow from the attendance rules — or a mark of the day, with any overtime
+ * entered directly.
+ */
+export const overrideCreateSchema = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('TIMES'), employee_id: uuid, work_date: isoDate, in_min: minuteOfDay, out_min: minuteOfDay, reason_text: correctionWhy }).strict(),
+  z.object({ mode: z.literal('MARK'), employee_id: uuid, work_date: isoDate, status: z.enum(OVERRIDE_MARKS), ot_min: otMinutes.default(0), reason_text: correctionWhy }).strict(),
+]);
+
+/** Working a day out from times before saving it. Give the out time, or the overtime and the out time follows. */
+export const overridePreviewSchema = z
+  .object({ employee_id: uuid, work_date: isoDate, in_min: minuteOfDay, out_min: minuteOfDay.optional(), ot_min: otMinutes.optional() })
   .strict();
 
+/** The same mark, with one reason, applied to many days. */
 export const bulkOverrideSchema = z
   .object({
     items: z
       .array(z.object({ employee_id: uuid, work_date: isoDate }).strict())
       .min(1)
       .max(500),
-    status: z.enum(DAY_STATUSES),
-    day_value: z.number().min(0).max(1).multipleOf(0.25),
-    worked_min: z
-      .number()
-      .int()
-      .min(0)
-      .max(24 * 60)
-      .optional(),
-    ot_min: z
-      .number()
-      .int()
-      .min(0)
-      .max(24 * 60)
-      .optional(),
-    late_min: z
-      .number()
-      .int()
-      .min(0)
-      .max(24 * 60)
-      .optional(),
-    reason_code: z.enum(OVERRIDE_REASONS),
-    reason_text: z.string().trim().min(8).max(500),
+    status: z.enum(OVERRIDE_MARKS),
+    ot_min: otMinutes.default(0),
+    reason_text: correctionWhy,
   })
   .strict();
 
@@ -536,6 +559,22 @@ export const leaveCreateSchema = z
   .refine((v) => v.from_date <= v.to_date, { message: 'The leave ends before it starts', path: ['to_date'] });
 
 export const leaveDecideSchema = z.object({ decision: z.enum(['APPROVE', 'REJECT', 'CANCEL']), note: z.string().max(500).optional() }).strict();
+
+/** Days HR adds to a leave balance (positive) or takes from it (negative). */
+export const leaveAdjustmentSchema = z
+  .object({
+    employee_id: uuid,
+    leave_type: z.string().min(1).max(10),
+    date: isoDate,
+    days: z
+      .number()
+      .min(-366)
+      .max(366)
+      .multipleOf(0.25)
+      .refine((d) => d !== 0, 'Add or take away at least a quarter of a day'),
+    reason: z.string().trim().min(8, 'Say why in at least eight characters').max(300),
+  })
+  .strict();
 
 // ─── Payroll ─────────────────────────────────────────────────────────────────
 

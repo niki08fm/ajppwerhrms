@@ -21,11 +21,11 @@ The live-face score is the average of 3 and 4. In the browser, only the Tiny Fac
 
 **A punch** is a *session* at one tablet:
 
-1. The tablet starts a session. The server answers with a head-turn challenge (turn LEFT or RIGHT, valid `FACE_CHALLENGE_SECONDS`).
-2. The tablet waits for a good frame (guidance), captures one looking straight, asks for the turn, captures a second, and uploads both with a `request_id` it chose.
-3. The server sends the two frames to the face service and decides (`decidePunch`, face/src/decide.js):
+1. The tablet starts a session. The server answers with its time window (`FACE_CHALLENGE_SECONDS`). A punch has no head turn.
+2. The tablet waits for a good frame (guidance), then captures three pictures looking straight, a third of a second apart, and uploads them (`front`, `front2`, `front3`) with a `request_id` it chose.
+3. The server sends the three frames to the face service and decides (`decidePunch`, face/src/decide.js):
    - Not tries (the tablet should have caught them): no face, several faces, poor light, too small, blurred. Also "busy" and "face service down".
-   - Tries: not a live face (`FACE_LIVE_MIN`), the turn not seen (at least `FACE_TURN_MIN_DEG` the asked way between the frames, and the same face in both, `FACE_SAME_PERSON_MIN`), no match.
+   - Tries: not a live face (the middle of the three camera scores must reach `FACE_LIVE_MIN`; with no head turn this is the whole check that it is not a photo), the three pictures not one person (`FACE_SAME_PERSON_MIN`), no match. The three face codes are averaged before matching.
    - Identified: the best person scores at least `FACE_MATCH_MIN` *and* beats the next person by `FACE_MATCH_MARGIN`.
 4. **Identified** → the confirmation screen: "Is this you?", the name, and one button for the direction the server worked out (IN, or OUT while an IN from the same shift, 16 h, is open). The tablet can also choose **"This is not me"** (a try) or, when punching out, **Change site**. Confirming writes the punch. The confirm token expires after `FACE_CONFIRM_SECONDS`; after that the person scans again, and it does not count as a try.
 5. After `FACE_MAX_TRIES` failed tries (default 5) the session is **blocked**. The tablet shows the ID and name form. It becomes a manual request (a face exception of kind `FAILED_TRIES`) with the aligned face crops of the failed tries. Nothing is marked present until HR decides.
@@ -84,7 +84,7 @@ All under `/api/v1`. Tablet routes need the site session and re-check the geofen
 | Route | Who | Does |
 | --- | --- | --- |
 | `POST /punches/sessions` | tablet | Start a punch (`purpose: PUNCH`) or a registration (`purpose: REGISTER`, `employee_code`, `name`). Returns the challenge. |
-| `POST /punches/sessions/:id/frames` | tablet | Multipart: `front`, `turn` (JPEG), `request_id`, `lat`, `lng`, `accuracy_m`. Returns the decision. 503 `FACE_BUSY`: send the same upload again. |
+| `POST /punches/sessions/:id/frames` | tablet | Multipart: a punch sends `front`, `front2`, `front3`; a registration sends `front`, `left`, `right`, `blink` (JPEG), `request_id`, `lat`, `lng`, `accuracy_m`. Returns the decision. 503 `FACE_BUSY`: send the same upload again. |
 | `POST /punches/sessions/:id/confirm` | tablet | `confirm_token`, position → the punch (201; a repeat returns it again with `duplicate: true`). 409 `CONFIRM_EXPIRED`: scan again. |
 | `POST /punches/sessions/:id/not-me` | tablet | `confirm_token` → a try; a new challenge, or blocked. |
 | `POST /punches/sessions/:id/change-site` | tablet | `confirm_token`, `to_site_id`, position → OUT here and a pending site change. |
@@ -106,7 +106,7 @@ The backend's client is `createFaceClient` (face/src/client.js).
 
 `frontend/src/pages/tablet/Tablet.jsx` keeps its layout; the steps added:
 
-1. **Mark attendance** → guidance in the oval ("Come a little closer", "Only one person", "It is too dark") until the frame is right → "Look straight" → capture → "Now slowly turn your head to your left/right" → capture → "Checking…" (and "Still checking…" while it retries a busy service with the same `request_id`).
+1. **Mark attendance** → guidance in the oval ("Come a little closer", "Only one person", "It is too dark") until the frame is right → "Hold still…" → three pictures → "Checking…" (and "Still checking…" while it retries a busy service with the same `request_id`).
 2. **Confirmation screen:** "Is this you?", the name and code, **Punch in** / **Punch out**, **Change site** (when punching out), **This is not me**.
 3. **Change site:** the list of other sites; picking one punches out here.
 4. **Try again** with tries left; after the last, the **ID and name form** → "Sent to HR".

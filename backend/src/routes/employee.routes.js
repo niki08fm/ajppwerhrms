@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { requirePerm } from '../middleware/auth.js';
 import { frames, upload } from '../middleware/upload.js';
 import * as employeeController from '../controllers/employee.controller.js';
+import * as exitController from '../controllers/exit.controller.js';
+import * as holdController from '../controllers/hold.controller.js';
 
 export const employeesRouter = Router();
 
@@ -37,6 +39,16 @@ employeesRouter.post('/:id/activate', requirePerm('people.write'), employeeContr
 
 // ─── Exit ────────────────────────────────────────────────────────────────────
 employeesRouter.post('/:id/resign', requirePerm('people.write'), employeeController.resign);
+employeesRouter.get('/:id/exit', requirePerm('people.read'), exitController.getExit);
+employeesRouter.patch('/:id/exit', requirePerm('people.write'), exitController.changeExit);
+employeesRouter.post('/:id/exit/withdraw', requirePerm('people.write'), exitController.withdrawExit);
+employeesRouter.post('/:id/exit/tasks/:code', requirePerm('people.write'), exitController.setExitTask);
+employeesRouter.post('/:id/exit/process', requirePerm('payroll.run'), exitController.processSettlement);
+employeesRouter.delete('/:id/exit/process', requirePerm('payroll.run'), exitController.unprocessSettlement);
+employeesRouter.get('/:id/hold', requirePerm('payroll.read'), holdController.getHold);
+employeesRouter.post('/:id/hold', requirePerm('payroll.run'), holdController.placeHold);
+employeesRouter.post('/:id/hold/release', requirePerm('payroll.run'), holdController.releaseHold);
+employeesRouter.post('/:id/hold/stop', requirePerm('payroll.run'), holdController.stopHold);
 
 // ─── Face enrolment ──────────────────────────────────────────────────────────
 employeesRouter.post('/:id/face', requirePerm('people.write'), frames, employeeController.enrolFace);

@@ -7,31 +7,12 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { checkGeofence } from '../utils/geo.js';
 import { prisma } from '../config/db.js';
 
-const WINDOW_MS = 15 * 60_000;
-
-const MAX_FAILURES = 5;
-
-/** Five failed attempts in fifteen minutes, per account and per IP. */
-async function isLocked(key, ip) {
-  const since = new Date(Date.now() - WINDOW_MS);
-  const [byKey, byIp] = await Promise.all([
-    prisma.loginAttempt.count({ where: { key, success: false, at: { gte: since } } }),
-    ip ? prisma.loginAttempt.count({ where: { ip, success: false, at: { gte: since } } }) : Promise.resolve(0),
-  ]);
-  return byKey >= MAX_FAILURES || byIp >= MAX_FAILURES;
-}
-
-const lockedOut = () => new AppError('RATE_LIMITED', 'Too many failed sign-in attempts. Wait fifteen minutes and try again.', 429);
-
-async function assertNotLocked(key, ip) {
-  if (await isLocked(key, ip)) throw lockedOut();
-}
+// There is no lockout: wrong passwords can be retried at once. Every attempt is still recorded.
 
 export const login = asyncHandler(async (req, res) => {
   const { email, password } = loginSchema.parse(req.body);
   const key = `admin:${email.toLowerCase()}`;
   const ip = req.ip ?? null;
-  await assertNotLocked(key, ip);
   const user = await prisma.appUser.findFirst({ where: { email: email.toLowerCase(), deleted_at: null }, include: { role: true } });
   const ok = user ? await verifyPassword(user.password_hash, password) : false;
   await prisma.loginAttempt.create({ data: { key, ip, success: ok } });
@@ -55,9 +36,7 @@ export const me = asyncHandler(async (req, res) => {
 
 /**
  * Tablet sign-in. Checks, in order, each with its own message: the login exists
- * and is enabled; the password; the lockout (five failures in fifteen minutes by
- * login and by IP — looked up first so a locked-out caller cannot keep guessing,
- * but reported in this place); GPS accuracy; distance from the site centre.
+ * and is enabled; the password; GPS accuracy; distance from the site centre.
  * Rejections are logged with distance and accuracy, never the password.
  */
 export const siteLogin = asyncHandler(async (req, res) => {
@@ -65,14 +44,12 @@ export const siteLogin = asyncHandler(async (req, res) => {
   const loginId = b.login.trim().toLowerCase();
   const key = `site:${loginId}`;
   const ip = req.ip ?? null;
-  const locked = await isLocked(key, ip);
   const site = await prisma.site.findFirst({ where: { login: loginId, deleted_at: null } });
   const fail = async (code, message, status = 401) => {
     await prisma.loginAttempt.create({ data: { key, ip, success: false } });
     await audit(prisma, { actor: key, ip, action: 'auth.site_login_failed', entity_type: 'site', entity_id: site?.id ?? null, detail: { reason: code } });
     throw new AppError(code, message, status, code === 'LOGIN_NOT_FOUND' ? 'login' : code === 'WRONG_PASSWORD' ? 'password' : null);
   };
-  if (locked) throw lockedOut();
   if (!site) return fail('LOGIN_NOT_FOUND', `There is no site with the login ID "${loginId}". Check it with HR.`);
   if (!site.login_enabled || !site.is_active) {
     return fail('LOGIN_DISABLED', `The login for ${site.name} is ${site.is_active ? 'disabled' : 'switched off because the site is inactive'}. Ask HR to enable it.`, 403);

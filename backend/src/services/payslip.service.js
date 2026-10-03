@@ -128,12 +128,17 @@ export async function computePayslip(db, e, ym, month, ctx, recoveries) {
     },
     adhoc: adhocFor(e, ctx.adhoc),
     recoveries: recoveries ? recoveryItems(recoveries) : [],
+    // Leave paid out when the leave year closes in this month (never for someone leaving: the settlement pays theirs).
+    leave_encashment: (month.result.leave?.types ?? [])
+      .filter((t) => t.encashed > 0)
+      .map((t) => ({ code: t.code, name: t.name, days: t.encashed, base: t.encash_base, divisor: t.encash_divisor })),
   });
 
   return {
     employee_id: e.id,
     result,
     attendance: month.result.totals,
+    leave: month.result.leave,
     salary: { mode: salary.mode, amount: salary.amount, monthly_gross: salary.monthly_gross, structure_id: salary.structure_id, salary_id: salary.id },
     esi: { applicable: esi.applicable, locked_until: esi.esi_locked_until, reason: esi.reason },
     regime: regimeCode,

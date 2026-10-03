@@ -23,7 +23,7 @@ export async function buildFixture(opts = {}) {
   const role = await prisma.role.create({ data: { name: 'HR Admin', permissions: [...PERMISSIONS] } });
   await prisma.appUser.create({ data: { email: 'hr@test.in', name: 'HR', password_hash: await hashPassword(PASSWORD), role_id: role.id } });
   await prisma.company.create({ data: { name: 'Test Co' } });
-  await prisma.statutoryRates.create({ data: { valid_from: toDbDate('2025-04-01'), pf: AJPWER_RATES.pf, esi: AJPWER_RATES.esi, gratuity: AJPWER_RATES.gratuity, recovery_cap_pct: 40 } });
+  await prisma.statutoryRates.create({ data: { valid_from: toDbDate('2025-04-01'), pf: AJPWER_RATES.pf, esi: AJPWER_RATES.esi, recovery_cap_pct: 40 } });
   await prisma.ptSlab.createMany({
     data: SEED_PT_SLABS.map((p) => ({
       ...p,

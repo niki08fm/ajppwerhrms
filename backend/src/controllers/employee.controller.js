@@ -34,6 +34,7 @@ import { computeMonth1, computeMonths } from '../services/attendance.service.js'
 import { employeeView, faceStatus, loadEmployee, markTask, nextEmployeeCode, rulesThatApply } from '../services/employee.service.js';
 import { checkSingleFrame, FaceServiceBadImage, FaceServiceBusy, matchGallery, messageFor } from '@ajpwer/face';
 import { faceClient, faceConfig, invalidateFaceCache, loadGallery, saveRegisteredTemplate } from '../services/face.service.js';
+import { exitChecklist } from '../services/exit.service.js';
 import { leaveBalances } from '../services/leave.service.js';
 import { computePayslip, loadRecoveries } from '../services/payslip.service.js';
 import { payContext } from '../services/payroll.service.js';
@@ -213,7 +214,6 @@ export const createEmployee = asyncHandler(async (req, res) => {
         department_id: b.department_id,
         designation: b.designation,
         pay_group_id: b.pay_group_id,
-        notice_days: b.notice_days,
         joined_on: toDbDate(b.joined_on),
         status: b.status,
         activated_at: b.status === 'ACTIVE' ? new Date() : null,
@@ -586,7 +586,7 @@ export const getAttendance = asyncHandler(async (req, res) => {
   const e = await mustLoad(req.params.id);
   const m = await computeMonth1(prisma, e, month);
   const sites = await prisma.site.findMany({ select: { id: true, name: true, code: true } });
-  res.json({ data: { month, totals: m.result.totals, days: m.result.days, offday_work: m.result.offday_work, sites } });
+  res.json({ data: { month, totals: m.result.totals, days: m.result.days, offday_work: m.result.offday_work, leave: m.result.leave, sites } });
 });
 
 export const getPayslipPreview = asyncHandler(async (req, res) => {
@@ -680,19 +680,16 @@ export const activate = asyncHandler(async (req, res) => {
 });
 
 // ─── Exit ────────────────────────────────────────────────────────────────────
+/** Record an exit: its kind and last working day. There is no notice period; the person is leaving until then. */
 export const resign = asyncHandler(async (req, res) => {
   const b = resignSchema.parse(req.body);
   const e = await mustLoad(req.params.id);
-  if (e.status !== 'ACTIVE' && e.status !== 'NOTICE') throw new AppError('INVALID_TRANSITION', `Only an active employee can be put on notice; ${e.name} is ${e.status}.`, 409);
-  if (b.last_day < b.resigned_on) throw new AppError('VALIDATION', 'The last day cannot be before the resignation date.', 422, 'last_day');
-  const served = b.notice_served_days ?? Math.min(e.notice_days, Math.max(0, Math.round((Date.parse(b.last_day) - Date.parse(b.resigned_on)) / 86_400_000) + 1));
+  if (e.status !== 'ACTIVE') throw new AppError('INVALID_TRANSITION', `Only an active employee's exit can be recorded; ${e.name} is ${e.status === 'NOTICE' ? 'already leaving' : e.status}.`, 409);
+  if (b.last_day < b.resigned_on) throw new AppError('VALIDATION', 'The last day cannot be before the date the exit was recorded.', 422, 'last_day');
   const { actor, ip } = who(req);
   await prisma.$transaction(async (tx) => {
-    await tx.employee.update({
-      where: { id: e.id },
-      data: { status: 'NOTICE', resigned_on: toDbDate(b.resigned_on), last_day: toDbDate(b.last_day), notice_served_days: served, exit_reason: b.exit_reason },
-    });
-    await audit(tx, { actor, ip, action: 'employee.resign', entity_type: 'employee', entity_id: e.id, detail: { ...b, notice_served_days: served } });
+    await tx.employee.update({ where: { id: e.id }, data: { status: 'NOTICE', resigned_on: toDbDate(b.resigned_on), last_day: toDbDate(b.last_day), exit_reason: b.exit_reason } });
+    await audit(tx, { actor, ip, action: 'employee.resign', entity_type: 'employee', entity_id: e.id, detail: b });
   });
   const s = await upsertSettlement(prisma, e.id);
   res.json({ data: { status: 'NOTICE', settlement_id: s.id } });
@@ -810,6 +807,12 @@ export const createLetter = asyncHandler(async (req, res) => {
     .strict()
     .parse(req.body);
   const e = await mustLoad(req.params.id);
+  if ((kind === 'RELIEVING' || kind === 'EXPERIENCE') && !e.last_day) throw new AppError('VALIDATION', `${e.name} has no last day recorded. Record the exit first.`, 422);
+  // Relieved only once the exit checklist's required tasks are done.
+  if (kind === 'RELIEVING') {
+    const open = (await exitChecklist(prisma, e.id)).filter((t) => t.required && !t.done_at);
+    if (open.length) throw new AppError('VALIDATION', `Finish the exit checklist first: ${open.map((t) => t.label.toLowerCase()).join('; ')}.`, 422);
+  }
   const company = await prisma.company.findFirst();
   const date = today() > fromDbDate(e.joined_on) ? today() : fromDbDate(e.joined_on);
   const cur = await salaryOn(prisma, e.id, kind === 'RELIEVING' || kind === 'EXPERIENCE' ? (fromDbDate(e.last_day) ?? date) : date);

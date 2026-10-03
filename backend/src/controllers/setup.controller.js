@@ -447,8 +447,8 @@ export const publishStatutoryRates = asyncHandler(async (req, res) => {
   }
   const row = await prisma.$transaction(async (tx) => {
     const r = existing
-      ? await tx.statutoryRates.update({ where: { id: existing.id }, data: { pf: b.pf, esi: b.esi, gratuity: b.gratuity, recovery_cap_pct: b.recovery_cap_pct } })
-      : await tx.statutoryRates.create({ data: { valid_from: toDbDate(b.valid_from), pf: b.pf, esi: b.esi, gratuity: b.gratuity, recovery_cap_pct: b.recovery_cap_pct, created_by: actor } });
+      ? await tx.statutoryRates.update({ where: { id: existing.id }, data: { pf: b.pf, esi: b.esi, recovery_cap_pct: b.recovery_cap_pct } })
+      : await tx.statutoryRates.create({ data: { valid_from: toDbDate(b.valid_from), pf: b.pf, esi: b.esi, recovery_cap_pct: b.recovery_cap_pct, created_by: actor } });
     await audit(tx, {
       actor,
       ip,

@@ -70,11 +70,13 @@ export const getAttendanceStep = asyncHandler(async (req, res) => {
       half_day: t.half_day,
       absent: t.absent,
       leave: t.leave_paid + t.leave_unpaid,
+      leave_days: t.leave_days,
+      auto_leave_days: t.auto_leave_days,
       off_days: t.weekly_off + t.holidays,
       off_days_worked: t.off_days_worked,
       ot_min: t.ot_min,
       late_days: t.late_days,
-      late_penalty_days: t.late_penalty_days,
+      early_out_days: t.early_out_days,
       paid_days: t.paid_days,
       lop_days: t.lop_days,
       lop_in_window: t.lop_in_window,
@@ -94,13 +96,21 @@ export const getJoinersStep = asyncHandler(async (req, res) => {
   const first = toDbDate(firstOfMonth(ym));
   const last = toDbDate(lastOfMonth(ym));
   const p = await getPeriod(prisma, ym);
-  const [joiners, leavers, notice, pipeline] = await Promise.all([
+  const [joiners, leavers, leavingLater, pipeline] = await Promise.all([
     prisma.employee.findMany({
       where: { deleted_at: null, joined_on: { gte: first, lte: last } },
       include: { onboarding_tasks: true, department: { select: { name: true } } },
       orderBy: { joined_on: 'asc' },
     }),
-    prisma.employee.findMany({ where: { deleted_at: null, status: { in: ['NOTICE', 'EXITED'] }, last_day: { gte: first, lte: last } }, include: { department: { select: { name: true } } } }),
+    // Leavers whose last day is this month, and leavers from earlier months whose F&F is processed here.
+    prisma.employee.findMany({
+      where: {
+        deleted_at: null,
+        status: { in: ['NOTICE', 'EXITED'] },
+        OR: [{ last_day: { gte: first, lte: last } }, ...(p.settlement_ids.length ? [{ settlements: { some: { id: { in: p.settlement_ids } } } }] : [])],
+      },
+      include: { department: { select: { name: true } } },
+    }),
     prisma.employee.findMany({ where: { deleted_at: null, status: 'NOTICE', last_day: { gt: last } }, include: { department: { select: { name: true } } } }),
     prisma.employee.findMany({ where: { deleted_at: null, status: { in: ['OFFER', 'ACCEPTED', 'ONBOARDING'] } }, include: { department: { select: { name: true } } } }),
   ]);
@@ -120,6 +130,7 @@ export const getJoinersStep = asyncHandler(async (req, res) => {
       settlement_id: s?.id ?? null,
       settlement_state: s?.state ?? null,
       included: s ? p.settlement_ids.includes(s.id) : false,
+      paid_separately: s?.paid_separately ?? null,
       settlement: computed,
     });
   }
@@ -138,7 +149,7 @@ export const getJoinersStep = asyncHandler(async (req, res) => {
         };
       }),
       leavers: leaverRows,
-      notice: notice.map((x) => ({ employee: { id: x.id, code: x.code, name: x.name, department: x.department.name }, last_day: fromDbDate(x.last_day), note: 'Paid a normal month' })),
+      leaving_later: leavingLater.map((x) => ({ employee: { id: x.id, code: x.code, name: x.name, department: x.department.name }, last_day: fromDbDate(x.last_day), note: 'Paid a normal month' })),
       pipeline: pipeline.map((x) => ({ employee: { id: x.id, code: x.code, name: x.name, department: x.department.name, status: x.status }, note: 'Excluded — nobody is paid before activation' })),
     },
   });
@@ -160,7 +171,8 @@ export const includeSettlement = asyncHandler(async (req, res) => {
   else ids.delete(s.id);
   await prisma.$transaction(async (tx) => {
     await tx.payrollPeriod.update({ where: { id: p.id }, data: { settlement_ids: [...ids] } });
-    await tx.settlement.update({ where: { id: s.id }, data: { state: b.include ? 'INCLUDED' : 'OPEN', period_id: b.include ? p.id : null } });
+    // Ticked here, it is paid through this payroll's bank file.
+    await tx.settlement.update({ where: { id: s.id }, data: { state: b.include ? 'INCLUDED' : 'OPEN', period_id: b.include ? p.id : null, paid_separately: null } });
     await audit(tx, {
       ...who(req),
       action: b.include ? 'settlement.include' : 'settlement.exclude',
@@ -294,7 +306,20 @@ export const previewRun = asyncHandler(async (req, res) => {
     ctc: 0,
     employer: 0,
   });
-  res.json({ data: { headcount: run.payslips.length, ...t, held_back: population.excluded.length, settlements: population.settlingIds.size, errors: run.errors } });
+  const onHold = run.payslips.filter((p) => p.hold);
+  res.json({
+    data: {
+      headcount: run.payslips.length,
+      ...t,
+      held_back: population.excluded.length,
+      // Calculated and kept out of the bank file until released.
+      on_hold: onHold.length,
+      on_hold_net: onHold.reduce((a, p) => a + p.result.net, 0),
+      released_held: run.payslips.reduce((a, p) => a + (p.result.held_released ?? 0), 0),
+      settlements: population.settlingIds.size,
+      errors: run.errors,
+    },
+  });
 });
 
 /** Queued; returns a job id. A second concurrent run is rejected, not queued. */

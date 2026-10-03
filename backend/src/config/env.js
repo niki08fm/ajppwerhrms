@@ -37,7 +37,12 @@ const schema = z.object({
   FACE_SERVICE_TIMEOUT_MS: z.coerce.number().int().min(1000).default(8000),
   FACE_MATCH_MIN: z.coerce.number().min(0).max(1).default(0.4),
   FACE_MATCH_MARGIN: z.coerce.number().min(0).max(1).default(0.05),
-  FACE_LIVE_MIN: z.coerce.number().min(0).max(1).default(0.7),
+  /** A punch: the middle of three pictures' camera live-face scores must reach this. There is no head turn, so this is the whole check that it is not a photo. */
+  FACE_LIVE_MIN: z.coerce.number().min(0).max(1).default(0.5),
+  /** Guided registration: the best of its four pictures must reach this (the head turns are the main proof). */
+  FACE_REGISTER_LIVE_MIN: z.coerce.number().min(0).max(1).default(0.2),
+  /** Guided registration takes four steps and a look at the photos: this long before it must start again. */
+  FACE_REGISTER_SECONDS: z.coerce.number().int().min(60).default(300),
   FACE_TURN_MIN_DEG: z.coerce.number().min(0).max(60).default(15),
   FACE_SAME_PERSON_MIN: z.coerce.number().min(0).max(1).default(0.3),
   FACE_DUPLICATE_MIN: z.coerce.number().min(0).max(1).default(0.5),

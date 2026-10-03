@@ -21,6 +21,8 @@ export function runEmployeeMonth(input) {
       travel_min: input.travel?.[date] ?? 0,
       policies,
       shift_start_min: input.shift_start_min,
+      shift_end_min: input.shift_end_min,
+      shift_break_min: input.shift_break_min,
     });
   });
   return computeMonth({
@@ -30,6 +32,7 @@ export function runEmployeeMonth(input) {
     policiesByDate,
     before: input.before,
     after: input.after,
+    leave: input.leave_ctx ?? null,
   });
 }
 

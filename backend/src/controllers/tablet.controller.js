@@ -13,8 +13,8 @@ import {
 import {
   checkDuplicate,
   createPunchSession,
+  decideGuidedRegistration,
   decidePunch,
-  decideRegistration,
   FaceServiceBadImage,
   FaceServiceBusy,
   FaceServiceUnavailable,
@@ -29,7 +29,7 @@ import { AppError, notFound } from '../utils/errors.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { checkGeofence } from '../utils/geo.js';
 import { prisma } from '../config/db.js';
-import { faceClient, faceConfig, hasCurrentTemplate, learnFromPunch, loadGallery, saveCrop, saveRegisteredTemplate, snapshotDir } from '../services/face.service.js';
+import { faceClient, faceConfig, hasCurrentTemplate, MODEL_VERSION, learnFromPunch, loadGallery, saveCrop, saveRegisteredTemplate, snapshotDir } from '../services/face.service.js';
 import { attendanceFrozen } from '../services/attendance.service.js';
 import { bumpAggregate } from '../services/aggregates.service.js';
 
@@ -84,7 +84,9 @@ async function loadSession(req) {
   return row;
 }
 
-const sessionOf = (row) => createPunchSession(row.state, { config: faceConfig() });
+/** A registration has four steps and a look at the photos, so its window is longer than a punch's. */
+const sessionConfig = (purpose) => (purpose === 'REGISTER' ? { ...faceConfig(), challengeSeconds: env.FACE_REGISTER_SECONDS } : faceConfig());
+const sessionOf = (row) => createPunchSession(row.state, { config: sessionConfig(row.purpose) });
 
 function sessionReply(s, extra = {}) {
   const st = s.state;
@@ -168,6 +170,28 @@ async function findEmployeeByCode(code) {
   });
 }
 
+/**
+ * People to pick from on the tablet, by what was typed (name or ID). Only name, ID and
+ * designation leave the server, two typed characters are needed, and eight people at most.
+ * `for=register` lists only those with no face registered yet.
+ */
+export const searchEmployees = asyncHandler(async (req, res) => {
+  const q = String(req.query.q ?? '').trim();
+  if (q.length < 2) return res.json({ data: [] });
+  const people = await prisma.employee.findMany({
+    where: {
+      deleted_at: null,
+      status: { in: ['ACTIVE', 'NOTICE', 'ONBOARDING'] },
+      OR: [{ name: { contains: q, mode: 'insensitive' } }, { code: { contains: q, mode: 'insensitive' } }],
+      ...(req.query.for === 'register' ? { faces: { none: { deleted_at: null, model_version: MODEL_VERSION } } } : {}),
+    },
+    select: { code: true, name: true, designation: true },
+    orderBy: { name: 'asc' },
+    take: 8,
+  });
+  res.json({ data: people });
+});
+
 /** The typed name matches when every word typed appears in the person's name. */
 function nameMatches(typed, actual) {
   const words = typed.toLowerCase().split(/\s+/).filter(Boolean);
@@ -185,7 +209,7 @@ export const startSession = asyncHandler(async (req, res) => {
     if (!employee || !nameMatches(b.name, employee.name)) throw new AppError('UNKNOWN_EMPLOYEE', messageFor('UNKNOWN_EMPLOYEE'), 422, 'employee_code');
     if (await hasCurrentTemplate(employee.id)) throw new AppError('ALREADY_REGISTERED', messageFor('ALREADY_REGISTERED'), 409, 'employee_code');
   }
-  const s = createPunchSession(null, { config: faceConfig() });
+  const s = createPunchSession(null, { config: sessionConfig(b.purpose) });
   const row = await prisma.punchSession.create({
     data: { site_id: req.site.id, purpose: b.purpose, employee_id: employee?.id ?? null, state: s.state, status: s.status, tries: 0 },
   });
@@ -201,10 +225,12 @@ export const startSession = asyncHandler(async (req, res) => {
  */
 export const uploadFrames = asyncHandler(async (req, res) => {
   const b = punchFramesSchema.parse(req.body);
-  const front = req.files?.front?.[0];
-  const turn = req.files?.turn?.[0];
-  if (!front || !turn) throw new AppError('VALIDATION', 'Send two frames: front and turn.', 422);
+  const file = (name) => req.files?.[name]?.[0];
   const row = await loadSession(req);
+  // A punch: three pictures looking straight. A registration: straight, left, right and eyes closed.
+  const names = row.purpose === 'REGISTER' ? ['front', 'left', 'right', 'blink'] : ['front', 'front2', 'front3'];
+  const pictures = names.map(file);
+  if (pictures.some((f) => !f)) throw new AppError('VALIDATION', row.purpose === 'REGISTER' ? 'Send four pictures: front, left, right and blink.' : 'Send three pictures: front, front2 and front3.', 422);
   const prior = await prisma.punchAttempt.findUnique({ where: { session_id_request_id: { session_id: row.id, request_id: b.request_id } } });
   if (prior) {
     res.setHeader('Idempotent-Replay', 'true');
@@ -237,7 +263,11 @@ export const uploadFrames = asyncHandler(async (req, res) => {
 
   let analysis;
   try {
-    analysis = await faceClient().analyze([front.buffer, turn.buffer], { requestId: b.request_id });
+    // The face service takes up to three pictures per request: a registration's four go as two pairs, in order.
+    const size = row.purpose === 'REGISTER' ? 2 : 3;
+    const parts = [];
+    for (let i = 0; i < pictures.length; i += size) parts.push(await faceClient().analyze(pictures.slice(i, i + size).map((f) => f.buffer), { requestId: size === 3 ? b.request_id : `${b.request_id}:${i / size}` }));
+    analysis = { model_version: parts[0].model_version, frames: parts.flatMap((x) => x.frames), ms: parts.reduce((a, x) => a + (x.ms ?? 0), 0) };
   } catch (e) {
     // Never a try. Logged under its own id so the retry with the same request_id is analysed afresh.
     const busy = e instanceof FaceServiceBusy;
@@ -253,22 +283,31 @@ export const uploadFrames = asyncHandler(async (req, res) => {
 
   const cfg = faceConfig();
   const gallery = await loadGallery();
-  const challenge = s.state.challenge;
   const frontFrame = analysis.frames?.[0];
-  const quality = { front: frontFrame?.quality ?? null, turn: analysis.frames?.[1]?.quality ?? null };
+  const quality = Object.fromEntries(names.map((n, i) => [n, analysis.frames?.[i]?.quality ?? null]));
   const common = { request_id: b.request_id, quality, service_ms: analysis.ms ?? null };
 
   // ── Registering a face ────────────────────────────────────────────────────
   if (row.purpose === 'REGISTER') {
-    const d = decideRegistration({ analysis, challenge, gallery, employeeId: row.employee_id, config: cfg });
+    const d = decideGuidedRegistration({ analysis, gallery, employeeId: row.employee_id, config: cfg });
+    // How the head moved and how the camera scored, kept with the attempt for HR.
+    common.quality = { ...quality, yaws: d.yaws, turns: d.turns ?? null, live_best: d.live_best ?? null };
     let reply;
     if (d.outcome === 'REGISTERED') {
       const e = await prisma.employee.findUnique({ where: { id: row.employee_id }, select: { id: true, name: true, code: true } });
       await prisma.$transaction(async (tx) => {
-        await saveRegisteredTemplate(tx, { employeeId: e.id, embedding: d.embedding, siteId: row.site_id, liveScore: d.live_score });
+        // Straight, left and right: three face codes, so a face is known from any of those angles.
+        for (const embedding of d.embeddings) await saveRegisteredTemplate(tx, { employeeId: e.id, embedding, siteId: row.site_id, liveScore: d.live_score });
         s.finish({ registered: true });
         await saveSession(tx, row.id, s);
-        await audit(tx, { actor: siteActor(req), ip: req.ip ?? null, action: 'face.register', entity_type: 'employee', entity_id: e.id, detail: { site_id: row.site_id, live_score: d.live_score, via: 'tablet' } });
+        await audit(tx, {
+          actor: siteActor(req),
+          ip: req.ip ?? null,
+          action: 'face.register',
+          entity_type: 'employee',
+          entity_id: e.id,
+          detail: { site_id: row.site_id, via: 'tablet', pictures: 4, templates: d.embeddings.length, turns: d.turns, live_score: d.live_score, live_best: d.live_best },
+        });
       });
       reply = sessionReply(s, { outcome: 'REGISTERED', code: 'REGISTERED', message: messageFor('REGISTERED', { name: e.name }) });
     } else if (d.outcome === 'DUPLICATE_FACE') {
@@ -287,7 +326,7 @@ export const uploadFrames = asyncHandler(async (req, res) => {
   }
 
   // ── Punching ─────────────────────────────────────────────────────────────
-  const d = decidePunch({ analysis, challenge, gallery, config: cfg });
+  const d = decidePunch({ analysis, gallery, config: cfg });
   let reply;
   if (d.outcome === 'IDENTIFIED') {
     const now = new Date();

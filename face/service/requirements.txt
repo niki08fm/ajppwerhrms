@@ -5,3 +5,4 @@ python-multipart
 opencv-python-headless>=4.9
 onnxruntime>=1.17
 numpy
+certifi

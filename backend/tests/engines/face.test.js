@@ -6,7 +6,6 @@ import {
   createFaceClient,
   createPunchSession,
   decidePunch,
-  decideRegistration,
   embeddingToBytes,
   FaceServiceBadImage,
   FaceServiceBusy,
@@ -30,7 +29,8 @@ const B = unit(0, 1);
 const mix = (a, b, t) => a.map((x, i) => Math.cos(t) * x + Math.sin(t) * b[i]);
 
 const frame = (embedding, yaw = 0, live = 0.95, extra = {}) => ({ faces: 1, yaw, embedding, live: { score: live }, quality: { brightness: 120, sharpness: 200, face_px: 150 }, ...extra });
-const scan = (emb, dir = 'LEFT', opts = {}) => ({ frames: [frame(emb, 0, opts.live), frame(opts.turnEmb ?? emb, opts.turn ?? (dir === 'LEFT' ? 25 : -25), opts.live)] });
+/** A punch: three pictures looking straight, a moment apart. `lives` gives each picture's camera score. */
+const scan = (emb, opts = {}) => ({ frames: [0, 1, 2].map((i) => frame(i === 2 ? (opts.thirdEmb ?? emb) : emb, [0, 2, -2][i], opts.lives?.[i] ?? opts.live)) });
 const gallery = buildGallery([
   { employee_id: 'a', model_version: MODEL_VERSION, embedding: embeddingToBytes(A) },
   { employee_id: 'b', model_version: MODEL_VERSION, embedding: embeddingToBytes(B) },
@@ -58,57 +58,54 @@ describe('Gallery', () => {
   });
 });
 
-describe('decidePunch', () => {
-  const challenge = { direction: 'LEFT' };
-
-  it('identifies a clear, live face that turned as asked', () => {
-    const d = decidePunch({ analysis: scan(A), challenge, gallery });
+describe('decidePunch: a face, live or a photo, and who it is — no head turn', () => {
+  it('identifies a clear, live face', () => {
+    const d = decidePunch({ analysis: scan(A), gallery });
     expect(d).toMatchObject({ outcome: 'IDENTIFIED', employee_id: 'a', countsAsTry: false });
     expect(d.score).toBeCloseTo(1, 3);
   });
 
   it('below the match minimum, or not clear of the next person, is NO_MATCH and a try', () => {
-    expect(decidePunch({ analysis: scan(mix(A, unit(0, 0, 0, 0, 1), 1.3)), challenge, gallery })).toMatchObject({ outcome: 'NO_MATCH', countsAsTry: true });
+    expect(decidePunch({ analysis: scan(mix(A, unit(0, 0, 0, 0, 1), 1.3)), gallery })).toMatchObject({ outcome: 'NO_MATCH', countsAsTry: true });
     // Halfway between A and B: both ≈ 0.707, no margin.
-    expect(decidePunch({ analysis: scan(mix(A, B, Math.PI / 4)), challenge, gallery })).toMatchObject({ outcome: 'NO_MATCH', countsAsTry: true });
+    expect(decidePunch({ analysis: scan(mix(A, B, Math.PI / 4)), gallery })).toMatchObject({ outcome: 'NO_MATCH', countsAsTry: true });
     // Slightly nearer A than B, by more than the margin.
-    expect(decidePunch({ analysis: scan(mix(A, B, 0.6)), challenge, gallery })).toMatchObject({ outcome: 'IDENTIFIED', employee_id: 'a' });
+    expect(decidePunch({ analysis: scan(mix(A, B, 0.6)), gallery })).toMatchObject({ outcome: 'IDENTIFIED', employee_id: 'a' });
   });
 
   it('a photo (low live score) is NOT_LIVE, a try', () => {
-    expect(decidePunch({ analysis: scan(A, 'LEFT', { live: 0.3 }), challenge, gallery })).toMatchObject({ outcome: 'NOT_LIVE', countsAsTry: true });
+    expect(decidePunch({ analysis: scan(A, { live: 0.2 }), gallery })).toMatchObject({ outcome: 'NOT_LIVE', countsAsTry: true });
   });
 
-  it('turning the wrong way, too little, or a different face in the turned frame is CHALLENGE_FAILED', () => {
-    expect(decidePunch({ analysis: scan(A, 'RIGHT'), challenge, gallery }).outcome).toBe('CHALLENGE_FAILED');
-    expect(decidePunch({ analysis: scan(A, 'LEFT', { turn: 8 }), challenge, gallery }).outcome).toBe('CHALLENGE_FAILED');
-    expect(decidePunch({ analysis: scan(A, 'LEFT', { turnEmb: B }), challenge, gallery }).outcome).toBe('CHALLENGE_FAILED');
-    expect(decidePunch({ analysis: scan(A, 'RIGHT'), challenge: { direction: 'RIGHT' }, gallery }).outcome).toBe('IDENTIFIED');
+  it('liveness is the middle of the three scores: one blurred picture cannot sway it either way', () => {
+    // A real face with one bad picture passes; a photo with one lucky picture does not.
+    expect(decidePunch({ analysis: scan(A, { lives: [0.9, 0.05, 0.8] }), gallery }).outcome).toBe('IDENTIFIED');
+    expect(decidePunch({ analysis: scan(A, { lives: [0.1, 0.95, 0.15] }), gallery }).outcome).toBe('NOT_LIVE');
+  });
+
+  it('three pictures that are not one person are refused, a try', () => {
+    expect(decidePunch({ analysis: scan(A, { thirdEmb: B }), gallery })).toMatchObject({ outcome: 'NOT_SAME_PERSON', countsAsTry: true });
   });
 
   it('no face, two faces, and poor pictures are not tries', () => {
-    const none = { frames: [{ faces: 0 }, frame(A, 25)] };
-    const two = { frames: [frame(A), { faces: 2 }] };
-    const dark = { frames: [frame(A, 0, 0.95, { quality: { brightness: 12, sharpness: 200, face_px: 150 } }), frame(A, 25)] };
-    const small = { frames: [frame(A, 0, 0.95, { quality: { brightness: 120, sharpness: 200, face_px: 40 } }), frame(A, 25)] };
-    expect(decidePunch({ analysis: none, challenge, gallery })).toMatchObject({ outcome: 'NO_FACE', countsAsTry: false });
-    expect(decidePunch({ analysis: two, challenge, gallery })).toMatchObject({ outcome: 'MULTIPLE_FACES', countsAsTry: false });
-    expect(decidePunch({ analysis: dark, challenge, gallery })).toMatchObject({ outcome: 'POOR_QUALITY', code: 'TOO_DARK', countsAsTry: false });
-    expect(decidePunch({ analysis: small, challenge, gallery })).toMatchObject({ outcome: 'POOR_QUALITY', code: 'TOO_FAR' });
+    const ok = frame(A);
+    const none = { frames: [{ faces: 0 }, ok, ok] };
+    const two = { frames: [ok, { faces: 2 }, ok] };
+    const dark = { frames: [ok, frame(A, 0, 0.95, { quality: { brightness: 12, sharpness: 200, face_px: 150 } }), ok] };
+    const small = { frames: [frame(A, 0, 0.95, { quality: { brightness: 120, sharpness: 200, face_px: 40 } }), ok, ok] };
+    expect(decidePunch({ analysis: none, gallery })).toMatchObject({ outcome: 'NO_FACE', countsAsTry: false });
+    expect(decidePunch({ analysis: two, gallery })).toMatchObject({ outcome: 'MULTIPLE_FACES', countsAsTry: false });
+    expect(decidePunch({ analysis: dark, gallery })).toMatchObject({ outcome: 'POOR_QUALITY', code: 'TOO_DARK', countsAsTry: false });
+    expect(decidePunch({ analysis: small, gallery })).toMatchObject({ outcome: 'POOR_QUALITY', code: 'TOO_FAR' });
   });
 
   it('thresholds come from config', () => {
-    expect(decidePunch({ analysis: scan(A, 'LEFT', { live: 0.6 }), challenge, gallery, config: { liveMin: 0.5 } }).outcome).toBe('IDENTIFIED');
+    expect(decidePunch({ analysis: scan(A, { live: 0.6 }), gallery, config: { liveMin: 0.7 } }).outcome).toBe('NOT_LIVE');
+    expect(decidePunch({ analysis: scan(A, { live: 0.6 }), gallery, config: { liveMin: 0.5 } }).outcome).toBe('IDENTIFIED');
   });
 });
 
-describe('decideRegistration and single-frame enrolment', () => {
-  it('refuses a face already registered to someone else, but not the person themselves', () => {
-    expect(decideRegistration({ analysis: scan(A), challenge: { direction: 'LEFT' }, gallery, employeeId: 'new' })).toMatchObject({ outcome: 'DUPLICATE_FACE', duplicate_of: 'a' });
-    expect(decideRegistration({ analysis: scan(A), challenge: { direction: 'LEFT' }, gallery, employeeId: 'a' }).outcome).toBe('REGISTERED');
-    expect(decideRegistration({ analysis: scan(unit(0, 0, 0, 0, 0, 1)), challenge: { direction: 'LEFT' }, gallery, employeeId: 'new' }).outcome).toBe('REGISTERED');
-  });
-
+describe('single-frame enrolment', () => {
   it('single frame: usable and live', () => {
     expect(checkSingleFrame(frame(A)).outcome).toBe('OK');
     expect(checkSingleFrame(frame(A, 0, 0.2)).outcome).toBe('NOT_LIVE');

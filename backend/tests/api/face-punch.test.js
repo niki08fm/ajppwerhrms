@@ -43,10 +43,9 @@ function frame(embedding, { yaw = 0, live = 0.95, faces = 1, brightness = 120 } 
   };
 }
 
-/** A proper scan: straight frame, then the head turned the way the challenge asked. */
-function scanOf(embedding, challenge, opts = {}) {
-  const turn = opts.turn ?? (challenge.direction === 'LEFT' ? 25 : -25);
-  return { model_version: MODEL_VERSION, ms: 40, frames: [{ index: 0, ...frame(embedding, opts) }, { index: 1, ...frame(embedding, { ...opts, yaw: turn }) }] };
+/** A proper scan: three pictures of the person looking straight, a moment apart. */
+function scanOf(embedding, opts = {}) {
+  return { model_version: MODEL_VERSION, ms: 40, frames: [0, 2, -2].map((yaw, index) => ({ index, ...frame(embedding, { ...opts, yaw }) })) };
 }
 
 // ─── Mock face service ───────────────────────────────────────────────────────
@@ -97,15 +96,41 @@ function upload(tablet, sessionId, requestId = newRequestId()) {
     .field('lng', String(tablet.pos.lng))
     .field('accuracy_m', String(tablet.pos.accuracy_m))
     .attach('front', JPEG, { filename: 'front.jpg', contentType: 'image/jpeg' })
-    .attach('turn', JPEG, { filename: 'turn.jpg', contentType: 'image/jpeg' });
+    .attach('front2', JPEG, { filename: 'front2.jpg', contentType: 'image/jpeg' })
+    .attach('front3', JPEG, { filename: 'front3.jpg', contentType: 'image/jpeg' });
 }
 
 /** Scan a face at a tablet; returns the session and the frames reply. */
 async function scan(tablet, embedding, opts = {}) {
   const s = opts.session ?? (await start(tablet));
-  next = scanOf(embedding, s.challenge, opts);
+  next = scanOf(embedding, opts);
   const r = await upload(tablet, s.session_id, opts.requestId);
   return { s, r, d: r.body.data };
+}
+
+/**
+ * A guided registration: straight, turned to the person's left, to their right, eyes closed.
+ * The backend sends them to the face service as two pairs; `who` swaps the face in a picture.
+ */
+function registrationOf(embedding, { yaw = {}, live = {}, who = {} } = {}) {
+  const y = { front: 0, left: 25, right: -25, blink: 0, ...yaw };
+  const one = (name, index) => ({ index, ...frame(who[name] ?? embedding, { yaw: y[name], live: live[name] ?? 0.95 }) });
+  return (requestId) => ({
+    model_version: MODEL_VERSION,
+    ms: 20,
+    frames: requestId.endsWith(':0') ? [one('front', 0), one('left', 1)] : [one('right', 0), one('blink', 1)],
+  });
+}
+
+function uploadRegistration(tablet, sessionId) {
+  const r = tablet
+    .post(`/api/v1/punches/sessions/${sessionId}/frames`)
+    .field('request_id', newRequestId())
+    .field('lat', String(tablet.pos.lat))
+    .field('lng', String(tablet.pos.lng))
+    .field('accuracy_m', String(tablet.pos.accuracy_m));
+  for (const n of ['front', 'left', 'right', 'blink']) r.attach(n, JPEG, { filename: `${n}.jpg`, contentType: 'image/jpeg' });
+  return r;
 }
 
 const confirm = (tablet, s, d) => tablet.post(`/api/v1/punches/sessions/${s.session_id}/confirm`).send({ confirm_token: d.confirm_token, ...tablet.pos });
@@ -177,7 +202,7 @@ describe('Identify, then confirm', () => {
     expect(d.employee.id).toBeUndefined();
     // The frames went to the face service as two JPEGs with our request id.
     expect(face.analyze).toHaveBeenCalledTimes(1);
-    expect(face.analyze.mock.calls[0][0]).toHaveLength(2);
+    expect(face.analyze.mock.calls[0][0]).toHaveLength(3);
 
     const c = await confirm(tablet, s, d);
     expect(c.status).toBe(201);
@@ -200,7 +225,7 @@ describe('Identify, then confirm', () => {
     expect(d.tries_left).toBe(4);
   });
 
-  it('a stranger, a lookalike too close to call, a photo, and a missing head turn are all failed tries', async () => {
+  it('a stranger, a lookalike too close to call and a photo are all failed tries', async () => {
     const tablet = await tabletFor('ALPHA');
     const s = await start(tablet);
     const closeToBoth = FACE.A.map((x, i) => x + FACE.B[i]);
@@ -209,24 +234,21 @@ describe('Identify, then confirm', () => {
       [FACE.STRANGER, {}, 'NO_MATCH'],
       [closeToBoth.map((x) => x / n), {}, 'NO_MATCH'],
       [FACE.A, { live: 0.2 }, 'NOT_LIVE'],
-      [FACE.A, { turn: 2 }, 'CHALLENGE_FAILED'],
     ]) {
-      const cur = (await prisma.punchSession.findUnique({ where: { id: s.session_id } })).state.challenge;
-      next = scanOf(emb, cur, opts);
+      next = scanOf(emb, opts);
       const r = await upload(tablet, s.session_id);
       expect(r.body.data.outcome).toBe(outcome);
     }
     const row = await prisma.punchSession.findUnique({ where: { id: s.session_id } });
-    expect(row.tries).toBe(4);
-    expect(row.crop_keys).toHaveLength(4);
+    expect(row.tries).toBe(3);
+    expect(row.crop_keys).toHaveLength(3);
   });
 
   it('no face, two faces and poor light are not tries', async () => {
     const tablet = await tabletFor('ALPHA');
     const s = await start(tablet);
     for (const opts of [{ faces: 0 }, { faces: 2 }, { brightness: 10 }]) {
-      const cur = (await prisma.punchSession.findUnique({ where: { id: s.session_id } })).state.challenge;
-      next = scanOf(FACE.A, cur, opts);
+      next = scanOf(FACE.A, opts);
       const r = await upload(tablet, s.session_id);
       expect(r.body.data.tries_left).toBe(5);
     }
@@ -283,8 +305,7 @@ describe('Tries and the manual request', () => {
     const s = await start(tablet);
     let last;
     for (let i = 0; i < 5; i++) {
-      const cur = (await prisma.punchSession.findUnique({ where: { id: s.session_id } })).state.challenge;
-      next = scanOf(FACE.STRANGER, cur);
+      next = scanOf(FACE.STRANGER);
       last = (await upload(tablet, s.session_id)).body.data;
     }
     expect(last.status).toBe('BLOCKED');
@@ -333,7 +354,7 @@ describe('The face service is busy', () => {
     expect(busy.body.data.tries_left).toBe(5);
     expect(busy.body.data.retry_same_request).toBe(true);
 
-    next = scanOf(FACE.A, s.challenge);
+    next = scanOf(FACE.A);
     const retry = await upload(tablet, s.session_id, 'req-busy-0001');
     expect(retry.status).toBe(200);
     expect(retry.body.data.outcome).toBe('IDENTIFIED');
@@ -372,7 +393,7 @@ describe('Challenge expiry', () => {
     const tablet = await tabletFor('ALPHA');
     const s = await start(tablet);
     at(2);
-    next = scanOf(FACE.A, s.challenge);
+    next = scanOf(FACE.A);
     const r = await upload(tablet, s.session_id);
     expect(r.body.data.outcome).toBe('EXPIRED');
     expect(r.body.data.message).toBe('That took too long. Try again.');
@@ -393,29 +414,37 @@ describe('Challenge expiry', () => {
   });
 });
 
-describe('Register face on the tablet', () => {
-  it('registers with ID and name; a second registration and a face already someone else’s are refused', async () => {
+describe('Register face on the tablet: four guided pictures', () => {
+  it('registers with ID and name as three face codes; a second registration and a face already someone else’s are refused', async () => {
     const tablet = await tabletFor('ALPHA');
     const wrongName = await tablet.post('/api/v1/punches/sessions').send({ purpose: 'REGISTER', employee_code: 'T003', name: 'Someone Else', ...tablet.pos });
     expect(wrongName.status).toBe(422);
 
     // C tries to register with A's face: refused, nothing saved.
     const dupSession = await start(tablet, { purpose: 'REGISTER', employee_code: 'T003', name: 'Person C' });
-    next = scanOf(FACE.A, dupSession.challenge);
-    const dup = await upload(tablet, dupSession.session_id);
+    next = registrationOf(FACE.A);
+    const dup = await uploadRegistration(tablet, dupSession.session_id);
     expect(dup.body.data.outcome).toBe('DUPLICATE_FACE');
     expect(dup.body.data.message).toBe('This face is already registered to another person. Ask HR.');
     expect(await prisma.employeeFace.count({ where: { employee_id: f.employees.C, model_version: MODEL_VERSION } })).toBe(0);
     expect(await prisma.auditLog.count({ where: { action: 'face.register_refused', entity_id: f.employees.C } })).toBe(1);
 
-    // C with their own face: registered, and can punch at once.
+    // Two pictures alone are not a registration.
     const ok = await start(tablet, { purpose: 'REGISTER', employee_code: 'T003', name: 'Person C' });
     expect(ok.employee).toEqual({ name: 'Person C', code: 'T003' });
-    next = scanOf(FACE.C, ok.challenge);
-    const reg = await upload(tablet, ok.session_id);
-    expect(reg.body.data.outcome).toBe('REGISTERED');
-    const t = await prisma.employeeFace.findFirst({ where: { employee_id: f.employees.C, model_version: MODEL_VERSION } });
-    expect(t).toMatchObject({ kind: 'REGISTERED', site_id: sites.ALPHA });
+    expect((await upload(tablet, ok.session_id)).status).toBe(422);
+
+    // C with their own face: the four pictures are analysed as two pairs; straight, left and right are kept.
+    face.analyze.mockClear();
+    next = registrationOf(FACE.C);
+    const reg = await uploadRegistration(tablet, ok.session_id);
+    expect(reg.body.data.outcome, JSON.stringify(reg.body)).toBe('REGISTERED');
+    expect(face.analyze).toHaveBeenCalledTimes(2);
+    const kept = await prisma.employeeFace.findMany({ where: { employee_id: f.employees.C, model_version: MODEL_VERSION, deleted_at: null } });
+    expect(kept).toHaveLength(3);
+    expect(kept.every((t) => t.kind === 'REGISTERED' && t.site_id === sites.ALPHA)).toBe(true);
+    const audit = await prisma.auditLog.findFirst({ where: { action: 'face.register', entity_id: f.employees.C } });
+    expect(audit.detail).toMatchObject({ pictures: 4, templates: 3, turns: { left: 25, right: 25 } });
     expect((await scan(tablet, FACE.C)).d.outcome).toBe('IDENTIFIED');
 
     const again = await tablet.post('/api/v1/punches/sessions').send({ purpose: 'REGISTER', employee_code: 'T003', name: 'Person C', ...tablet.pos });
@@ -423,11 +452,28 @@ describe('Register face on the tablet', () => {
     expect(again.body.error.code).toBe('ALREADY_REGISTERED');
   });
 
-  it('registration needs the live face and the head turn', async () => {
+  it('the head turns prove a live person: each must be seen, the right way, by the same person', async () => {
     const tablet = await tabletFor('ALPHA');
     const s = await start(tablet, { purpose: 'REGISTER', employee_code: 'T003', name: 'Person C' });
-    next = scanOf(FACE.C, s.challenge, { live: 0.1 });
-    expect((await upload(tablet, s.session_id)).body.data.outcome).toBe('NOT_LIVE');
+    const tryWith = async (opts) => {
+      next = registrationOf(FACE.C, opts);
+      return (await uploadRegistration(tablet, s.session_id)).body.data;
+    };
+    expect(await tryWith({ yaw: { left: 6 } })).toMatchObject({ outcome: 'CHALLENGE_FAILED', code: 'TURN_LEFT_NOT_SEEN' });
+    // Turned left when asked to turn right.
+    expect(await tryWith({ yaw: { right: 20 } })).toMatchObject({ outcome: 'CHALLENGE_FAILED', code: 'TURN_RIGHT_NOT_SEEN' });
+    expect(await tryWith({ who: { blink: FACE.STRANGER } })).toMatchObject({ outcome: 'CHALLENGE_FAILED', code: 'NOT_SAME_PERSON' });
+    expect(await prisma.employeeFace.count({ where: { employee_id: f.employees.C, model_version: MODEL_VERSION } })).toBe(0);
+    // A webcam that scores a real face low is still a real person once the turns are seen.
+    const webcam = { front: 0.3, left: 0.12, right: 0.25, blink: 0.08 };
+    expect(await tryWith({ live: webcam })).toMatchObject({ outcome: 'REGISTERED' });
+  });
+
+  it('a flat photo is refused: it scores as not live in every picture', async () => {
+    const tablet = await tabletFor('ALPHA');
+    const s = await start(tablet, { purpose: 'REGISTER', employee_code: 'T003', name: 'Person C' });
+    next = registrationOf(FACE.C, { live: { front: 0.05, left: 0.04, right: 0.06, blink: 0.05 } });
+    expect((await uploadRegistration(tablet, s.session_id)).body.data.outcome).toBe('NOT_LIVE');
     expect(await prisma.employeeFace.count({ where: { employee_id: f.employees.C, model_version: MODEL_VERSION } })).toBe(0);
   });
 });

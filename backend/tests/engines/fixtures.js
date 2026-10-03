@@ -1,4 +1,4 @@
-import { AJPWER_LEAVE_TYPES, SEED_PT_SLABS, SEED_TAX_REGIMES, STATUTORY_MINIMUM_RATES, istMidnight } from '@ajpwer/shared';
+import { AJPWER_LEAVE_TYPES, SEED_PT_SLABS, SEED_TAX_REGIMES, STATUTORY_GRATUITY_RULES, STATUTORY_MINIMUM_RATES, istMidnight } from '@ajpwer/shared';
 
 export const R = (rupees) => Math.round(rupees * 100);
 
@@ -41,17 +41,17 @@ export const HOLIDAY_WORK = policy('HOLIDAY_WORK', {
   holiday: { mode: 'PAY', rate_pct: 200, base: 'GROSS', min_minutes: 240 },
   weekly_off: { mode: 'PAY', rate_pct: 200, base: 'GROSS', min_minutes: 240 },
 });
-export const LATE = policy('LATE_PENALTY', {
-  free_per_month: 3,
-  slabs: [
-    { from_min: 1, to_min: 30, deduct_days: 0.25 },
-    { from_min: 31, to_min: 120, deduct_days: 0.5 },
-    { from_min: 121, to_min: null, deduct_days: 1 },
-  ],
-});
 export const LEAVE = policy('LEAVE', { types: AJPWER_LEAVE_TYPES });
 
+/** AJPWER's own rules: a 9-hour day, 15 minutes' grace, up to 4 hours a half day, overtime from shift end. */
+export const NINE_HOUR_DAY = policy('ATTENDANCE', { standard_min: 540, half_day_min: 0, half_day_upto_min: 240, grace_min: 15 });
+export const OVERTIME_FROM_SHIFT_END = policy('OVERTIME', { ...OVERTIME.rules, after_min: 0, rounding_min: 1, counts_from: 'SHIFT_END' });
+export const GRATUITY_RULES = STATUTORY_GRATUITY_RULES;
+
 export const SHIFT_START = 9 * 60;
+/** The general shift, 09:00–18:00 with an hour's break. */
+export const SHIFT_END = 18 * 60;
+export const SHIFT_BREAK = 60;
 
 let pid = 0;
 /** A punch at IST hh:mm on a date. */
@@ -88,7 +88,7 @@ export function fullMonthTotals(ym, dim, overrides = {}) {
     holidays: 0,
     off_days_worked: 0,
     late_days: 0,
-    late_penalty_days: 0,
+    early_out_days: 0,
     ot_min: 0,
     worked_min: 0,
     day_value_sum: dim,

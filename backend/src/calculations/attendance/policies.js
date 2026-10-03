@@ -31,7 +31,6 @@ export function resolvePolicies(policies, date) {
     weekoff_pay: get('WEEKOFF_PAY'),
     holiday_pay: get('HOLIDAY_PAY'),
     holiday_work: get('HOLIDAY_WORK'),
-    late_penalty: get('LATE_PENALTY'),
     used,
   };
 }

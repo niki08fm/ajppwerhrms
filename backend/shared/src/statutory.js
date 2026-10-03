@@ -36,22 +36,12 @@ export const esiRatesSchema = z
   })
   .strict();
 
-export const gratuityRatesSchema = z
-  .object({
-    min_years: z.number().min(0),
-    /** Service between this and min_years raises a warning instead of silently paying nothing */
-    flag_from_years: z.number().min(0),
-    days_per_year: z.number().min(0),
-    divisor: z.number().int().min(1),
-  })
-  .strict();
-
+/** Gratuity is not here: it is a policy attached to each pay group (see policy.js). */
 export const statutoryRatesSchema = z
   .object({
     valid_from: z.string(),
     pf: pfRatesSchema,
     esi: esiRatesSchema,
-    gratuity: gratuityRatesSchema,
     recovery_cap_pct: percent,
   })
   .strict();
@@ -68,7 +58,6 @@ export const STATUTORY_MINIMUM_RATES = {
     admin_pct: 0.5,
   },
   esi: { ceiling: 21_000_00, employee_pct: 0.75, employer_pct: 3.25 },
-  gratuity: { min_years: 5, flag_from_years: 4.5, days_per_year: 15, divisor: 26 },
   recovery_cap_pct: 40,
 };
 

@@ -4,6 +4,7 @@
  * what lets a payroll run be reproduced months later.
  */
 export * from './attendance/index.js';
+export * from './leave/index.js';
 export * from './pay/index.js';
 export * from './statutory/index.js';
 export * from './settlement/index.js';

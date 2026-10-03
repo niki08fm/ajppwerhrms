@@ -3,13 +3,14 @@ import { computeEsi } from '../statutory/esi.js';
 import { computePf, pfChallanCharges, pfEmployerCost } from '../statutory/pf.js';
 import { computePt } from '../statutory/pt.js';
 import { monthlyTds } from '../statutory/incomeTax.js';
+import { encashAmount } from '../leave/index.js';
 import { earnedAfterLop, LOP_RULE_TEXT } from './lop.js';
 import { baseMonthly, describeRate, offDayExtra, overtimePay } from './overtime.js';
 import { expandStructure } from './structure.js';
 import { applyRecoveryCap } from './recovery.js';
 
 /** Stored on every payslip. Bump when a computation changes so old months stay explainable. */
-export const ENGINE_VERSION = '1.2.0';
+export const ENGINE_VERSION = '1.3.0';
 
 export class PayslipReconciliationError extends Error {
   constructor(message) {
@@ -92,6 +93,15 @@ export function assemblePayslip(input) {
     });
   }
 
+  // 4b. Leave paid out at the end of the leave year — one line per type.
+  let leaveTotal = 0;
+  for (const l of input.leave_encashment ?? []) {
+    const amount = encashAmount(l.days, l.base, l.divisor, full);
+    if (amount <= 0) continue;
+    leaveTotal += amount;
+    push({ kind: 'LEAVE', code: `LEAVE:${l.code}`, name: `Leave encashment — ${l.name}, ${l.days} days`, full_amount: amount, amount, is_taxable: true, counts_as_wages: false });
+  }
+
   // 5. Adhoc earnings.
   let adhocEarnings = 0;
   let adhocTaxable = 0;
@@ -102,7 +112,7 @@ export function assemblePayslip(input) {
   }
 
   // 6. Gross.
-  const salary_gross = componentsEarned + yearlyTotal + otAmount + offdayTotal;
+  const salary_gross = componentsEarned + yearlyTotal + otAmount + offdayTotal + leaveTotal;
   const gross = salary_gross + adhocEarnings;
   // ESI and PT are computed on salary earnings (components, overtime, off-day pay).
   // Whether a taxable bonus also counts here is an open question with AJPWER (spec §6).
@@ -118,7 +128,7 @@ export function assemblePayslip(input) {
     basic: full.basic * monthsInFy,
     hra: full.hra * monthsInFy,
   };
-  const oneOffTaxable = yearlyTaxable + adhocTaxable + otAmount + offdayTotal;
+  const oneOffTaxable = yearlyTaxable + adhocTaxable + otAmount + offdayTotal + leaveTotal;
   const tdsCalc = monthlyTds(projected, oneOffTaxable, input.tax.declarations, input.tax.regime);
   // monthlyTds spreads over 12; re-spread over the months actually employed this year.
   const regular = Math.round(tdsCalc.annual / monthsInFy / 100) * 100;
@@ -181,7 +191,7 @@ export function assemblePayslip(input) {
   if (net < 0) flags.push('NEGATIVE_NET');
 
   // Reconciliation — fail the run rather than write a payslip that does not add up.
-  const earningLines = lines.filter((l) => ['COMPONENT', 'YEARLY', 'OT', 'OFFDAY', 'ADHOC'].includes(l.kind)).reduce((s, l) => s + l.amount, 0);
+  const earningLines = lines.filter((l) => ['COMPONENT', 'YEARLY', 'OT', 'OFFDAY', 'LEAVE', 'ADHOC'].includes(l.kind)).reduce((s, l) => s + l.amount, 0);
   if (earningLines !== gross) throw new PayslipReconciliationError(`Earning lines ${earningLines} ≠ gross ${gross}`);
   const dedLines = lines.filter((l) => l.kind === 'DEDUCTION').reduce((s, l) => s + l.amount, 0);
   if (dedLines !== total_deductions) throw new PayslipReconciliationError(`Deduction lines ${dedLines} ≠ total ${total_deductions}`);

@@ -7,6 +7,7 @@ export const tabletRouter = Router();
 
 tabletRouter.get('/tablet/summary', requireSite, tabletController.getSummary);
 tabletRouter.get('/tablet/sites', requireSite, tabletController.listOtherSites);
+tabletRouter.get('/tablet/employees', requireSite, tabletController.searchEmployees);
 
 // Face v2 punches (face/INTEGRATION.md §3): start → frames (retry = same request_id) → confirm / not me / change site; after the try limit → manual.
 tabletRouter.post('/punches/sessions', requireSite, tabletController.startSession);

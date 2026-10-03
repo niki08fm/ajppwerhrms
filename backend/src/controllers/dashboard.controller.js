@@ -1,4 +1,4 @@
-import { addDays, addMonths, firstOfMonth, istDate, ymOf } from '@ajpwer/shared';
+import { addDays, addMonths, firstOfMonth, isoDate, istDate, ymOf } from '@ajpwer/shared';
 import { fromDbDate, n, toDbDate } from '../utils/dbDates.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { prisma } from '../config/db.js';
@@ -32,12 +32,38 @@ export const getToday = asyncHandler(async (_req, res) => {
       present: count(['PRESENT', 'HALF_DAY', 'SHORT', 'MISSING_PUNCH', 'HOLIDAY_WORKED', 'OFF_WORKED']),
       absent: count(['ABSENT']),
       late: rows.filter((r) => r.day.late_min > 0).length,
+      early: rows.filter((r) => r.day.early_min > 0).length,
       on_leave: count(['ON_LEAVE']),
       off: count(['WEEKLY_OFF', 'HOLIDAY']),
       ot_min: rows.reduce((a, r) => a + r.day.ot_min, 0),
       on_site_now: rows.filter((r) => r.open_now).length,
       missing_punch: rows.filter((r) => r.day.status === 'MISSING_PUNCH' && !r.open_now).length,
       expected: working.length,
+    };
+  });
+  res.json({ data });
+});
+
+/**
+ * Late logins and early punch-outs on a day, for HR to follow up. Late is past the grace
+ * period; early is out before the day was done (shift end, or a standard day after a late
+ * arrival). Neither is deducted.
+ */
+export const getPunctuality = asyncHandler(async (req, res) => {
+  const date = isoDate.parse(req.query.date ?? today());
+  const data = await cached(`punctuality:${date}`, 30_000, async () => {
+    const rows = await dayRegister(prisma, date, undefined, today());
+    const person = (r) => ({ id: r.employee.id, code: r.employee.code, name: r.employee.name, department: r.employee.department.name });
+    return {
+      date,
+      late: rows
+        .filter((r) => r.day.late_min > 0)
+        .map((r) => ({ employee: person(r), in_min: r.in_min, late_min: r.day.late_min, due_out_min: r.day.due_out_min, open_now: r.open_now }))
+        .sort((a, b) => b.late_min - a.late_min),
+      early: rows
+        .filter((r) => r.day.early_min > 0)
+        .map((r) => ({ employee: person(r), out_min: r.out_min, early_min: r.day.early_min, due_out_min: r.day.due_out_min, worked_min: r.day.worked_min, status: r.day.status }))
+        .sort((a, b) => b.early_min - a.early_min),
     };
   });
   res.json({ data });
@@ -87,19 +113,23 @@ export const getNetByMonth = asyncHandler(async (_req, res) => {
 });
 
 export const getPeople = asyncHandler(async (_req, res) => {
-  const [pipeline, leavers, held, pendingFace, pendingLeave, expiring] = await Promise.all([
+  const [pipeline, leavers, held, pendingFace, pendingLeave, expiring, holds, unpaidHeld] = await Promise.all([
     prisma.employee.groupBy({ by: ['status'], _count: true, where: { deleted_at: null } }),
     prisma.employee.findMany({ where: { deleted_at: null, status: 'NOTICE' }, select: { id: true, code: true, name: true, last_day: true }, orderBy: { last_day: 'asc' }, take: 10 }),
     heldBackList(prisma),
     prisma.faceException.count({ where: { status: 'PENDING' } }),
     prisma.leaveRequest.count({ where: { status: 'PENDING', deleted_at: null } }),
     prisma.document.count({ where: { deleted_at: null, expires_on: { lte: toDbDate(addDays(today(), 30)) }, employee: { status: { in: ['ACTIVE', 'NOTICE'] } } } }),
+    prisma.salaryHold.findMany({ where: { released_at: null, deleted_at: null }, select: { employee: { select: { id: true, name: true } } } }),
+    prisma.heldPay.aggregate({ where: { state: 'HELD' }, _sum: { amount: true }, _count: true }),
   ]);
   res.json({
     data: {
       pipeline: Object.fromEntries(pipeline.map((p) => [p.status, p._count])),
       leavers: leavers.map((l) => ({ ...l, last_day: fromDbDate(l.last_day) })),
       held_back: held,
+      // Salaries on hold now, and held salary not yet released.
+      held_salaries: { people: holds.map((h) => h.employee), unpaid_months: unpaidHeld._count, unpaid: Number(unpaidHeld._sum.amount ?? 0n) },
       approvals: { face: pendingFace, leave: pendingLeave },
       documents_expiring: expiring,
     },

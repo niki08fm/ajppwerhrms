@@ -1,7 +1,24 @@
 import { describe, expect, it } from 'vitest';
 import { assemblePayslip, assignWorkDate, computeDay, dayIntervals, overrideDiffers, pairPunches, projectLabourCost, resolvePolicies, runEmployeeMonth } from '../../src/calculations/index.js';
 import { istMidnight, monthDates, dayName } from '@ajpwer/shared';
-import { ATTENDANCE, fullDay, HOLIDAY_PAID, HOLIDAY_WORK, LATE, OVERTIME, payslipInput, policy, punch, R, SHIFT_START, WEEKOFF_PAID, WEEKOFF_SANDWICH } from './fixtures.js';
+import {
+  ATTENDANCE,
+  fullDay,
+  HOLIDAY_PAID,
+  HOLIDAY_WORK,
+  NINE_HOUR_DAY,
+  OVERTIME,
+  OVERTIME_FROM_SHIFT_END,
+  payslipInput,
+  policy,
+  punch,
+  R,
+  SHIFT_BREAK,
+  SHIFT_END,
+  SHIFT_START,
+  WEEKOFF_PAID,
+  WEEKOFF_SANDWICH,
+} from './fixtures.js';
 
 const day = (date, punches = fullDay(date), policies = [ATTENDANCE, OVERTIME], extra = {}) =>
   computeDay({
@@ -114,7 +131,8 @@ describe('§20.18 Policy versioning', () => {
     const march = day('2026-03-31', [punch('2026-03-31', '09:12', 'IN'), punch('2026-03-31', '17:30', 'OUT')], [v1, v2]);
     const april = day('2026-04-01', [punch('2026-04-01', '09:12', 'IN'), punch('2026-04-01', '17:30', 'OUT')], [v1, v2]);
     expect(march.late_min).toBe(0);
-    expect(april.late_min).toBe(2);
+    // Past the grace period, lateness counts from the shift start.
+    expect(april.late_min).toBe(12);
   });
 
   it('two overlapping versions: the later valid_from covering the date wins', () => {
@@ -193,22 +211,110 @@ describe('§20.20 Off-day work', () => {
   });
 });
 
-describe('§20.21 Late penalty is monthly', () => {
-  const lateOn = (dates) => {
-    const input = september({ policies: [ATTENDANCE, WEEKOFF_PAID, HOLIDAY_PAID, LATE] });
-    for (const d of dates) input.punches[d] = [punch(d, '09:40', 'IN'), punch(d, '18:00', 'OUT')];
-    return runEmployeeMonth(input);
-  };
-  it('three lates with a free-three policy cost nothing', () => {
-    const m = lateOn(['2026-09-01', '2026-09-02', '2026-09-03']);
-    expect(m.totals.late_days).toBe(3);
-    expect(m.totals.late_penalty_days).toBe(0);
+describe('Late logins and early punch-outs are flagged, never deducted', () => {
+  it('a month of late arrivals and early exits costs no pay, and both are counted', () => {
+    const input = september({ policies: [NINE_HOUR_DAY, WEEKOFF_PAID, HOLIDAY_PAID], shift_end_min: SHIFT_END });
+    for (const d of Object.keys(input.punches)) input.punches[d] = [punch(d, '09:00', 'IN'), punch(d, '18:00', 'OUT')];
+    for (const d of ['2026-09-01', '2026-09-02', '2026-09-03', '2026-09-04']) input.punches[d] = [punch(d, '09:40', 'IN'), punch(d, '18:00', 'OUT')];
+    input.punches['2026-09-05'] = [punch('2026-09-05', '09:00', 'IN'), punch('2026-09-05', '17:00', 'OUT')];
+    const m = runEmployeeMonth(input);
+    expect(m.totals.late_days).toBe(4);
+    expect(m.totals.early_out_days).toBe(5); // the four late ones left at 18:00, short of nine hours; one left at 17:00
+    expect(m.totals.paid_days).toBe(30);
+    expect(m.totals.lop_days).toBe(0);
   });
-  it('the fourth costs by its slab', () => {
-    const m = lateOn(['2026-09-01', '2026-09-02', '2026-09-03', '2026-09-04']);
-    expect(m.totals.late_penalty_days).toBe(0.25); // 25 minutes late → 1–30 slab
-    expect(m.totals.paid_days).toBe(29.75);
-    expect(m.days.find((d) => d.date === '2026-09-04').late_penalty_days).toBe(0.25);
+});
+
+/** One day under AJPWER's rules: general shift 09:00–18:00, 9-hour day, 15 minutes' grace. */
+const ajDay = (punches, policies = [NINE_HOUR_DAY, OVERTIME_FROM_SHIFT_END], extra = {}) =>
+  day('2026-09-01', punches, policies, { shift_end_min: SHIFT_END, shift_break_min: SHIFT_BREAK, ...extra });
+const at = (inAt, outAt) => [punch('2026-09-01', inAt, 'IN'), punch('2026-09-01', outAt, 'OUT')];
+
+describe('AJPWER attendance: a 9-hour day, half day up to 4 hours', () => {
+  it('up to 4 hours worked is a half day; more is a full day', () => {
+    expect(ajDay(at('09:00', '13:00')).status).toBe('HALF_DAY');
+    expect(ajDay(at('09:00', '13:01')).status).toBe('PRESENT');
+    expect(ajDay(at('09:00', '09:30')).status).toBe('HALF_DAY'); // nothing is short: half day from 0
+    expect(ajDay(at('09:00', '13:01')).day_value).toBe(1);
+  });
+
+  it('within the 15-minute grace nobody is late; past it, lateness counts from 09:00', () => {
+    expect(ajDay(at('09:15', '18:00')).late_min).toBe(0);
+    const d = ajDay(at('09:16', '18:30'));
+    expect(d.late_min).toBe(16);
+    expect(d.flags).toContain('LATE');
+  });
+
+  it('the day ends at 18:00, or nine hours after a late arrival', () => {
+    expect(ajDay(at('08:40', '18:00')).due_out_min).toBe(SHIFT_END);
+    expect(ajDay(at('09:15', '18:00')).due_out_min).toBe(SHIFT_END);
+    expect(ajDay(at('09:30', '18:30')).due_out_min).toBe(18 * 60 + 30);
+  });
+
+  it('leaving before the day ends is flagged as early, never deducted', () => {
+    const early = ajDay(at('09:00', '17:40'));
+    expect(early.early_min).toBe(20);
+    expect(early.flags).toContain('EARLY_OUT');
+    expect(early.status).toBe('PRESENT');
+    expect(early.day_value).toBe(1);
+    // In late at 09:30 and out at 18:00: thirty minutes short of the nine hours.
+    expect(ajDay(at('09:30', '18:00')).early_min).toBe(30);
+    expect(ajDay(at('09:30', '18:30')).early_min).toBe(0);
+    expect(ajDay(at('09:15', '18:00')).early_min).toBe(0);
+  });
+
+  it('a day with a missing punch is not called early', () => {
+    const d = ajDay([punch('2026-09-01', '09:00', 'IN')]);
+    expect(d.status).toBe('MISSING_PUNCH');
+    expect(d.early_min).toBe(0);
+  });
+});
+
+describe('AJPWER overtime: from shift end, or once nine hours are done after a late arrival', () => {
+  it('on time: overtime starts at 18:00; coming in early earns none', () => {
+    expect(ajDay(at('09:00', '20:00')).ot_min).toBe(120);
+    expect(ajDay(at('08:00', '19:00')).ot_min).toBe(60);
+  });
+
+  it('inside the grace period (09:15) overtime still starts at 18:00', () => {
+    expect(ajDay(at('09:15', '19:00')).ot_min).toBe(60);
+  });
+
+  it('after a late arrival overtime starts once nine hours are done', () => {
+    expect(ajDay(at('09:30', '18:30')).ot_min).toBe(0);
+    expect(ajDay(at('09:30', '19:30')).ot_min).toBe(60);
+    expect(ajDay(at('09:30', '18:00')).ot_min).toBe(0);
+  });
+
+  it('a lunch break within the shift allowance does not cut overtime; a longer one does', () => {
+    const lunch = (back) => [punch('2026-09-01', '09:00', 'IN'), punch('2026-09-01', '13:00', 'OUT'), punch('2026-09-01', back, 'IN'), punch('2026-09-01', '20:00', 'OUT')];
+    expect(ajDay(lunch('13:45')).ot_min).toBe(120);
+    expect(ajDay(lunch('15:00')).ot_min).toBe(60); // two hours out: an hour past the allowance comes off
+  });
+
+  it('time after 18:00 earns nothing when the day itself was not worked', () => {
+    const d = ajDay([punch('2026-09-01', '09:00', 'IN'), punch('2026-09-01', '11:00', 'OUT'), punch('2026-09-01', '16:00', 'IN'), punch('2026-09-01', '20:00', 'OUT')]);
+    expect(d.worked_min).toBe(360);
+    expect(d.ot_min).toBe(0);
+  });
+
+  it('the policy minimum and rounding still apply', () => {
+    const rounded = policy('OVERTIME', { ...OVERTIME_FROM_SHIFT_END.rules, after_min: 30, rounding_min: 30 });
+    expect(ajDay(at('09:00', '18:25'), [NINE_HOUR_DAY, rounded]).ot_min).toBe(0);
+    expect(ajDay(at('09:00', '19:10'), [NINE_HOUR_DAY, rounded]).ot_min).toBe(60);
+  });
+
+  it('a night shift ending after midnight counts overtime past its end the next morning', () => {
+    const night = [punch('2026-09-01', '20:55', 'IN'), { ...punch('2026-09-02', '06:45', 'OUT'), work_date: '2026-09-01' }];
+    const d = ajDay(night, [NINE_HOUR_DAY, OVERTIME_FROM_SHIFT_END], { shift_start_min: 21 * 60, shift_end_min: 30 * 60 });
+    expect(d.late_min).toBe(0);
+    expect(d.ot_min).toBe(45);
+  });
+
+  it('policies without the new settings keep their old meaning', () => {
+    // 92% of the standard day is still a full day, and overtime is time beyond the standard day.
+    expect(day('2026-09-01', [punch('2026-09-01', '09:00', 'IN'), punch('2026-09-01', '16:55', 'OUT')]).status).toBe('PRESENT');
+    expect(day('2026-09-01', [punch('2026-09-01', '09:00', 'IN'), punch('2026-09-01', '18:00', 'OUT')]).ot_min).toBe(60);
   });
 });
 

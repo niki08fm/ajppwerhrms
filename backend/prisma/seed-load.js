@@ -31,13 +31,13 @@ async function main() {
   await prisma.$executeRawUnsafe(`
     WITH n AS (SELECT g AS i FROM generate_series(1, ${toAdd}) g),
     ins AS (
-      INSERT INTO employee (id, code, name, gender, phone, department_id, designation, pay_group_id, status, joined_on, activated_at, notice_days)
+      INSERT INTO employee (id, code, name, gender, phone, department_id, designation, pay_group_id, status, joined_on, activated_at)
       SELECT gen_random_uuid(), 'LT' || lpad(i::text, 4, '0'), 'Load Worker ' || i,
              CASE WHEN i % 7 = 0 THEN 'FEMALE'::"Gender" ELSE 'MALE'::"Gender" END,
              '98' || lpad((10000000 + i)::text, 8, '0'),
              (SELECT id FROM department ORDER BY name OFFSET (i % ${depts.length}) LIMIT 1),
              (ARRAY['Lineman','Electrician','Fitter','Mason','Rigger','Helper'])[1 + i % 6],
-             '${group.id}'::uuid, 'ACTIVE', DATE '${start}' + (i % 400), now(), 30
+             '${group.id}'::uuid, 'ACTIVE', DATE '${start}' + (i % 400), now()
       FROM n RETURNING id, joined_on
     ),
     st AS (INSERT INTO employee_statutory (id, employee_id, pt_state, esi_enabled) SELECT gen_random_uuid(), id, 'Andhra Pradesh', true FROM ins RETURNING employee_id),

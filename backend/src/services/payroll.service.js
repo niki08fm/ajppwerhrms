@@ -1,4 +1,4 @@
-import { firstOfMonth, formatYearMonth, lastOfMonth } from '@ajpwer/shared';
+import { firstOfMonth, formatYearMonth, lastOfMonth, ymOf } from '@ajpwer/shared';
 import { solveGrossFromCtc } from '../calculations/index.js';
 import { audit } from '../utils/audit.js';
 import { fromDbDate, n, toDbDate } from '../utils/dbDates.js';
@@ -37,7 +37,9 @@ export async function payContext(db, ym, ratesId) {
 /**
  * Who the run covers. Nobody is paid before activation: OFFER, ACCEPTED and
  * ONBOARDING never appear. Leavers whose last day falls in the month appear only
- * if their settlement is ticked for this run. Held-back people are removed.
+ * if their F&F is processed in this run; a leaver from an earlier month whose F&F
+ * is processed here appears too, with their final month (`final_ym`). People left
+ * out of the run are removed.
  */
 export async function runPopulation(db, ym, periodId, settlementIds) {
   const first = toDbDate(firstOfMonth(ym));
@@ -48,7 +50,7 @@ export async function runPopulation(db, ym, periodId, settlementIds) {
         deleted_at: null,
         status: { in: ['ACTIVE', 'NOTICE', 'EXITED'] },
         joined_on: { lte: last },
-        OR: [{ last_day: null }, { last_day: { gte: first } }],
+        OR: [{ last_day: null }, { last_day: { gte: first } }, ...(settlementIds.length ? [{ settlements: { some: { id: { in: settlementIds } } } }] : [])],
       },
       include: employeeInclude,
       orderBy: { code: 'asc' },
@@ -69,7 +71,8 @@ export async function runPopulation(db, ym, periodId, settlementIds) {
       leaversOpen.push(e);
       continue;
     }
-    included.push(e);
+    // A leaver from an earlier month is paid their final month here, with the F&F.
+    included.push(lastDay !== null && lastDay < firstOfMonth(ym) ? { ...e, final_ym: ymOf(lastDay) } : e);
   }
   return { included, excluded: exclusions, leaversOpen, settlingIds };
 }
@@ -89,23 +92,58 @@ export function toPayslipEmployee(e) {
   };
 }
 
-/** Compute every payslip for a month from live data without writing anything. */
+/**
+ * Held salary released into this month: its own lines, adding to net pay only. It was
+ * taxed and counted as wages in the month it was earned, so it is neither again.
+ */
+function addReleasedHeld(result, rows) {
+  let seq = result.lines.reduce((m, l) => Math.max(m, l.seq), 0);
+  for (const h of rows) {
+    const amount = n(h.amount);
+    result.lines.push({ seq: ++seq, kind: 'HELD', code: `HELD:${h.period_ym}`, name: `Held salary for ${formatYearMonth(h.period_ym)}`, full_amount: amount, amount, is_taxable: false, counts_as_wages: false });
+    result.net += amount;
+    result.held_released = (result.held_released ?? 0) + amount;
+  }
+}
+
+/**
+ * Compute every payslip for a month from live data without writing anything. A salary hold
+ * standing this month marks the payslip held: calculated as usual, kept out of the bank file.
+ */
 export async function computeRun(db, ym, employees, ctx, settlingIds, onProgress) {
-  const months = await computeMonths(db, employees, ym);
+  const regular = employees.filter((e) => !e.final_ym);
+  const ids = employees.map((e) => e.id);
+  const months = await computeMonths(db, regular, ym);
   const recoveries = await loadRecoveries(
     db,
-    employees.map((e) => e.id),
+    regular.map((e) => e.id),
     ym,
   );
+  // A leaver from an earlier month: their final month, worked out for that month as the F&F does.
+  const finals = new Map();
+  for (const e of employees.filter((x) => x.final_ym)) {
+    finals.set(e.id, { month: (await computeMonths(db, [e], e.final_ym)).get(e.id), ctx: await payContext(db, e.final_ym) });
+  }
+  const [holds, queued] = await Promise.all([
+    db.salaryHold.findMany({ where: { employee_id: { in: ids }, deleted_at: null, released_at: null, from_ym: { lte: ym } } }),
+    db.heldPay.findMany({ where: { employee_id: { in: ids }, state: 'QUEUED', pay_ym: ym } }),
+  ]);
   const payslips = [];
   const errors = [];
   let done = 0;
   for (const e of employees) {
     try {
+      const settling = settlingIds.has(e.id);
+      const fin = finals.get(e.id);
       // A settling leaver's loans and advances are recovered in full by the settlement, not by EMI.
-      const rec = settlingIds.has(e.id) ? null : (recoveries.get(e.id) ?? null);
-      const p = await computePayslip(db, toPayslipEmployee(e), ym, months.get(e.id), ctx, rec);
-      payslips.push({ ...p, employee: e });
+      const rec = settling ? null : (recoveries.get(e.id) ?? null);
+      const p = fin ? await computePayslip(db, toPayslipEmployee(e), e.final_ym, fin.month, fin.ctx, null) : await computePayslip(db, toPayslipEmployee(e), ym, months.get(e.id), ctx, rec);
+      // The F&F pays a leaver; a hold ends when it is processed.
+      const hold = settling ? null : (holds.find((h) => h.employee_id === e.id) ?? null);
+      // Held salary released into this month is paid as its own line — not while this month is held, nor for a leaver whose F&F pays it.
+      const release = hold || settling ? [] : queued.filter((q) => q.employee_id === e.id);
+      if (release.length) addReleasedHeld(p.result, release);
+      payslips.push({ ...p, employee: e, hold, final_ym: e.final_ym ?? null, released: release });
     } catch (err) {
       errors.push({ employee_id: e.id, code: e.code, name: e.name, message: err instanceof Error ? err.message : String(err) });
     }
@@ -131,6 +169,7 @@ export const ISSUE_LABELS = {
   CTC_ESI_BAND: 'CTC in the ESI band',
   OT_OVER_CAP: 'Overtime over the monthly cap',
   NO_POLICY: 'No attendance policy on some days',
+  HELD_NOT_PAID: 'Released held salary not paid',
 };
 
 export async function computeIssues(db, ym) {
@@ -153,18 +192,30 @@ export async function computeIssues(db, ym) {
   }
   const first = firstOfMonth(ym);
   const last = lastOfMonth(ym);
+  const heldIds = new Set(run.payslips.filter((p) => p.hold).map((p) => p.employee.id));
   for (const e of population.included) {
     const idn = e.identity;
-    if (!idn?.bank_account_enc || !idn.bank_ifsc) add(e, 'NO_BANK', 'BLOCKING', 'No bank account on file — the salary cannot be transferred.', 'overview');
+    if (!idn?.bank_account_enc || !idn.bank_ifsc) {
+      if (heldIds.has(e.id)) add(e, 'NO_BANK', 'WARNING', 'No bank account on file. The salary is on hold, so nothing is transferred until it is released.', 'overview');
+      else add(e, 'NO_BANK', 'BLOCKING', 'No bank account on file — the salary cannot be transferred. Add one, or hold the salary.', 'overview');
+    }
     const joined = fromDbDate(e.joined_on);
     const lastDay = fromDbDate(e.last_day);
-    if (joined > last || (lastDay && lastDay < first)) add(e, 'NOT_EMPLOYED', 'BLOCKING', 'Not employed on any day of this month.', 'overview');
+    // A leaver from an earlier month is here for their F&F, not for this month's work.
+    if (joined > last || (lastDay && lastDay < first && !e.final_ym)) add(e, 'NOT_EMPLOYED', 'BLOCKING', 'Not employed on any day of this month.', 'overview');
     if (!idn?.pan_enc) add(e, 'NO_PAN', 'WARNING', 'No PAN — TDS may need to be deducted at a higher rate.', 'overview');
     if (e.statutory?.pf_enabled && !idn?.uan) add(e, 'NO_UAN', 'WARNING', 'PF is on but there is no UAN for the ECR.', 'overview');
     if (!idn?.aadhaar_enc) add(e, 'NO_AADHAAR', 'WARNING', 'No Aadhaar on file.', 'overview');
     if (!hasFace.has(e.id)) add(e, 'NO_FACE', 'WARNING', 'Face not enrolled — this person cannot punch at a site.', 'onboarding');
     const exp = expired.filter((d) => d.employee_id === e.id);
     if (exp.length) add(e, 'EXPIRED_DOCS', 'WARNING', `Expired: ${exp.map((d) => d.doc_type).join(', ')}.`, 'documents');
+  }
+  // Held salary released into this month that this run cannot pay stays released, unpaid, until HR changes it.
+  const paidHere = new Set(run.payslips.flatMap((p) => p.released.map((h) => h.id)));
+  const stranded = await db.heldPay.findMany({ where: { state: 'QUEUED', pay_ym: ym }, include: { employee: { select: { id: true, code: true, name: true } } } });
+  for (const h of stranded) {
+    if (paidHere.has(h.id)) continue;
+    add(h.employee, 'HELD_NOT_PAID', 'WARNING', `Held salary for ${formatYearMonth(h.period_ym)} is released into this month but cannot be paid here (left out, on hold again, or paid with the F&F). Mark it paid separately on Held salaries, or release it into another month.`, 'pay');
   }
   for (const p of run.payslips) {
     const e = p.employee;
@@ -317,11 +368,12 @@ export async function executeRun(ym, actor, onProgress) {
         throw new AppError('BLOCKING_ISSUES', `${negatives.length} payslip${negatives.length > 1 ? 's have' : ' has'} negative net pay. Hold them back or fix them.`, 409);
       }
 
-      // Rerun replaces the snapshot.
+      // Rerun replaces the snapshot, and the held months it recorded.
       await tx.payslip.deleteMany({ where: { period_id: p.id } });
+      await tx.heldPay.deleteMany({ where: { period_ym: ym, state: 'HELD' } });
 
       const computedAt = new Date();
-      const totals = { headcount: 0, gross: 0, net: 0, employer: 0, ctc: 0, deductions: 0, reimbursements: 0, lop_days: 0, ot_amount: 0 };
+      const totals = { headcount: 0, gross: 0, net: 0, employer: 0, ctc: 0, deductions: 0, reimbursements: 0, lop_days: 0, ot_amount: 0, held_count: 0, held_net: 0, held_released: 0 };
       for (const ps of run.payslips) {
         const e = ps.employee;
         const r = ps.result;
@@ -353,6 +405,8 @@ export async function executeRun(ym, actor, onProgress) {
                 ids: { pan_enc: e.identity?.pan_enc ?? null, uan: e.identity?.uan ?? null, esi_number: e.identity?.esi_number ?? null },
                 salary: ps.salary,
                 attendance: ps.attendance,
+                // The month's leave: later months start from these balances once this month is locked.
+                leave: ps.leave ?? null,
                 lop_rule: r.lop_rule,
                 lop_rule_text: r.lop_rule_text,
                 ot: r.ot,
@@ -367,12 +421,22 @@ export async function executeRun(ym, actor, onProgress) {
                 recovery: r.recovery,
                 flags: r.flags,
                 settling: population.settlingIds.has(e.id),
+                // A leaver from an earlier month paid here with their F&F: this payslip is that final month.
+                final_month_ym: ps.final_ym,
+                // Calculated as usual and kept out of the bank file until HR releases it.
+                held: ps.hold ? { hold_id: ps.hold.id, reason: ps.hold.reason, from_ym: ps.hold.from_ym } : null,
                 months_in_fy: ps.months_in_fy,
               }),
             ),
           },
         });
         await tx.payslipLine.createMany({ data: r.lines.map((l) => lineData(created.id, l)) });
+        if (ps.hold) {
+          await tx.heldPay.create({ data: { hold_id: ps.hold.id, employee_id: e.id, period_ym: ym, amount: BigInt(r.net), state: 'HELD' } });
+          totals.held_count++;
+          totals.held_net += r.net;
+        }
+        totals.held_released += r.held_released ?? 0;
 
         // ESI: record the contribution-period decision.
         if (e.statutory && ps.esi.locked_until !== fromDbDate(e.statutory.esi_locked_until)) {
@@ -440,8 +504,14 @@ export async function transition(ym, t, actor, ip, opts = {}) {
       throw new AppError('INVALID_TRANSITION', `${formatYearMonth(ym)} is ${p.state}; this action needs it to be ${rule.from}.`, 409);
     }
     const data = { state: rule.to };
+    if (t === 'unlock') {
+      // A held month already released or paid elsewhere cannot be run again: it would be paid twice.
+      const moved = await tx.heldPay.count({ where: { period_ym: p.period_ym, state: { not: 'HELD' } } });
+      if (moved) throw new AppError('CONFLICT', `Salary held in ${formatYearMonth(ym)} has been released or paid. Unlocking would let it be paid twice.`, 409);
+    }
     if (t === 'back_to_steps') {
       await tx.payslip.deleteMany({ where: { period_id: p.id } });
+      await tx.heldPay.deleteMany({ where: { period_ym: p.period_ym, state: 'HELD' } });
       data.steps_submitted = p.steps_submitted.filter((s) => s !== 5);
       data.run_at = null;
       data.totals = null;
@@ -532,11 +602,28 @@ async function applyPaid(tx, periodId, ym, settlementIds, sign) {
       data: { resolved_at: new Date() },
     });
   }
+  // Held salary released into this month is paid with it (and unpaid again if this is reversed).
+  const heldLines = await tx.payslipLine.findMany({ where: { kind: 'HELD', payslip: { period_id: periodId } }, select: { code: true, payslip: { select: { employee_id: true } } } });
+  for (const l of heldLines) {
+    await tx.heldPay.updateMany({
+      where: { employee_id: l.payslip.employee_id, period_ym: l.code.slice('HELD:'.length), pay_ym: ym, settlement_id: null, state: sign === 1 ? 'QUEUED' : 'PAID' },
+      data: { state: sign === 1 ? 'PAID' : 'QUEUED' },
+    });
+  }
   for (const sid of settlementIds) {
     const s = await tx.settlement.findUnique({ where: { id: sid } });
     if (!s) continue;
     if (sign === 1) {
       await tx.settlement.update({ where: { id: sid }, data: { state: 'PAID', paid_at: new Date(), period_id: periodId } });
+      // Held salary the F&F pays is paid with it — through this month's bank file, or separately.
+      const months = (Array.isArray(s.earnings) ? s.earnings : []).filter((l) => l.code.startsWith('HELD:') && !l.excluded).map((l) => l.code.slice('HELD:'.length));
+      if (months.length) {
+        const sep = s.paid_separately;
+        await tx.heldPay.updateMany({
+          where: { employee_id: s.employee_id, period_ym: { in: months }, state: 'HELD' },
+          data: { state: sep ? 'PAID_SEPARATELY' : 'PAID', settlement_id: s.id, pay_ym: ym, paid_on: sep ? new Date(`${sep.paid_on}T00:00:00Z`) : null, payment_ref: sep?.payment_ref ?? null },
+        });
+      }
       await tx.loan.updateMany({ where: { employee_id: s.employee_id, status: 'ACTIVE' }, data: { status: 'CLOSED' } });
       await tx.advance.updateMany({ where: { employee_id: s.employee_id, status: 'ACTIVE' }, data: { status: 'CLOSED' } });
       await tx.employee.update({ where: { id: s.employee_id }, data: { status: 'EXITED' } });
@@ -545,6 +632,7 @@ async function applyPaid(tx, periodId, ym, settlementIds, sign) {
     } else {
       await tx.settlement.update({ where: { id: sid }, data: { state: 'INCLUDED', paid_at: null } });
       await tx.employee.update({ where: { id: s.employee_id }, data: { status: 'NOTICE' } });
+      await tx.heldPay.updateMany({ where: { settlement_id: s.id }, data: { state: 'HELD', settlement_id: null, pay_ym: null, paid_on: null, payment_ref: null } });
     }
   }
 }

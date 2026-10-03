@@ -46,6 +46,7 @@ export async function buildReport(db, ym, key, opts) {
       const yearly = slips.reduce((a, s) => a + kind(s, 'YEARLY'), 0);
       const ot = slips.reduce((a, s) => a + kind(s, 'OT'), 0);
       const off = slips.reduce((a, s) => a + kind(s, 'OFFDAY'), 0);
+      const leaveOut = slips.reduce((a, s) => a + kind(s, 'LEAVE'), 0);
       const adhoc = slips.reduce((a, s) => a + kind(s, 'ADHOC'), 0);
       const gross = slips.reduce((a, s) => a + n(s.gross), 0);
       const sumCode = (c) => slips.reduce((a, s) => a + line(s, c), 0);
@@ -60,6 +61,7 @@ export async function buildReport(db, ym, key, opts) {
         { step: 'Yearly components', amount: yearly },
         { step: 'Overtime', amount: ot },
         { step: 'Off-day work', amount: off },
+        { step: 'Leave encashment', amount: leaveOut },
         { step: 'Adhoc earnings', amount: adhoc },
         { step: 'Gross', amount: gross, total: true },
         { step: 'Provident fund', amount: -(sumCode('PF') + sumCode('VPF')) },
@@ -126,6 +128,7 @@ export async function buildReport(db, ym, key, opts) {
         ...compNames.map((c) => ({ key: `c:${c}`, label: c, money: true })),
         { key: 'ot', label: 'Overtime', money: true },
         { key: 'offday', label: 'Off-day', money: true },
+        { key: 'leave', label: 'Leave encashment', money: true },
         { key: 'gross_salary', label: 'Gross', money: true },
         { key: 'er', label: 'Employer contributions', money: true },
         { key: 'pf', label: 'PF', money: true },
@@ -136,13 +139,17 @@ export async function buildReport(db, ym, key, opts) {
         { key: 'recovery', label: 'Loan / advance', money: true },
         { key: 'adhoc_add', label: 'Adhoc additions', money: true },
         { key: 'adhoc_ded', label: 'Adhoc deductions', money: true },
+        { key: 'held_released', label: 'Held salary released', money: true },
         { key: 'net', label: 'Net pay', money: true },
+        { key: 'payment', label: 'Payment' },
       ];
+      const settled = period.settlement_ids.length ? await db.settlement.findMany({ where: { id: { in: period.settlement_ids } } }) : [];
       const rows = slips.map((s) => {
         const r = { ...base(s), paid_days: Number(s.paid_days) };
         for (const c of compNames) r[`c:${c}`] = s.lines.filter((l) => (l.kind === 'COMPONENT' || l.kind === 'YEARLY') && l.name === c).reduce((a, l) => a + n(l.amount), 0);
         r.ot = kind(s, 'OT');
         r.offday = kind(s, 'OFFDAY');
+        r.leave = kind(s, 'LEAVE');
         r.gross_salary = n(s.salary_gross);
         r.er = n(s.employer_total);
         r.pf = line(s, 'PF');
@@ -153,7 +160,16 @@ export async function buildReport(db, ym, key, opts) {
         r.recovery = s.lines.filter((l) => ['LOAN', 'ADVANCE', 'CARRY'].includes(l.code)).reduce((a, l) => a + n(l.amount), 0);
         r.adhoc_add = kind(s, 'ADHOC') + kind(s, 'REIMBURSEMENT');
         r.adhoc_ded = s.lines.filter((l) => l.code.startsWith('ADHOC_DED:')).reduce((a, l) => a + n(l.amount), 0);
+        r.held_released = kind(s, 'HELD');
         r.net = n(s.net);
+        // How this row is paid: in the bank file, held back, or with an F&F (perhaps paid separately).
+        const st = settled.find((x) => x.employee_id === s.employee_id);
+        const m = meta(s);
+        r.payment = m.held
+          ? 'On hold'
+          : st
+            ? `F&F${st.paid_separately ? ', paid separately' : ''}${m.final_month_ym ? ` (final month ${formatYearMonth(m.final_month_ym)})` : ''}`
+            : 'Bank';
         return r;
       });
       const totals = { code: '', name: 'Total' };
@@ -163,10 +179,22 @@ export async function buildReport(db, ym, key, opts) {
     case 'bank': {
       const settlements = period.settlement_ids.length ? await db.settlement.findMany({ where: { id: { in: period.settlement_ids } } }) : [];
       const recoverable = [];
+      const held = [];
+      const separate = [];
       const rows = [];
       for (const s of slips) {
         const m = meta(s);
         const st = settlements.find((x) => x.employee_id === s.employee_id);
+        // Held: calculated, not paid until HR releases it.
+        if (m.held && !st) {
+          held.push({ ...base(s), amount: n(s.net) });
+          continue;
+        }
+        // An F&F paid separately is recorded in this payroll and never in a bank file.
+        if (st?.paid_separately) {
+          separate.push({ ...base(s), amount: n(st.net), payment_ref: st.paid_separately.payment_ref });
+          continue;
+        }
         // A settling leaver is paid the settlement's payable (which includes the final month). Negative never enters the file.
         const amount = st ? Math.max(0, n(st.net)) : n(s.net);
         if (st && n(st.net) < 0) {
@@ -183,6 +211,10 @@ export async function buildReport(db, ym, key, opts) {
           type: st ? 'Settlement' : 'Salary',
         });
       }
+      const notes = [];
+      if (held.length) notes.push(`${held.length} salar${held.length === 1 ? 'y is' : 'ies are'} on hold and not in this file.`);
+      if (separate.length) notes.push(`${separate.length} F&F${separate.length === 1 ? ' was' : 's were'} paid separately and ${separate.length === 1 ? 'is' : 'are'} not in this file.`);
+      if (recoverable.length) notes.push(`${recoverable.length} settlement(s) are recoverable and are not in this file.`);
       return {
         key,
         title,
@@ -198,8 +230,8 @@ export async function buildReport(db, ym, key, opts) {
         ],
         rows,
         totals: { name: `${rows.length} payees`, amount: rows.reduce((a, r) => a + r.amount, 0) },
-        notes: recoverable.length ? [`${recoverable.length} settlement(s) are recoverable and are not in this file.`] : [],
-        extra: { recoverable },
+        notes,
+        extra: { recoverable, held, separate },
       };
     }
     case 'pf': {
@@ -349,6 +381,7 @@ export async function buildReport(db, ym, key, opts) {
           if (Number(p.paid_days) !== Number(s.paid_days)) reasons.push(`Paid days ${Number(p.paid_days)} → ${Number(s.paid_days)}`);
           if (kind(p, 'OT') !== kind(s, 'OT')) reasons.push('Overtime changed');
           if (kind(p, 'OFFDAY') !== kind(s, 'OFFDAY')) reasons.push('Off-day work changed');
+          if (kind(p, 'LEAVE') !== kind(s, 'LEAVE')) reasons.push('Leave paid out');
           if (meta(p).salary.monthly_gross !== meta(s).salary.monthly_gross) reasons.push('Salary revised');
           if (kind(p, 'ADHOC') + kind(p, 'YEARLY') !== kind(s, 'ADHOC') + kind(s, 'YEARLY')) reasons.push('One-off pay');
           if (n(p.reimbursements) !== n(s.reimbursements)) reasons.push('Reimbursement');
