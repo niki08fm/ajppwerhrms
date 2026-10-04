@@ -1,6 +1,4 @@
-import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { FilePlus2, Printer } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, errorMessage } from '@/services/api';
 import { Mono } from '@/components/bits';
@@ -35,12 +33,12 @@ export function LettersTab({ e }) {
     <Card>
       <CardHeader
         title="Letters"
-        description="Each letter stores a snapshot of the figures it stated, so it reprints years later exactly as issued — not as today's structure would produce."
+        description="Each letter keeps the figures it stated, so it reprints exactly as issued."
         actions={
           <Menu
             trigger={
-              <Button loading={issue.isPending}>
-                <FilePlus2 /> Issue a letter
+              <Button size="sm" loading={issue.isPending}>
+                New letter
               </Button>
             }
             items={KINDS.map(([k, l]) => ({ label: l, onSelect: () => issue.mutate(k), disabled: (k === 'RELIEVING' || k === 'EXPERIENCE') && !e.last_day }))}
@@ -59,8 +57,7 @@ export function LettersTab({ e }) {
           <thead>
             <tr>
               <th>Letter</th>
-              <th>Reference</th>
-              <th>Issued</th>
+              <th>Based on</th>
               <th />
             </tr>
           </thead>
@@ -68,14 +65,13 @@ export function LettersTab({ e }) {
             {q.data.map((l) => (
               <tr key={l.id}>
                 <td>{letterName(l.kind)}</td>
-                <td>
-                  <Mono>{l.ref}</Mono>
+                <td className="text-[13px] text-muted-foreground">
+                  <Mono>{l.ref}</Mono> · {l.issued_on ? `issued ${l.issued_on}` : <Chip tone="warning">Draft</Chip>}
                 </td>
-                <td>{l.issued_on ?? <Chip tone="warning">Draft</Chip>}</td>
                 <td className="text-right">
-                  <Link to={`/print/letter/${e.id}/${l.id}`} target="_blank" className="inline-flex items-center gap-1 text-primary hover:underline">
-                    <Printer className="size-3.5" /> Print
-                  </Link>
+                  <Button size="sm" variant="outline" onClick={() => window.open(`/print/letter/${e.id}/${l.id}`, '_blank')}>
+                    Open
+                  </Button>
                 </td>
               </tr>
             ))}

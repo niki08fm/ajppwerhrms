@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, FilePlus2, LogOut, Pencil, Printer, Send, Undo2 } from 'lucide-react';
+import { CheckCircle2, FilePlus2, Pencil, Printer, Send, Undo2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { EXIT_REASONS } from '@ajpwer/shared';
 import { api, errorMessage } from '@/services/api';
@@ -53,17 +53,18 @@ export function ExitTab({ e }) {
   if (!leaving) {
     return (
       <>
-        <Card>
-          <CardHeader
-            title="Exit"
-            description={`Record ${first}'s exit with the last working day. There is no notice period: ${first} works until that day, the F&F is worked out live from then on, and you process it into a month's payroll once the checklist is done.`}
-            actions={
-              <Button variant="outline" onClick={() => setDialog('record')} disabled={x.status !== 'ACTIVE'}>
-                <LogOut /> Record an exit
-              </Button>
-            }
-          />
-          {x.status !== 'ACTIVE' && <CardBody className="text-[13px] text-muted-foreground">Only an active employee's exit can be recorded.</CardBody>}
+        <Card className="flex flex-col items-start gap-3 p-6">
+          <h3 className="font-semibold">No exit recorded</h3>
+          <p className="m-0 max-w-2xl text-[14px] text-muted-foreground">
+            Recording the last working day starts the formalities checklist (dues, recoveries, advance balance, held salary) and the F&amp;F statement. {first} works until that day. You can change or cancel it, or rejoin later.
+          </p>
+          {x.status === 'ACTIVE' ? (
+            <Button variant="outline" className="text-destructive" onClick={() => setDialog('record')}>
+              Record exit for {first}
+            </Button>
+          ) : (
+            <p className="m-0 text-[13px] text-muted-foreground">Only an active employee's exit can be recorded.</p>
+          )}
         </Card>
         {dialog === 'record' && <ExitDialog e={e} x={x} onClose={() => setDialog(null)} />}
       </>

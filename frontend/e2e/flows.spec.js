@@ -111,13 +111,14 @@ test('people: search, filter chips in the URL, open a full-screen profile', asyn
   await expect(page).toHaveURL(/q=AJ00/);
   await page.locator('table tbody tr').first().click();
   await expect(page).toHaveURL(/\/people\/[0-9a-f-]{36}/);
-  // Income tax is a section of the Salary tab, reached from its section bar.
+  // The breakup and statutory switches lead the Salary tab; the full tax working opens below.
   await page.getByRole('tab', { name: 'Salary and statutory', exact: true }).click();
-  await page.getByRole('button', { name: 'Income tax', exact: true }).click();
+  await expect(page.getByText('Take-home', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: /Full working/ }).click();
   await expect(page.getByText(/regime is cheaper|same tax/)).toBeVisible();
   // The figures under the name open their tab.
   await page.getByRole('button', { name: /^Joined/ }).click();
   await expect(page.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
   await page.getByRole('tab', { name: 'Leave', exact: true }).click();
-  await expect(page.getByText('Leave requests')).toBeVisible();
+  await expect(page.getByText('Leave ledger')).toBeVisible();
 });

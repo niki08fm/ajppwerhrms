@@ -102,7 +102,7 @@ export function OnboardingTab({ e }) {
   );
 }
 
-function FaceEnrolDialog({ e, onClose, onDone }) {
+export function FaceEnrolDialog({ e, onClose, onDone }) {
   const video = useRef(null);
   const stream = useRef(null);
   const [consent, setConsent] = useState(false);

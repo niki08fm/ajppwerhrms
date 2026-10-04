@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Lock, LogOut, Pencil, Plus, TrendingUp } from 'lucide-react';
+import { Lock } from 'lucide-react';
 import { formatINR } from '@ajpwer/shared';
 import { api } from '@/services/api';
 import { useLookups } from '@/hooks/useLookups';
-import { cn, hhmm, longDate, monthLabel } from '@/utils';
+import { hhmm, longDate, monthLabel } from '@/utils';
 import { Mono } from '@/components/bits';
 import { Chip, EmployeeStatusChip, ErrorState, SkeletonBlock } from '@/components/states';
 import { Button } from '@/components/ui/button';
@@ -15,17 +15,15 @@ import { DeptAvatar } from '@/components/attendance/DeptAvatar';
 import { EditDialog, OverviewTab } from '../../components/people/profile-tabs/Overview';
 import { AttendanceTab } from '../../components/people/profile-tabs/Attendance';
 import { LeaveTab } from '../../components/people/profile-tabs/LeaveTab';
-import { PayTab } from '../../components/people/profile-tabs/Pay';
-import { TaxTab } from '../../components/people/profile-tabs/Tax';
-import { ReviseDialog, SalaryHistoryTab } from '../../components/people/profile-tabs/SalaryHistory';
+import { SalaryTab } from '../../components/people/profile-tabs/SalaryTab';
+import { ReviseDialog } from '../../components/people/profile-tabs/SalaryHistory';
 import { PayslipsTab } from '../../components/people/profile-tabs/Payslips';
 import { LoansTab } from '../../components/people/profile-tabs/Loans';
-import { DocumentsTab } from '../../components/people/profile-tabs/Documents';
 import { LettersTab } from '../../components/people/profile-tabs/Letters';
 import { OnboardingTab } from '../../components/people/profile-tabs/Onboarding';
 import { ExitDialog, ExitTab, useExit } from '../../components/people/profile-tabs/Exit';
 import { TimelineTab } from '../../components/people/profile-tabs/Timeline';
-import { SalaryHoldCard, useHold } from '../../components/people/profile-tabs/SalaryHold';
+import { useHold } from '../../components/people/profile-tabs/SalaryHold';
 import { GrantDialog } from '../payroll/Money';
 
 const TABS = [
@@ -40,20 +38,13 @@ const TABS = [
   ['timeline', 'Timeline'],
 ];
 
-/** The sections of the Salary tab, in reading order. */
-const SALARY_SECTIONS = [
-  ['pay', 'Breakup and statutory'],
-  ['history', 'Revisions'],
-  ['tax', 'Income tax'],
-];
-
 /** Old tab names (links from other screens, saved views) and where they live now. */
 const MOVED = {
   time: ['attendance'],
-  pay: ['salary', 'pay'],
-  tax: ['salary', 'tax'],
+  pay: ['salary'],
+  tax: ['salary'],
   records: ['letters'],
-  documents: ['letters', 'documents'],
+  documents: ['letters'],
   onboarding: ['overview', 'onboarding'],
   face: ['overview', 'onboarding'],
   edit: ['overview'],
@@ -133,26 +124,26 @@ function Header({ e, go, onAction }) {
         {!e.read_only && (
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" onClick={() => onAction('edit')}>
-              <Pencil /> Edit details
+              Edit details
             </Button>
             {working && e.salary && (
               <Button variant="outline" onClick={() => onAction('revise')}>
-                <TrendingUp /> Revise salary
+                Revise salary
               </Button>
             )}
             {working && (
               <Button variant="outline" onClick={() => onAction('advance')}>
-                <Plus /> Give advance
+                Give advance
               </Button>
             )}
             {e.status === 'ACTIVE' && (
               <Button variant="outline" className="text-destructive" onClick={() => onAction('exit')}>
-                <LogOut /> Record exit
+                Record exit
               </Button>
             )}
             {e.status === 'NOTICE' && (
               <Button variant="outline" className="text-destructive" onClick={() => go('exit')}>
-                <LogOut /> Exit and F&amp;F
+                Exit and F&amp;F
               </Button>
             )}
           </div>
@@ -264,59 +255,18 @@ export default function Profile() {
                   </Section>
                 )}
                 <OverviewTab e={e} />
-                {!onboardingFirst && (
-                  <Section id="section-onboarding">
-                    <OnboardingTab e={e} />
-                  </Section>
-                )}
               </div>
             )}
           </TabsContent>
           <TabsContent value="attendance">{tab === 'attendance' && <AttendanceTab e={e} />}</TabsContent>
           <TabsContent value="salary">
-            {tab === 'salary' && (
-              <div className="flex flex-col gap-5">
-                <div className="sticky top-0 z-20 -mx-1 flex flex-wrap gap-1 rounded-lg border bg-card/95 p-1 shadow-sm backdrop-blur">
-                  {SALARY_SECTIONS.map(([k, l]) => (
-                    <button
-                      key={k}
-                      type="button"
-                      onClick={() => document.getElementById(`section-${k}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-                      className={cn('rounded-md px-3 py-1.5 text-[13px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground')}
-                    >
-                      {l}
-                    </button>
-                  ))}
-                </div>
-                <Section id="section-pay">
-                  <div className="flex flex-col gap-5">
-                    <SalaryHoldCard e={e} />
-                    <PayTab e={e} />
-                  </div>
-                </Section>
-                <Section id="section-history">
-                  <SalaryHistoryTab e={e} />
-                </Section>
-                <Section id="section-tax">
-                  <TaxTab e={e} />
-                </Section>
-              </div>
-            )}
+            {tab === 'salary' && <SalaryTab e={e} />}
           </TabsContent>
           <TabsContent value="payslips">{tab === 'payslips' && <PayslipsTab e={e} />}</TabsContent>
           <TabsContent value="leave">{tab === 'leave' && <LeaveTab e={e} />}</TabsContent>
           <TabsContent value="loans">{tab === 'loans' && <LoansTab e={e} />}</TabsContent>
           <TabsContent value="letters">
-            {tab === 'letters' && (
-              <div className="flex flex-col gap-5">
-                <Section id="section-letters">
-                  <LettersTab e={e} />
-                </Section>
-                <Section id="section-documents">
-                  <DocumentsTab e={e} />
-                </Section>
-              </div>
-            )}
+            {tab === 'letters' && <LettersTab e={e} />}
           </TabsContent>
           <TabsContent value="exit">{tab === 'exit' && <ExitTab e={e} />}</TabsContent>
           <TabsContent value="timeline">{tab === 'timeline' && <TimelineTab e={e} />}</TabsContent>
