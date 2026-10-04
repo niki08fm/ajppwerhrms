@@ -121,5 +121,6 @@ test('people: search, filter chips in the URL, open a full-screen profile', asyn
   await page.getByRole('button', { name: /^Joined/ }).click();
   await expect(page.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
   await page.getByRole('tab', { name: 'Leave', exact: true }).click();
-  await expect(page.getByText('Leave history')).toBeVisible();
+  await page.getByText('Loss of pay', { exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Loss of pay' })).toBeVisible();
 });

@@ -371,10 +371,10 @@ function Adjust({ employee, onClose }) {
 
 /** HR records leave on the person's behalf, choosing from their pay group's leave types. */
 /** Record leave for anyone, or — with `employee` — for that one person (from their profile). */
-export function RecordLeave({ onClose, employee }) {
+export function RecordLeave({ onClose, employee, leaveType }) {
   const qc = useQueryClient();
   const people = useQuery({ queryKey: ['people', 'active-leave'], queryFn: () => api.get('/employees', { 'filter[status]': 'ACTIVE,NOTICE', limit: 200 }).then((r) => r.data), enabled: !employee });
-  const [f, setF] = useState({ employee_id: employee?.id ?? '', leave_type: '', from_date: '', to_date: '', half: false, reason: '', approve: true });
+  const [f, setF] = useState({ employee_id: employee?.id ?? '', leave_type: leaveType ?? '', from_date: '', to_date: '', half: false, reason: '', approve: true });
   const types = useQuery({
     queryKey: ['leave-types', f.employee_id],
     queryFn: () => api.get('/leave/types', { employee_id: f.employee_id }).then((r) => r.data),
