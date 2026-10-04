@@ -18,7 +18,8 @@ import { Field, Input, Segmented } from '@/components/ui/form';
 import { Dialog } from '@/components/ui/overlay';
 import { CorrectionDrawer } from '../../components/attendance/CorrectionDrawer';
 import { DayPicker } from '@/components/attendance/DayPicker';
-import { TONE, deptColour, fullDate, initialsOf, viewsFor } from '@/components/attendance/dayVocab';
+import { TONE, deptColour, fullDate, viewsFor } from '@/components/attendance/dayVocab';
+import { DeptAvatar } from '@/components/attendance/DeptAvatar';
 
 /** Pages by number, with 20, 50 or 100 rows a page. */
 function NumberPager({ page, pages, total, limit, onPage, onLimit }) {
@@ -51,18 +52,6 @@ function NumberPager({ page, pages, total, limit, onPage, onLimit }) {
         </Button>
       </div>
     </div>
-  );
-}
-
-/** Department colours pale enough to need dark initials. */
-const LIGHT_TOKENS = ['chart-3', 'chart-4'];
-
-/** A coloured circle with initials: the colour is the department's. */
-function Avatar({ name, colour, light }) {
-  return (
-    <span className="inline-flex size-[30px] shrink-0 items-center justify-center rounded-full text-[11px] font-semibold" style={{ background: colour, color: light ? 'oklch(0.2 0.03 240)' : 'white' }}>
-      {initialsOf(name)}
-    </span>
   );
 }
 
@@ -113,7 +102,7 @@ export default function Register() {
       width: 230,
       cell: (r) => (
         <span className="flex items-center gap-2.5">
-          <Avatar name={r.employee.name} colour={deptColour(r.employee.department.colour ?? dept(r.employee.department.id)?.colour)} light={LIGHT_TOKENS.includes(r.employee.department.colour ?? dept(r.employee.department.id)?.colour)} />
+          <DeptAvatar name={r.employee.name} token={r.employee.department.colour ?? dept(r.employee.department.id)?.colour} />
           <span className="flex min-w-0 flex-col leading-tight">
             <span className="truncate font-medium">{r.employee.name}</span>
             <span className="truncate text-[12px] text-muted-foreground">

@@ -155,7 +155,7 @@ function NavItem({ it, collapsed, onNavigate, badge }) {
 
 function Sidebar({ onNavigate, collapsed, onToggleCollapsed }) {
   const { data } = useQuery({ queryKey: ['dashboard', 'people'], queryFn: () => api.get('/dashboard/people').then((r) => r.data), staleTime: 60_000 });
-  const pending = (data?.approvals.face ?? 0) + (data?.approvals.leave ?? 0);
+  const pending = data?.approvals.total ?? (data?.approvals.face ?? 0) + (data?.approvals.leave ?? 0);
   const { pathname } = useLocation();
   const nav = useNavigate();
   const inSettings = SETTINGS.some((x) => pathname.startsWith(x.to));

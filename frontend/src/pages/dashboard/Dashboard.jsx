@@ -287,7 +287,7 @@ function SitesCard({ d, people, site, isToday, hlIds, focus, set, nav, attendanc
         ))}
         <span className="flex-1" />
         {d.moves.length > 0 && (
-          <Link to="/approvals" className="inline-flex h-[30px] max-w-full items-center gap-1.5 truncate rounded-full border bg-card px-3 text-[13px] font-medium hover:border-primary/40">
+          <Link to="/approvals?kind=move" className="inline-flex h-[30px] max-w-full items-center gap-1.5 truncate rounded-full border bg-card px-3 text-[13px] font-medium hover:border-primary/40">
             <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
             {d.moves.length} moved site · {d.moves[0].name?.split(' ')[0]}, {siteName(d.moves[0].from_site_id)} → {siteName(d.moves[0].to_site_id)}
             {d.moves[0].travel_min ? `, ${d.moves[0].travel_min} min travel` : ''}

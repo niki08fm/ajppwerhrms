@@ -7,6 +7,7 @@ import { dayRegister } from '../services/register.service.js';
 import { heldBackList } from '../services/payroll.service.js';
 import { holidaysBetween } from '../services/rules.service.js';
 import { inView, isExpected, liveFigures, minutesNow, VIEWS } from '../services/dayview.service.js';
+import { KINDS, WINDOW_DAYS, waitingItems } from '../services/approvals.service.js';
 
 const today = () => istDate(new Date());
 
@@ -115,7 +116,7 @@ export const getNetByMonth = asyncHandler(async (_req, res) => {
 });
 
 export const getPeople = asyncHandler(async (_req, res) => {
-  const [pipeline, leavers, held, pendingFace, pendingLeave, expiring, holds, unpaidHeld] = await Promise.all([
+  const [pipeline, leavers, held, pendingFace, pendingLeave, expiring, holds, unpaidHeld, waitingNow] = await Promise.all([
     prisma.employee.groupBy({ by: ['status'], _count: true, where: { deleted_at: null } }),
     prisma.employee.findMany({ where: { deleted_at: null, status: 'NOTICE' }, select: { id: true, code: true, name: true, last_day: true }, orderBy: { last_day: 'asc' }, take: 10 }),
     heldBackList(prisma),
@@ -124,6 +125,7 @@ export const getPeople = asyncHandler(async (_req, res) => {
     prisma.document.count({ where: { deleted_at: null, expires_on: { lte: toDbDate(addDays(today(), 30)) }, employee: { status: { in: ['ACTIVE', 'NOTICE'] } } } }),
     prisma.salaryHold.findMany({ where: { released_at: null, deleted_at: null }, select: { employee: { select: { id: true, name: true } } } }),
     prisma.heldPay.aggregate({ where: { state: 'HELD' }, _sum: { amount: true }, _count: true }),
+    waitingItems(prisma, today()),
   ]);
   res.json({
     data: {
@@ -132,7 +134,8 @@ export const getPeople = asyncHandler(async (_req, res) => {
       held_back: held,
       // Salaries on hold now, and held salary not yet released.
       held_salaries: { people: holds.map((h) => h.employee), unpaid_months: unpaidHeld._count, unpaid: Number(unpaidHeld._sum.amount ?? 0n) },
-      approvals: { face: pendingFace, leave: pendingLeave },
+      // `total` is everything on the Approvals screen, the number the sidebar shows.
+      approvals: { face: pendingFace, leave: pendingLeave, total: waitingNow.length },
       documents_expiring: expiring,
     },
   });
@@ -208,17 +211,13 @@ export const getOverview = asyncHandler(async (req, res) => {
   const date = isoDate.parse(req.query.date ?? now);
   const isToday = date === now;
   const nowMin = isToday ? minutesNow(date) : null;
-  const yesterday = addDays(now, -1);
 
-  const [rows, yRows, sites, departments, moves, faces, leaves, siteChanges, holds, heldBack] = await Promise.all([
+  const [rows, sites, departments, moves, waitingNow, holds, heldBack] = await Promise.all([
     registerOf(date),
-    date === yesterday ? registerOf(date) : registerOf(yesterday),
     prisma.site.findMany({ where: { deleted_at: null }, select: { id: true, code: true, name: true, is_active: true }, orderBy: { name: 'asc' } }),
     prisma.department.findMany({ where: { deleted_at: null }, select: { id: true, name: true, colour: true }, orderBy: { name: 'asc' } }),
     prisma.siteChange.findMany({ where: { work_date: toDbDate(date) }, orderBy: { left_at: 'asc' } }),
-    prisma.faceException.findMany({ where: { status: 'PENDING' }, select: { id: true, occurred_at: true, claimed_employee_id: true, best_match_id: true, kind: true }, orderBy: { occurred_at: 'asc' } }),
-    prisma.leaveRequest.findMany({ where: { status: 'PENDING', deleted_at: null }, select: { id: true, employee_id: true, created_at: true }, orderBy: { created_at: 'asc' } }),
-    prisma.siteChange.findMany({ where: { status: 'PENDING' }, select: { id: true, employee_id: true, created_at: true }, orderBy: { created_at: 'asc' } }),
+    waitingItems(prisma, now),
     prisma.salaryHold.findMany({ where: { released_at: null, deleted_at: null }, select: { employee_id: true, created_at: true } }),
     heldBackList(prisma),
   ]);
@@ -247,31 +246,26 @@ export const getOverview = asyncHandler(async (req, res) => {
       };
     });
 
-  // Names for the people HR is waiting on.
-  const ids = [...new Set([...faces.map((f) => f.claimed_employee_id ?? f.best_match_id), ...leaves.map((l) => l.employee_id), ...siteChanges.map((s) => s.employee_id), ...holds.map((h) => h.employee_id), ...moves.map((m) => m.employee_id)].filter(Boolean))];
+  // Names for the people on today's moves and on hold.
+  const ids = [...new Set([...holds.map((h) => h.employee_id), ...moves.map((m) => m.employee_id)].filter(Boolean))];
   const named = new Map((await prisma.employee.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, code: true } })).map((e) => [e.id, e]));
   const nameOf = (id) => named.get(id)?.name ?? people.find((p) => p.id === id)?.name ?? null;
 
-  // Yesterday's open days and short days that HR has not settled yet.
-  const missing = yRows.filter((r) => r.day.status === 'MISSING_PUNCH' && !r.override);
-  const shortRows = [...yRows, ...(isToday ? rows : [])].filter((r) => !r.open_now && r.day.early_min > 0 && !r.override && r.day.status !== 'MISSING_PUNCH');
+  // What waits on HR: the same list the Approvals screen shows, counted by kind.
+  const LABELS = { face: 'Face checks', miss: 'Missing punch-outs', short: 'Short days', move: 'Site changes', leave: 'Leave requests' };
   const item = (key, label, list, to, at) => ({ key, label, n: list.length, names: list.map((x) => x.name).filter(Boolean).slice(0, 6), employee_ids: list.map((x) => x.id).filter(Boolean), to, oldest_at: at ?? null });
   const waiting = [
-    item('face', 'Face checks', faces.map((f) => ({ id: f.claimed_employee_id ?? f.best_match_id, name: nameOf(f.claimed_employee_id ?? f.best_match_id) ?? 'Unknown face' })), '/approvals', faces[0]?.occurred_at),
-    item('miss', 'Missing punch-outs', missing.map((r) => ({ id: r.employee.id, name: r.employee.name })), `/attendance?date=${yesterday}&view=nopunch`, missing.length ? `${yesterday}T20:30:00.000Z` : null),
-    item('short', 'Short days', shortRows.map((r) => ({ id: r.employee.id, name: r.employee.name })), `/attendance?date=${yesterday}&view=early`, null),
-    item('move', 'Site changes', siteChanges.map((s) => ({ id: s.employee_id, name: nameOf(s.employee_id) })), '/approvals', siteChanges[0]?.created_at),
-    item('leave', 'Leave requests', leaves.map((l) => ({ id: l.employee_id, name: nameOf(l.employee_id) })), '/approvals', leaves[0]?.created_at),
+    ...KINDS.map((k) => {
+      const of = waitingNow.filter((w) => w.kind === k);
+      return item(k, LABELS[k], of.map((w) => ({ id: w.employee?.id, name: w.employee?.name ?? 'Unknown face' })), `/approvals?kind=${k}`, of[of.length - 1]?.at);
+    }),
     item('hold', 'Salaries on hold', holds.map((h) => ({ id: h.employee_id, name: nameOf(h.employee_id) })), '/held-salaries', null),
     item('heldback', 'Left out of payroll', heldBack.map((h) => ({ id: h.employee.id, name: h.employee.name })), '/payroll', null),
   ].filter((w) => w.n > 0);
 
-  const candidates = [
-    faces[0] && { label: 'face check', name: nameOf(faces[0].claimed_employee_id ?? faces[0].best_match_id) ?? 'Unknown face', at: faces[0].occurred_at },
-    siteChanges[0] && { label: 'site change', name: nameOf(siteChanges[0].employee_id), at: siteChanges[0].created_at },
-    leaves[0] && { label: 'leave request', name: nameOf(leaves[0].employee_id), at: leaves[0].created_at },
-  ].filter(Boolean);
-  const oldest = candidates.sort((a, b) => new Date(a.at) - new Date(b.at))[0] ?? null;
+  const KIND_WORD = { face: 'face check', miss: 'missing punch-out', short: 'short day', move: 'site change', leave: 'leave request' };
+  const last = waitingNow[waitingNow.length - 1];
+  const oldest = last ? { label: KIND_WORD[last.kind], name: last.employee?.name ?? 'Unknown face', at: last.at } : null;
 
   // The shift most people are on, for the arrivals chart.
   const mode = (xs) => {
@@ -297,6 +291,21 @@ export const getOverview = asyncHandler(async (req, res) => {
       oldest: oldest && { ...oldest, hours: Math.max(0, Math.round((Date.now() - new Date(oldest.at).getTime()) / 3_600_000)) },
     },
   });
+});
+
+/**
+ * Everything waiting on HR (face checks, missing punch-outs, short days, site changes,
+ * leave) as one list, with the sites and departments to filter it by. `fresh=1` skips the
+ * few-second cache, for the reload right after a decision.
+ */
+export const getApprovals = asyncHandler(async (req, res) => {
+  const now = today();
+  const [items, sites, departments] = await Promise.all([
+    waitingItems(prisma, now, { fresh: req.query.fresh === '1' }),
+    prisma.site.findMany({ where: { deleted_at: null }, select: { id: true, name: true }, orderBy: { name: 'asc' } }),
+    prisma.department.findMany({ where: { deleted_at: null }, select: { id: true, name: true, colour: true }, orderBy: { name: 'asc' } }),
+  ]);
+  res.json({ data: { today: now, window_days: WINDOW_DAYS, items, sites, departments } });
 });
 
 /**
