@@ -56,7 +56,7 @@ export function ExitTab({ e }) {
         <Card className="flex flex-col items-start gap-3 p-6">
           <h3 className="font-semibold">No exit recorded</h3>
           <p className="m-0 max-w-2xl text-[14px] text-muted-foreground">
-            Recording the last working day starts the formalities checklist (dues, recoveries, advance balance, held salary) and the F&amp;F statement. {first} works until that day. You can change or cancel it, or rejoin later.
+            Recording the last working day starts the formalities checklist (dues, recoveries, advance balance, held salary) and the F&amp;F statement, where you can add earnings or deductions. {first} works until that day. You can change or cancel it, or rejoin later.
           </p>
           {x.status === 'ACTIVE' ? (
             <Button variant="outline" className="text-destructive" onClick={() => setDialog('record')}>

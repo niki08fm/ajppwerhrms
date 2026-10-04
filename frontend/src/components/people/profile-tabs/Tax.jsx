@@ -87,7 +87,8 @@ function WorkingCard({ w, current, onPick, disabled }) {
   );
 }
 
-export function TaxTab({ e }) {
+/** Both regimes worked out, and the old-regime declarations. `compact` keeps just the verdict and the declarations. */
+export function TaxTab({ e, compact = false }) {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['employee-tax', e.id], queryFn: () => api.get(`/employees/${e.id}/tax`).then((r) => r.data) });
   const st = e.statutory;
@@ -112,10 +113,12 @@ export function TaxTab({ e }) {
       <Notice tone={worse ? 'warning' : 'success'}>
         <strong>{c.sentence}</strong> {worse && `${e.name.split(' ')[0]} is on the ${q.data.current === 'NEW' ? 'new' : 'old'} regime and is ${formatINR(c.difference)} a year worse off.`}
       </Notice>
-      <div className="grid gap-4 lg:grid-cols-2">
-        <WorkingCard w={c.new} current={q.data.current === 'NEW'} disabled={e.read_only} onPick={() => save.mutate({ tax_regime_code: 'NEW' })} />
-        <WorkingCard w={c.old} current={q.data.current === 'OLD'} disabled={e.read_only} onPick={() => save.mutate({ tax_regime_code: 'OLD' })} />
-      </div>
+      {!compact && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <WorkingCard w={c.new} current={q.data.current === 'NEW'} disabled={e.read_only} onPick={() => save.mutate({ tax_regime_code: 'NEW' })} />
+          <WorkingCard w={c.old} current={q.data.current === 'OLD'} disabled={e.read_only} onPick={() => save.mutate({ tax_regime_code: 'OLD' })} />
+        </div>
+      )}
       <Card>
         <CardHeader title="Declarations" description="Used only by the old regime. Annual figures except rent." />
         <CardBody>

@@ -29,7 +29,7 @@ function Months({ months }) {
 }
 
 /** Hold this person's salary, or release it — on their Pay tab, where HR looks for it. */
-export function SalaryHoldCard({ e }) {
+export function SalaryHoldCard({ e, compact = false }) {
   const qc = useQueryClient();
   const q = useHold(e.id);
   const [dialog, setDialog] = useState(null);
@@ -49,6 +49,16 @@ export function SalaryHoldCard({ e }) {
   const pastMonths = d.history.flatMap((h) => h.months);
   if (!cur && !canHold && !pastMonths.length) return null;
   const held = cur?.months.filter((m) => m.state === 'HELD') ?? [];
+  // Paid as usual and never held: just the one button.
+  if (compact && !cur && !pastMonths.length)
+    return (
+      <>
+        <Button variant="outline" onClick={() => setDialog('hold')}>
+          <PauseCircle /> Hold salary
+        </Button>
+        {dialog === 'hold' && <HoldDialog employee={e} openMonths={d.open_months} onClose={() => setDialog(null)} />}
+      </>
+    );
   return (
     <Card className={cur ? 'border-warning/50' : undefined}>
       <CardHeader

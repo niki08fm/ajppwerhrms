@@ -172,14 +172,17 @@ export function SettlementPanel({ employeeId, print }) {
   return (
     <div className="flex flex-col gap-4">
       {editable && (
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-[13px] text-muted-foreground">Use the menu on a line to switch it off or change its days, or add your own line. Every change needs a reason and is audited.</p>
-          <span className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={() => setAsk({ action: 'ADD_LINE', kind: 'EARNING', title: 'Add an earning' })}>
-              <Plus /> Earning
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-3">
+          <div className="min-w-0">
+            <div className="font-semibold">Add to this F&F</div>
+            <p className="m-0 text-[13px] text-muted-foreground">An earning (bonus, incentive, reimbursement) or a deduction (notice recovery, asset not returned). Every change needs a reason and is audited. Use the menu on a line to switch it off or change its days.</p>
+          </div>
+          <span className="flex shrink-0 gap-2">
+            <Button size="sm" onClick={() => setAsk({ action: 'ADD_LINE', kind: 'EARNING', title: 'Add an earning' })}>
+              <Plus /> Add earning
             </Button>
-            <Button size="sm" variant="outline" onClick={() => setAsk({ action: 'ADD_LINE', kind: 'DEDUCTION', title: 'Add a deduction' })}>
-              <Plus /> Deduction
+            <Button size="sm" variant="outline" className="border-destructive/40 text-destructive hover:bg-destructive/10" onClick={() => setAsk({ action: 'ADD_LINE', kind: 'DEDUCTION', title: 'Add a deduction' })}>
+              <Plus /> Add deduction
             </Button>
           </span>
         </div>

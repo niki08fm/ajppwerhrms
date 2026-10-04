@@ -1,15 +1,15 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
 import { describeComponentRule, formatINR } from '@ajpwer/shared';
 import { api, errorMessage } from '@/services/api';
 import { cn, monthLabel } from '@/utils';
+import { useLookups } from '@/hooks/useLookups';
 import { ErrorState, Notice, SkeletonBlock } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
-import { Switch } from '@/components/ui/overlay';
-import { PayTab } from './Pay';
+import { Input, Select } from '@/components/ui/form';
+import { Dialog, Switch } from '@/components/ui/overlay';
 import { TaxTab } from './Tax';
 import { ReviseDialog } from './SalaryHistory';
 import { SalaryHoldCard } from './SalaryHold';
@@ -17,14 +17,17 @@ import { SalaryHoldCard } from './SalaryHold';
 const rupees = (v, neg = false) => (v ? `${neg ? '−' : ''}${formatINR(v)}` : '₹0');
 
 /**
- * Salary and statutory, as one page: the breakup line by line (monthly and yearly, from
- * gross to cost to company to take-home), the statutory switches beside it, and the
- * revisions. The full PF, ESI, PT and tax working opens below for when HR needs it.
+ * Salary and statutory, as one page: hold salary at the top; the breakup line by line
+ * (monthly and yearly, from gross to cost to company to take-home); every statutory
+ * setting beside it, changed in place; the revisions; and the tax declarations below.
  */
 export function SalaryTab({ e }) {
   const qc = useQueryClient();
+  const { data: lk } = useLookups();
   const [revising, setRevising] = useState(false);
-  const [more, setMore] = useState(false);
+  const [ptOff, setPtOff] = useState(false);
+  const [ptReason, setPtReason] = useState('');
+  const [vpf, setVpf] = useState(null);
   const pay = useQuery({ queryKey: ['employee-pay', e.id], queryFn: () => api.get(`/employees/${e.id}/pay`).then((r) => r.data) });
   const history = useQuery({ queryKey: ['salary-history', e.id], queryFn: () => api.get(`/employees/${e.id}/salary`).then((r) => r.data) });
   const st = e.statutory;
@@ -59,8 +62,12 @@ export function SalaryTab({ e }) {
   ];
   const revs = (history.data ?? []).slice().sort((a, b) => (a.valid_from < b.valid_from ? 1 : -1));
 
+  const line = 'flex items-center justify-between gap-3 border-b border-dashed py-2.5';
   return (
     <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-start justify-end gap-2 empty:hidden">
+        <SalaryHoldCard e={e} compact />
+      </div>
       <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         <Card className="overflow-hidden">
           <CardHeader
@@ -100,32 +107,65 @@ export function SalaryTab({ e }) {
 
         <div className="flex flex-col gap-4">
           <Card>
-            <CardHeader title="Statutory" />
+            <CardHeader title="Statutory" description="Changed here, for this person. Every change is in the audit log." />
             <div className="flex flex-col px-5 pb-4 text-[14px]">
-              <div className="flex items-center justify-between gap-3 border-b border-dashed py-2.5">
+              <div className={line}>
                 <div>
                   <div>Provident fund</div>
-                  <div className="text-[12px] text-muted-foreground">On the PF wage{st.pf_restrict_to_ceiling ? ' · capped at the wage ceiling' : ' · not capped'}</div>
+                  <div className="text-[12px] text-muted-foreground">PF wage {formatINR(p.pf.pf_wage)} · employee {formatINR(p.pf.employee)} a month</div>
                 </div>
                 <Switch checked={st.pf_enabled} disabled={ro || patch.isPending} onCheckedChange={(v) => patch.mutate({ pf_enabled: v })} label="PF" />
               </div>
               {!st.pf_enabled && e.identity?.uan && <Notice tone="warning">PF is off although a UAN is on file. Keep a reason in the log.</Notice>}
-              <div className="flex items-center justify-between gap-3 border-b border-dashed py-2.5">
+              {st.pf_enabled && (
+                <>
+                  <div className={line}>
+                    <span className="pl-3 text-[13px]">Restrict to the wage ceiling</span>
+                    <Switch checked={st.pf_restrict_to_ceiling} disabled={ro || patch.isPending} onCheckedChange={(v) => patch.mutate({ pf_restrict_to_ceiling: v })} label="Restrict to ceiling" />
+                  </div>
+                  <div className={line}>
+                    <span className="pl-3 text-[13px]">Voluntary PF (% of PF wage)</span>
+                    <span className="flex items-center gap-1">
+                      <Input
+                        className="h-7 w-16 text-right"
+                        value={vpf ?? String(st.vpf_pct)}
+                        disabled={ro}
+                        onChange={(ev) => setVpf(ev.target.value)}
+                        onBlur={() => vpf !== null && Number(vpf) !== st.vpf_pct && patch.mutate({ vpf_pct: Number(vpf) || 0 })}
+                        aria-label="Voluntary PF percent"
+                      />
+                      %
+                    </span>
+                  </div>
+                </>
+              )}
+              <div className={line}>
                 <div>
                   <div>ESI</div>
                   <div className="text-[12px] text-muted-foreground">
-                    {p.esi_within_ceiling ? 'Eligible: gross within the ESI ceiling' : 'Gross is above the ESI ceiling'}
+                    {p.esi_within_ceiling ? `Eligible: gross within the ESI ceiling${p.esi.applicable ? ` · employee ${formatINR(p.esi.employee)} a month` : ''}` : 'Gross is above the ESI ceiling'}
                     {st.esi_locked_until ? ` · covered till ${st.esi_locked_until}` : ''}
                   </div>
                 </div>
                 <Switch checked={st.esi_enabled} disabled={ro || patch.isPending || (!p.esi_within_ceiling && !st.esi_enabled)} onCheckedChange={(v) => patch.mutate({ esi_enabled: v })} label="ESI" />
               </div>
               {!st.esi_enabled && st.esi_locked_until && <Notice tone="info">ESI continues till the end of this contribution period ({st.esi_locked_until}), then stops.</Notice>}
-              <div className="flex justify-between border-b border-dashed py-2.5">
-                <span>PT state</span>
-                <span>{st.pt_applicable ? st.pt_state : `Exempt — ${st.pt_exempt_reason}`}</span>
+              <div className={line}>
+                <div>
+                  <div>Professional tax</div>
+                  <div className="text-[12px] text-muted-foreground">{st.pt_applicable ? `${formatINR(p.pt.amount)} a month` : `Exempt — ${st.pt_exempt_reason}`}</div>
+                </div>
+                <Switch checked={st.pt_applicable} disabled={ro || patch.isPending} onCheckedChange={(v) => (v ? patch.mutate({ pt_applicable: true }) : setPtOff(true))} label="Professional tax applies" />
               </div>
-              <div className="flex justify-between border-b border-dashed py-2.5">
+              <div className={line}>
+                <span className="pl-3 text-[13px]">PT state (where they work)</span>
+                <Select className="h-8 w-48" value={st.pt_state} disabled={ro || patch.isPending} onChange={(ev) => patch.mutate({ pt_state: ev.target.value })} aria-label="PT state">
+                  {(lk?.pt_states ?? [st.pt_state]).map((x) => (
+                    <option key={x}>{x}</option>
+                  ))}
+                </Select>
+              </div>
+              <div className={line}>
                 <span>Tax regime</span>
                 <span>
                   {st.tax_regime_code === 'OLD' ? 'Old' : 'New (default)'}
@@ -166,22 +206,33 @@ export function SalaryTab({ e }) {
         </div>
       </div>
 
-      <Card className="overflow-hidden">
-        <button type="button" onClick={() => setMore(!more)} className="flex w-full items-center justify-between gap-3 px-5 py-3.5 text-left hover:bg-accent/40" aria-expanded={more}>
-          <span>
-            <span className="font-semibold">Full working</span>
-            <span className="ml-2 text-[13px] text-muted-foreground">How pay was agreed, PF wage and voluntary PF, PT exemption, salary hold, both tax regimes and declarations</span>
-          </span>
-          <ChevronDown className={cn('size-4 shrink-0 transition-transform', more && 'rotate-180')} />
-        </button>
-      </Card>
-      {more && (
-        <div className="flex flex-col gap-5">
-          <SalaryHoldCard e={e} />
-          <PayTab e={e} />
-          <TaxTab e={e} />
-        </div>
-      )}
+      <TaxTab e={e} compact />
+
+      <Dialog
+        open={ptOff}
+        onOpenChange={setPtOff}
+        title="Switch professional tax off"
+        description="An exemption is a statutory category, not a preference. Record which one applies."
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setPtOff(false)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={ptReason.trim().length < 3}
+              loading={patch.isPending}
+              onClick={() => {
+                patch.mutate({ pt_applicable: false, pt_exempt_reason: ptReason.trim() });
+                setPtOff(false);
+              }}
+            >
+              Record exemption
+            </Button>
+          </>
+        }
+      >
+        <Input autoFocus value={ptReason} onChange={(ev) => setPtReason(ev.target.value)} placeholder="e.g. Person with a disability (certificate on file)" aria-label="Exemption category" />
+      </Dialog>
       {revising && <ReviseDialog e={e} onClose={() => setRevising(false)} />}
     </div>
   );
