@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Wrench } from 'lucide-react';
 import { toast } from 'sonner';
@@ -20,43 +20,17 @@ import { CorrectionDrawer } from '../../components/attendance/CorrectionDrawer';
 import { DayPicker } from '@/components/attendance/DayPicker';
 import { TONE, deptColour, fullDate, viewsFor } from '@/components/attendance/dayVocab';
 import { DeptAvatar } from '@/components/attendance/DeptAvatar';
+import { NumberPager } from '@/components/attendance/NumberPager';
+import { AttendanceTabs, MonthRegister } from '@/components/attendance/MonthRegister';
 
-/** Pages by number, with 20, 50 or 100 rows a page. */
-function NumberPager({ page, pages, total, limit, onPage, onLimit }) {
-  const from = total ? (page - 1) * limit + 1 : 0;
-  const to = Math.min(total, page * limit);
-  const nums = [];
-  for (let i = 1; i <= pages; i++) if (i === 1 || i === pages || Math.abs(i - page) <= 2) nums.push(i);
-  return (
-    <div className="no-print flex flex-wrap items-center gap-2.5 border-t bg-muted/30 px-3.5 py-2.5 text-[13px] text-muted-foreground">
-      <span>
-        Showing <b className="text-foreground num">{from.toLocaleString('en-IN')}–{to.toLocaleString('en-IN')}</b> of <b className="text-foreground num">{total.toLocaleString('en-IN')}</b> people · tap any row for the full day
-      </span>
-      <span className="flex-1" />
-      <span>Rows per page</span>
-      <Segmented value={limit} onChange={onLimit} label="Rows per page" options={[20, 50, 100].map((n) => ({ value: n, label: String(n) }))} />
-      <div className="flex items-center gap-1">
-        <Button variant="outline" size="sm" className="px-2" onClick={() => onPage(page - 1)} disabled={page <= 1} aria-label="Previous page">
-          <ChevronLeft />
-        </Button>
-        {nums.map((n, i) => (
-          <span key={n} className="flex items-center gap-1">
-            {i > 0 && n - nums[i - 1] > 1 && <span className="px-0.5">…</span>}
-            <Button variant={n === page ? 'default' : 'outline'} size="sm" className="min-w-8 px-2 num" aria-current={n === page ? 'page' : undefined} onClick={() => onPage(n)}>
-              {n}
-            </Button>
-          </span>
-        ))}
-        <Button variant="outline" size="sm" className="px-2" onClick={() => onPage(page + 1)} disabled={page >= pages} aria-label="Next page">
-          <ChevronRight />
-        </Button>
-      </div>
-    </div>
-  );
+/** Attendance: the daily register (one day, everyone) or the monthly register (one month, everyone). */
+export default function Register() {
+  const [sp] = useSearchParams();
+  return sp.get('tab') === 'month' ? <MonthRegister /> : <DailyRegister />;
 }
 
 /** One day, everyone. The filter chips use the same names and counts as the cards on Today. */
-export default function Register() {
+function DailyRegister() {
   const lp = useListParams({ sort: 'name' });
   const nav = useNavigate();
   const { data: lk } = useLookups();
@@ -175,6 +149,7 @@ export default function Register() {
           </div>
         }
       />
+      <AttendanceTabs active="day" />
 
       {frozen?.frozen && (
         <div className="mb-3">

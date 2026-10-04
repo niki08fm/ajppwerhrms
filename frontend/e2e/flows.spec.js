@@ -81,16 +81,26 @@ test('a day is marked from the register, with a reason, and reverted', async ({ 
   await page.goto(`/attendance?date=${date}`);
   await page.getByRole('button', { name: 'Correct' }).first().click();
   const drawer = page.getByRole('dialog');
-  await expect(drawer.getByText('What the punches say')).toBeVisible();
-  await drawer.getByRole('radio', { name: 'Mark the day' }).click();
+  await expect(drawer.getByText('This day counts as', { exact: true })).toBeVisible();
   await drawer.getByRole('radio', { name: 'Half day' }).click();
   await drawer.getByLabel('Reason').fill('Sent home at noon by the site engineer (e2e)');
-  await drawer.getByRole('button', { name: 'Save correction' }).click();
+  await drawer.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.getByText(/Day corrected/)).toBeVisible();
 
-  await page.getByRole('button', { name: 'Correct' }).first().click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Revert' }).click();
+  // The drawer stays open on the day, now showing the correction.
+  await drawer.getByRole('button', { name: 'Revert' }).click();
   await expect(page.getByText('Back to what the punches say')).toBeVisible();
+});
+
+test('monthly register: a cell per day, and a day opens the month of that person', async ({ page }) => {
+  await signIn(page);
+  await page.goto('/attendance?tab=month');
+  await expect(page.getByRole('tab', { name: 'Monthly register' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByText(/Showing 1–/)).toBeVisible();
+  await page.locator('tbody button[aria-label*=" · "]').first().click();
+  const drawer = page.getByRole('dialog');
+  await expect(drawer.getByText(/Paid .* · LOP .* · Late/)).toBeVisible();
+  await expect(drawer.getByText('This day counts as', { exact: true })).toBeVisible();
 });
 
 test('people: search, filter chips in the URL, open a full-screen profile', async ({ page }) => {

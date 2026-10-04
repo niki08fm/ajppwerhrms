@@ -94,3 +94,34 @@ export const initialsOf = (name) =>
     .slice(0, 2)
     .join('')
     .toUpperCase();
+
+/**
+ * How a day looks as a cell, in the monthly register and the person's month calendar.
+ * Teal worked, amber half or short, red absent or no punch-out, grey leave and off days.
+ */
+export const DAY_CELL = {
+  PRESENT: { letter: 'P', label: 'Present', tone: 'ok' },
+  OFF_WORKED: { letter: 'P', label: 'Off, worked', tone: 'ok' },
+  HOLIDAY_WORKED: { letter: 'P', label: 'Holiday, worked', tone: 'ok' },
+  HALF_DAY: { letter: '½', label: 'Half day', tone: 'warn' },
+  SHORT: { letter: 'S', label: 'Short', tone: 'warn' },
+  ABSENT: { letter: 'A', label: 'Absent', tone: 'bad' },
+  MISSING_PUNCH: { letter: '!', label: 'No out', tone: 'missing' },
+  ON_LEAVE: { letter: 'L', label: 'Leave', tone: 'muted' },
+  WEEKLY_OFF: { letter: 'W', label: 'Off', tone: 'off' },
+  HOLIDAY: { letter: 'H', label: 'Holiday', tone: 'off' },
+  NOT_JOINED: { letter: '', label: 'Not joined', tone: 'none' },
+  EXITED: { letter: '', label: 'Left', tone: 'none' },
+};
+
+const mix = (c, p, base = 'var(--card)') => `color-mix(in srgb, ${c} ${p}%, ${base})`;
+export const CELL_STYLE = {
+  ok: { background: mix('var(--primary)', 14), color: mix('var(--primary)', 85, 'var(--foreground)'), border: `1px solid ${mix('var(--primary)', 28)}` },
+  warn: { background: mix('var(--warning)', 22), color: mix('var(--warning)', 40, 'var(--foreground)'), border: `1px solid ${mix('var(--warning)', 45)}` },
+  bad: { background: mix('var(--destructive)', 11), color: 'var(--destructive)', border: `1px solid ${mix('var(--destructive)', 28)}` },
+  missing: { background: 'var(--card)', color: 'var(--destructive)', border: `1px dashed ${mix('var(--destructive)', 55)}` },
+  muted: { background: 'var(--muted)', color: 'var(--muted-foreground)', border: '1px solid var(--border)' },
+  off: { background: mix('var(--muted)', 55), color: mix('var(--muted-foreground)', 70), border: '1px solid transparent' },
+  none: { background: 'transparent', color: 'var(--muted-foreground)', border: '1px dashed var(--border)' },
+};
+export const cellOf = (status) => DAY_CELL[status] ?? { letter: '?', label: status ?? '', tone: 'none' };

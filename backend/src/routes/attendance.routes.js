@@ -7,6 +7,7 @@ export const attendanceRouter = Router();
 // ─── Register: one day, everyone ─────────────────────────────────────────────
 attendanceRouter.get('/attendance', requirePerm('attendance.read'), attendanceController.getRegister);
 attendanceRouter.get('/attendance/day', requirePerm('attendance.read'), attendanceController.getDay);
+attendanceRouter.get('/attendance/month', requirePerm('attendance.read'), attendanceController.getMonthRegister);
 attendanceRouter.post('/attendance/overrides', requirePerm('attendance.write'), attendanceController.createOverride);
 attendanceRouter.post('/attendance/overrides/bulk', requirePerm('attendance.write'), attendanceController.createBulkOverrides);
 attendanceRouter.post('/attendance/overrides/preview', requirePerm('attendance.write'), attendanceController.previewOverride);

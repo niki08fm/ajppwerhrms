@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { addDays, bulkOverrideSchema, DAY_STATUS_LABELS, faceExceptionDecideSchema, formatMinutes, isoDate, istDate, overrideCreateSchema, overridePreviewSchema, siteChangeReviewSchema, yearMonth, ymOf } from '@ajpwer/shared';
+import { addDays, bulkOverrideSchema, DAY_STATUS_LABELS, faceExceptionDecideSchema, firstOfMonth, formatMinutes, isoDate, istDate, lastOfMonth, monthDates, overrideCreateSchema, overridePreviewSchema, siteChangeReviewSchema, yearMonth, ymOf } from '@ajpwer/shared';
 import { assignWorkDate, overrideDiffers, pickPolicy } from '../calculations/index.js';
 import { audit, who } from '../utils/audit.js';
 import { fromDbDate, toDbDate } from '../utils/dbDates.js';
@@ -12,6 +12,7 @@ import { computePayslip, loadRecoveries } from '../services/payslip.service.js';
 import { payContext } from '../services/payroll.service.js';
 import { dayRegister } from '../services/register.service.js';
 import { inView, liveFigures, minutesNow, summarize, VIEWS } from '../services/dayview.service.js';
+import { monthRows } from '../services/monthgrid.service.js';
 
 const today = () => istDate(new Date());
 
@@ -151,6 +152,29 @@ export const getRegister = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * The monthly register: everyone employed in the month, a cell per day and the month's
+ * figures so far (paid days, loss of pay, late days, overtime). Filtering, search and
+ * pages are done on the screen — a month for ~200 people is one small response.
+ */
+export const getMonthRegister = asyncHandler(async (req, res) => {
+  const now = istDate(new Date());
+  const ym = yearMonth.parse(req.query.ym ?? ymOf(now));
+  const employees = await prisma.employee.findMany({
+    where: {
+      deleted_at: null,
+      status: { in: ['ACTIVE', 'NOTICE', 'EXITED'] },
+      joined_on: { lte: toDbDate(lastOfMonth(ym)) },
+      OR: [{ last_day: null }, { last_day: { gte: toDbDate(firstOfMonth(ym)) } }],
+    },
+    select: { id: true, code: true, name: true, joined_on: true, last_day: true, pay_group_id: true, department: { select: { id: true, name: true, colour: true } } },
+    orderBy: { name: 'asc' },
+  });
+  const months = await computeMonths(prisma, employees, ym);
+  const frozen = await attendanceFrozen(prisma, ym);
+  res.json({ data: { ym, today: now, dates: monthDates(ym), frozen, rows: monthRows(employees, months, ym, now) } });
+});
+
 /** Everything the correction drawer needs for one person-day: the punches, what they make the day, and the rules it is judged by. */
 export const getDay = asyncHandler(async (req, res) => {
   const q = z.object({ employee_id: z.string().uuid(), date: isoDate }).parse(req.query);
@@ -162,7 +186,7 @@ export const getDay = asyncHandler(async (req, res) => {
   });
   const override = await prisma.attendanceOverride.findUnique({ where: { employee_id_work_date: { employee_id: q.employee_id, work_date: toDbDate(q.date) } } });
   const frozen = await attendanceFrozen(prisma, ymOf(q.date));
-  const employee = await prisma.employee.findUnique({ where: { id: q.employee_id }, select: { id: true, code: true, name: true } });
+  const employee = await prisma.employee.findUnique({ where: { id: q.employee_id }, select: { id: true, code: true, name: true, department: { select: { id: true, name: true, colour: true } } } });
   res.json({
     data: {
       employee,
