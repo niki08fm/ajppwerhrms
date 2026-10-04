@@ -1,10 +1,12 @@
-import { addDays, addMonths, firstOfMonth, isoDate, istDate, ymOf } from '@ajpwer/shared';
+import { addDays, addMonths, dayName, daysInMonth, firstOfMonth, isoDate, istDate, lastOfMonth, yearMonth, ymOf } from '@ajpwer/shared';
 import { fromDbDate, n, toDbDate } from '../utils/dbDates.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { prisma } from '../config/db.js';
 import { computeMonths } from '../services/attendance.service.js';
 import { dayRegister } from '../services/register.service.js';
 import { heldBackList } from '../services/payroll.service.js';
+import { holidaysBetween } from '../services/rules.service.js';
+import { inView, isExpected, liveFigures, minutesNow, VIEWS } from '../services/dayview.service.js';
 
 const today = () => istDate(new Date());
 
@@ -184,4 +186,154 @@ export const getAnalytics = asyncHandler(async (_req, res) => {
       range: { from: addMonths(ymOf(date), -23), to: ymOf(date) },
     },
   });
+});
+
+// ─── Today screen (redesign) ─────────────────────────────────────────────────
+
+const first = (name) => name.split(/\s+/)[0];
+
+/** The register of one date, cached briefly: Today and its counts read the same rows. */
+function registerOf(date) {
+  return cached(`register:${date}:${today()}`, 20_000, () => dayRegister(prisma, date, undefined, today()));
+}
+
+/**
+ * Everything the Today screen draws for one date, in one call: each person's day in a
+ * compact form (the screen counts and groups them), the sites, the site moves of the day
+ * and what waits on HR. Works for any past date too — then nobody is "on site now" and
+ * the 2 AM auto punch-out shows as "no punch-out".
+ */
+export const getOverview = asyncHandler(async (req, res) => {
+  const now = today();
+  const date = isoDate.parse(req.query.date ?? now);
+  const isToday = date === now;
+  const nowMin = isToday ? minutesNow(date) : null;
+  const yesterday = addDays(now, -1);
+
+  const [rows, yRows, sites, departments, moves, faces, leaves, siteChanges, holds, heldBack] = await Promise.all([
+    registerOf(date),
+    date === yesterday ? registerOf(date) : registerOf(yesterday),
+    prisma.site.findMany({ where: { deleted_at: null }, select: { id: true, code: true, name: true, is_active: true }, orderBy: { name: 'asc' } }),
+    prisma.department.findMany({ where: { deleted_at: null }, select: { id: true, name: true, colour: true }, orderBy: { name: 'asc' } }),
+    prisma.siteChange.findMany({ where: { work_date: toDbDate(date) }, orderBy: { left_at: 'asc' } }),
+    prisma.faceException.findMany({ where: { status: 'PENDING' }, select: { id: true, occurred_at: true, claimed_employee_id: true, best_match_id: true, kind: true }, orderBy: { occurred_at: 'asc' } }),
+    prisma.leaveRequest.findMany({ where: { status: 'PENDING', deleted_at: null }, select: { id: true, employee_id: true, created_at: true }, orderBy: { created_at: 'asc' } }),
+    prisma.siteChange.findMany({ where: { status: 'PENDING' }, select: { id: true, employee_id: true, created_at: true }, orderBy: { created_at: 'asc' } }),
+    prisma.salaryHold.findMany({ where: { released_at: null, deleted_at: null }, select: { employee_id: true, created_at: true } }),
+    heldBackList(prisma),
+  ]);
+
+  const people = rows
+    .filter((r) => r.day.status !== 'NOT_JOINED' && r.day.status !== 'EXITED')
+    .map((r) => {
+      const live = liveFigures(r, nowMin ?? 0);
+      return {
+        id: r.employee.id,
+        code: r.employee.code,
+        name: r.employee.name,
+        dept_id: r.employee.department.id,
+        status: r.day.status,
+        sites: r.day.sites,
+        in_min: r.in_min,
+        out_min: r.out_min,
+        worked_min: live.worked_min,
+        late_min: r.day.late_min,
+        early_min: r.open_now ? 0 : r.day.early_min,
+        ot_min: live.ot_min,
+        open_now: r.open_now,
+        corrected: !!r.override,
+        views: VIEWS.filter((v) => inView(v, r, live)),
+        expected: isExpected(r),
+      };
+    });
+
+  // Names for the people HR is waiting on.
+  const ids = [...new Set([...faces.map((f) => f.claimed_employee_id ?? f.best_match_id), ...leaves.map((l) => l.employee_id), ...siteChanges.map((s) => s.employee_id), ...holds.map((h) => h.employee_id), ...moves.map((m) => m.employee_id)].filter(Boolean))];
+  const named = new Map((await prisma.employee.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, code: true } })).map((e) => [e.id, e]));
+  const nameOf = (id) => named.get(id)?.name ?? people.find((p) => p.id === id)?.name ?? null;
+
+  // Yesterday's open days and short days that HR has not settled yet.
+  const missing = yRows.filter((r) => r.day.status === 'MISSING_PUNCH' && !r.override);
+  const shortRows = [...yRows, ...(isToday ? rows : [])].filter((r) => !r.open_now && r.day.early_min > 0 && !r.override && r.day.status !== 'MISSING_PUNCH');
+  const item = (key, label, list, to, at) => ({ key, label, n: list.length, names: list.map((x) => x.name).filter(Boolean).slice(0, 6), employee_ids: list.map((x) => x.id).filter(Boolean), to, oldest_at: at ?? null });
+  const waiting = [
+    item('face', 'Face checks', faces.map((f) => ({ id: f.claimed_employee_id ?? f.best_match_id, name: nameOf(f.claimed_employee_id ?? f.best_match_id) ?? 'Unknown face' })), '/approvals', faces[0]?.occurred_at),
+    item('miss', 'Missing punch-outs', missing.map((r) => ({ id: r.employee.id, name: r.employee.name })), `/attendance?date=${yesterday}&view=nopunch`, missing.length ? `${yesterday}T20:30:00.000Z` : null),
+    item('short', 'Short days', shortRows.map((r) => ({ id: r.employee.id, name: r.employee.name })), `/attendance?date=${yesterday}&view=early`, null),
+    item('move', 'Site changes', siteChanges.map((s) => ({ id: s.employee_id, name: nameOf(s.employee_id) })), '/approvals', siteChanges[0]?.created_at),
+    item('leave', 'Leave requests', leaves.map((l) => ({ id: l.employee_id, name: nameOf(l.employee_id) })), '/approvals', leaves[0]?.created_at),
+    item('hold', 'Salaries on hold', holds.map((h) => ({ id: h.employee_id, name: nameOf(h.employee_id) })), '/held-salaries', null),
+    item('heldback', 'Left out of payroll', heldBack.map((h) => ({ id: h.employee.id, name: h.employee.name })), '/payroll', null),
+  ].filter((w) => w.n > 0);
+
+  const candidates = [
+    faces[0] && { label: 'face check', name: nameOf(faces[0].claimed_employee_id ?? faces[0].best_match_id) ?? 'Unknown face', at: faces[0].occurred_at },
+    siteChanges[0] && { label: 'site change', name: nameOf(siteChanges[0].employee_id), at: siteChanges[0].created_at },
+    leaves[0] && { label: 'leave request', name: nameOf(leaves[0].employee_id), at: leaves[0].created_at },
+  ].filter(Boolean);
+  const oldest = candidates.sort((a, b) => new Date(a.at) - new Date(b.at))[0] ?? null;
+
+  // The shift most people are on, for the arrivals chart.
+  const mode = (xs) => {
+    const c = new Map();
+    for (const x of xs) c.set(x, (c.get(x) ?? 0) + 1);
+    return [...c.entries()].sort((p, q) => q[1] - p[1])[0]?.[0] ?? null;
+  };
+  const shift = { start_min: mode(rows.map((r) => r.context.shift_start_min)) ?? 540, grace_min: mode(rows.map((r) => r.context.grace_min)) ?? 10, standard_min: mode(rows.map((r) => r.context.standard_min)) ?? 540 };
+
+  res.json({
+    data: {
+      date,
+      today: now,
+      is_today: isToday,
+      shift,
+      now_min: nowMin,
+      sites: sites.filter((s) => s.is_active || people.some((p) => p.sites.includes(s.id))),
+      departments,
+      people,
+      moves: moves.map((m) => ({ id: m.id, employee_id: m.employee_id, name: nameOf(m.employee_id), from_site_id: m.from_site_id, to_site_id: m.to_site_id, travel_min: m.hr_travel_min ?? m.travel_min, status: m.status })),
+      waiting,
+      waiting_total: waiting.filter((w) => !['hold', 'heldback'].includes(w.key)).reduce((a, w) => a + w.n, 0),
+      oldest: oldest && { ...oldest, hours: Math.max(0, Math.round((Date.now() - new Date(oldest.at).getTime()) / 3_600_000)) },
+    },
+  });
+});
+
+/**
+ * A month for the day picker and the month chart: for each day, the share of staff who
+ * came in and how many punched at each site; Sundays/weekly offs and holidays marked.
+ */
+export const getMonth = asyncHandler(async (req, res) => {
+  const now = today();
+  const ym = yearMonth.parse(req.query.ym ?? ymOf(now));
+  const data = await cached(`month:${ym}:${now}`, 5 * 60_000, async () => {
+    const from = firstOfMonth(ym);
+    const to = lastOfMonth(ym);
+    const [aggs, holidays, groups] = await Promise.all([
+      prisma.dailyAggregate.findMany({ where: { date: { gte: toDbDate(from), lte: toDbDate(to) } } }),
+      holidaysBetween(prisma, from, to),
+      prisma.payGroup.findMany({ where: { deleted_at: null }, select: { weekly_off: true } }),
+    ]);
+    // A day is "off" when every pay group has it off (or it is a company holiday).
+    const offDays = groups.length ? groups.map((g) => g.weekly_off).reduce((a, b) => a.filter((x) => b.includes(x))) : [];
+    const days = [];
+    for (let i = 0; i < daysInMonth(ym); i++) {
+      const d = addDays(from, i);
+      const company = aggs.find((a) => a.site_id === null && fromDbDate(a.date) === d);
+      const bySite = {};
+      for (const a of aggs) if (a.site_id && fromDbDate(a.date) === d) bySite[a.site_id] = a.present;
+      days.push({
+        date: d,
+        future: d > now,
+        off: holidays.has(d) || offDays.includes(dayName(d)),
+        holiday: holidays.get(d) ?? null,
+        present: company?.present ?? 0,
+        headcount: company?.headcount ?? 0,
+        rate: company && company.headcount ? Math.round((company.present / company.headcount) * 1000) / 10 : null,
+        sites: bySite,
+      });
+    }
+    return { ym, days };
+  });
+  res.json({ data });
 });

@@ -1,72 +1,145 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Wrench } from 'lucide-react';
 import { toast } from 'sonner';
 import { addDays, DAY_STATUSES, DAY_STATUS_LABELS } from '@ajpwer/shared';
 import { api, errorMessage, qs } from '@/services/api';
-import { useKeysetList, useListParams } from '@/hooks';
+import { useListParams } from '@/hooks';
 import { opts, useLookups } from '@/hooks/useLookups';
-import { hhmm, longDate, mins } from '@/utils';
-import { PageHeader, PersonLink } from '@/components/bits';
-import { DataTable, Pager } from '@/components/data-table';
+import { cn, hhmm, longDate, mins } from '@/utils';
+import { Mono, PageHeader } from '@/components/bits';
+import { DataTable } from '@/components/data-table';
 import { ListToolbar } from '@/components/list-toolbar';
 import { Chip, DayChip, EmptyState, ErrorState, LockedNotice, NoMatches, SkeletonRows } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Field, Input, Segmented, Select } from '@/components/ui/form';
+import { Field, Input, Segmented } from '@/components/ui/form';
 import { Dialog } from '@/components/ui/overlay';
 import { CorrectionDrawer } from '../../components/attendance/CorrectionDrawer';
+import { DayPicker } from '@/components/attendance/DayPicker';
+import { TONE, deptColour, fullDate, initialsOf, viewsFor } from '@/components/attendance/dayVocab';
 
-/** One day, everyone. */
+/** Pages by number, with 20, 50 or 100 rows a page. */
+function NumberPager({ page, pages, total, limit, onPage, onLimit }) {
+  const from = total ? (page - 1) * limit + 1 : 0;
+  const to = Math.min(total, page * limit);
+  const nums = [];
+  for (let i = 1; i <= pages; i++) if (i === 1 || i === pages || Math.abs(i - page) <= 2) nums.push(i);
+  return (
+    <div className="no-print flex flex-wrap items-center gap-2.5 border-t bg-muted/30 px-3.5 py-2.5 text-[13px] text-muted-foreground">
+      <span>
+        Showing <b className="text-foreground num">{from.toLocaleString('en-IN')}–{to.toLocaleString('en-IN')}</b> of <b className="text-foreground num">{total.toLocaleString('en-IN')}</b> people · tap any row for the full day
+      </span>
+      <span className="flex-1" />
+      <span>Rows per page</span>
+      <Segmented value={limit} onChange={onLimit} label="Rows per page" options={[20, 50, 100].map((n) => ({ value: n, label: String(n) }))} />
+      <div className="flex items-center gap-1">
+        <Button variant="outline" size="sm" className="px-2" onClick={() => onPage(page - 1)} disabled={page <= 1} aria-label="Previous page">
+          <ChevronLeft />
+        </Button>
+        {nums.map((n, i) => (
+          <span key={n} className="flex items-center gap-1">
+            {i > 0 && n - nums[i - 1] > 1 && <span className="px-0.5">…</span>}
+            <Button variant={n === page ? 'default' : 'outline'} size="sm" className="min-w-8 px-2 num" aria-current={n === page ? 'page' : undefined} onClick={() => onPage(n)}>
+              {n}
+            </Button>
+          </span>
+        ))}
+        <Button variant="outline" size="sm" className="px-2" onClick={() => onPage(page + 1)} disabled={page >= pages} aria-label="Next page">
+          <ChevronRight />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** Department colours pale enough to need dark initials. */
+const LIGHT_TOKENS = ['chart-3', 'chart-4'];
+
+/** A coloured circle with initials: the colour is the department's. */
+function Avatar({ name, colour, light }) {
+  return (
+    <span className="inline-flex size-[30px] shrink-0 items-center justify-center rounded-full text-[11px] font-semibold" style={{ background: colour, color: light ? 'oklch(0.2 0.03 240)' : 'white' }}>
+      {initialsOf(name)}
+    </span>
+  );
+}
+
+/** One day, everyone. The filter chips use the same names and counts as the cards on Today. */
 export default function Register() {
   const lp = useListParams({ sort: 'name' });
   const nav = useNavigate();
   const { data: lk } = useLookups();
-  const date = lp.searchParams.get('date') ?? lk?.today ?? new Date().toISOString().slice(0, 10);
+  const today = lk?.today ?? new Date().toISOString().slice(0, 10);
+  const date = lp.searchParams.get('date') ?? today;
+  const view = lp.searchParams.get('view') ?? '';
+  const page = Math.max(1, Number(lp.searchParams.get('page') ?? 1));
+  const limit = [20, 50, 100].includes(Number(lp.searchParams.get('limit'))) ? Number(lp.searchParams.get('limit')) : 20;
   const params = useMemo(() => {
-    const p = { ...lp.apiParams, date };
-    delete p['filter[date]'];
+    const p = { ...lp.apiParams, date, limit, page };
+    for (const k of ['filter[date]', 'filter[view]', 'filter[page]', 'filter[limit]']) delete p[k];
+    if (view) p['filter[view]'] = view;
     return p;
-  }, [lp.apiParams, date]);
-  const list = useKeysetList(['register'], '/attendance', params, !!date);
+  }, [lp.apiParams, date, view, limit, page]);
+  const list = useQuery({ queryKey: ['register', params], queryFn: () => api.get('/attendance', params), placeholderData: keepPreviousData, enabled: !!date });
+  const rows = list.data?.data ?? [];
+  const meta = list.data?.meta;
   const [open, setOpen] = useState(null);
   const [selected, setSelected] = useState(new Set());
   const [bulk, setBulk] = useState(false);
   const siteName = (id) => lk?.sites.find((s) => s.id === id)?.name ?? id;
-  const counts = list.meta?.counts ?? {};
-  const frozen = list.meta?.frozen;
+  const dept = (id) => lk?.departments.find((x) => x.id === id);
+  const frozen = meta?.frozen;
+  const isToday = date === today;
+  const summary = meta?.summary ?? {};
+  // Changing what is shown starts again at page 1.
+  const setF = (patch) => lp.set({ ...patch, page: null });
 
   const filters = [
     { key: 'dept', label: 'Department', options: opts(lk?.departments) },
     { key: 'pay_group', label: 'Pay group', options: opts(lk?.pay_groups) },
     { key: 'site', label: 'Site punched at', options: opts(lk?.sites) },
-    { key: 'status', label: 'Status', options: DAY_STATUSES.map((s) => ({ value: s, label: DAY_STATUS_LABELS[s] })) },
+    { key: 'status', label: 'Day counts as', options: DAY_STATUSES.map((s) => ({ value: s, label: DAY_STATUS_LABELS[s] })) },
     { key: 'corrected', label: 'Has correction', options: [{ value: 'yes', label: 'Corrected' }] },
-    { key: 'late', label: 'Late only', options: [{ value: 'yes', label: 'Late' }] },
-    { key: 'early', label: 'Left early only', options: [{ value: 'yes', label: 'Left early' }] },
-    { key: 'ot', label: 'Overtime only', options: [{ value: 'yes', label: 'Overtime' }] },
   ];
+  const quiet = (v, text, tone) => (v ? <span className={tone}>{text}</span> : <span className="text-muted-foreground/60">—</span>);
   const cols = [
-    { id: 'name', header: 'Name', sortKey: 'name', sticky: true, width: 210, cell: (r) => <PersonLink id={r.employee.id} name={r.employee.name} code={r.employee.code} tab="attendance" /> },
-    { id: 'dept', header: 'Department', cell: (r) => r.employee.department.name },
+    {
+      id: 'name',
+      header: 'Employee',
+      sortKey: 'name',
+      sticky: true,
+      width: 230,
+      cell: (r) => (
+        <span className="flex items-center gap-2.5">
+          <Avatar name={r.employee.name} colour={deptColour(r.employee.department.colour ?? dept(r.employee.department.id)?.colour)} light={LIGHT_TOKENS.includes(r.employee.department.colour ?? dept(r.employee.department.id)?.colour)} />
+          <span className="flex min-w-0 flex-col leading-tight">
+            <span className="truncate font-medium">{r.employee.name}</span>
+            <span className="truncate text-[12px] text-muted-foreground">
+              <Mono>{r.employee.code}</Mono> · {r.employee.department.name}
+            </span>
+          </span>
+        </span>
+      ),
+    },
+    { id: 'sites', header: 'Sites', cell: (r) => (r.day.sites.length ? r.day.sites.map(siteName).join(' → ') : <span className="text-muted-foreground/60">—</span>) },
     { id: 'in', header: 'In', sortKey: 'in', align: 'right', cell: (r) => hhmm(r.in_min) },
-    { id: 'out', header: 'Out', align: 'right', cell: (r) => (r.open_now ? <Chip tone="info">On site</Chip> : hhmm(r.out_min)) },
-    { id: 'worked', header: 'Hours', sortKey: 'worked', align: 'right', cell: (r) => (r.day.worked_min ? mins(r.day.worked_min) : '—') },
-    { id: 'late', header: 'Late', sortKey: 'late', align: 'right', cell: (r) => (r.day.late_min ? <span className="text-warning-foreground dark:text-warning">{mins(r.day.late_min)}</span> : '—') },
+    { id: 'out', header: 'Out', align: 'right', cell: (r) => (r.open_now ? <Chip tone="info">On site</Chip> : r.day.status === 'MISSING_PUNCH' && !r.override ? <Chip tone="destructive">No punch-out</Chip> : hhmm(r.out_min)) },
+    { id: 'worked', header: 'Worked', sortKey: 'worked', align: 'right', cell: (r) => quiet(r.live?.worked_min ?? r.day.worked_min, mins(r.live?.worked_min ?? r.day.worked_min)) },
+    { id: 'late', header: 'Late', sortKey: 'late', align: 'right', cell: (r) => quiet(r.day.late_min, mins(r.day.late_min), 'text-warning-foreground dark:text-warning') },
     {
       id: 'early',
-      header: 'Left early',
+      header: 'Short',
       sortKey: 'early',
       align: 'right',
-      cell: (r) => (r.day.early_min ? <span className="text-warning-foreground dark:text-warning" title={`Day ended ${hhmm(r.day.due_out_min)}`}>{mins(r.day.early_min)}</span> : '—'),
+      cell: (r) => quiet(!r.open_now && r.day.early_min, <span title={`Day ended ${hhmm(r.day.due_out_min)}`}>{mins(r.day.early_min)}</span>, 'text-destructive'),
     },
-    { id: 'ot', header: 'OT', sortKey: 'ot', align: 'right', cell: (r) => (r.day.ot_min ? mins(r.day.ot_min) : '—') },
-    { id: 'sites', header: 'Sites', cell: (r) => (r.day.sites.length ? r.day.sites.map(siteName).join(' + ') : '—') },
+    { id: 'ot', header: 'OT', sortKey: 'ot', align: 'right', cell: (r) => quiet(r.live?.ot_min ?? r.day.ot_min, mins(r.live?.ot_min ?? r.day.ot_min)) },
     {
       id: 'status',
-      header: 'Status',
-      cell: (r) => (r.open_now && r.day.status === 'MISSING_PUNCH' ? <Chip tone="info">In, not out yet</Chip> : <DayChip status={r.day.status} overridden={!!r.override} />),
+      header: 'Day counts as',
+      cell: (r) => (r.open_now && r.day.status === 'MISSING_PUNCH' ? <Chip tone="info">On site now</Chip> : <DayChip status={r.day.status} overridden={!!r.override} />),
     },
     {
       id: 'fix',
@@ -86,21 +159,28 @@ export default function Register() {
       ),
     },
   ];
-  const setDate = (d) => lp.set({ date: d });
-  const filtered = !!lp.q || Object.keys(lp.filters).filter((k) => k !== 'date').length > 0;
+  const setDate = (d) => {
+    setSelected(new Set());
+    setF({ date: d === today ? null : d });
+  };
+  const filtered = !!lp.q || !!view || Object.keys(lp.filters).filter((k) => !['date', 'view', 'page', 'limit'].includes(k)).length > 0;
+  const chips = [{ key: '', label: 'Everyone', n: summary.everyone, colour: 'var(--muted-foreground)' }, ...viewsFor(isToday).map((v) => ({ key: v.key, label: v.label, n: summary[v.key], colour: v.colour === 'var(--foreground)' ? 'var(--primary)' : v.colour }))];
+  // "No punch-out" shows on today too when yesterday's door is still open for someone.
+  if (isToday && summary.nopunch) chips.splice(3, 0, { key: 'nopunch', label: 'No punch-out', n: summary.nopunch, colour: TONE.bad });
+  const shownDepts = (lk?.departments ?? []).filter((x) => x.colour);
 
   return (
     <div>
       <PageHeader
         title="Attendance"
-        description={`${longDate(date)}. Computed from the punch ledger; corrections are layered on top and never edit a punch.`}
+        description={`${fullDate(date)}. Computed from the punch ledger; corrections are layered on top and never edit a punch.`}
         meta={
-          <div className="flex items-center gap-1">
+          <div className="flex flex-wrap items-center gap-1.5">
             <Button variant="outline" size="icon" onClick={() => setDate(addDays(date, -1))} aria-label="Previous day">
               <ChevronLeft />
             </Button>
-            <Input type="date" className="w-40" value={date} onChange={(e) => setDate(e.target.value)} aria-label="Date" />
-            <Button variant="outline" size="icon" onClick={() => setDate(addDays(date, 1))} aria-label="Next day">
+            <DayPicker date={date} today={today} onChange={setDate} />
+            <Button variant="outline" size="icon" onClick={() => setDate(addDays(date, 1))} disabled={date >= today} aria-label="Next day">
               <ChevronRight />
             </Button>
           </div>
@@ -112,35 +192,55 @@ export default function Register() {
           <LockedNotice title="This month's attendance is submitted">{frozen.reason}</LockedNotice>
         </div>
       )}
-      <div className="mb-3 flex flex-wrap gap-1.5">
-        {Object.entries(counts)
-          .sort((a, b) => b[1] - a[1])
-          .map(([s, n]) => (
-            <button key={s} onClick={() => lp.set({ status: lp.filters.status === s ? null : s })} className={`rounded-full ${lp.filters.status === s ? 'ring-2 ring-ring' : ''}`}>
-              <DayChip status={s} /> <span className="sr-only">{n}</span>
-              <span className="ml-0.5 text-[13px] num">{n}</span>
-            </button>
-          ))}
+      <div className="mb-2 flex flex-wrap gap-2">
+        {chips
+          .filter((c) => c.key === '' || c.key === view || c.n > 0)
+          .map((c) => {
+            const on = view === c.key;
+            return (
+              <button
+                key={c.key || 'all'}
+                type="button"
+                aria-pressed={on}
+                onClick={() => setF({ view: c.key || null })}
+                className={cn('inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[13px] font-medium transition-colors', on ? 'border-primary bg-secondary' : 'bg-card hover:border-primary/40')}
+              >
+                <span className="size-2 rounded-full" style={{ background: c.colour }} />
+                {c.label} <b className="font-semibold num">{c.n ?? '·'}</b>
+              </button>
+            );
+          })}
       </div>
-      <Card>
+      {shownDepts.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-muted-foreground">
+          <span className="text-[11px] font-semibold tracking-wide uppercase">Circle = department</span>
+          {shownDepts.map((x) => (
+            <span key={x.id} className="inline-flex items-center gap-1">
+              <span className="size-2.5 rounded-full" style={{ background: deptColour(x.colour) }} />
+              {x.name}
+            </span>
+          ))}
+        </div>
+      )}
+      <Card className="overflow-hidden">
         <ListToolbar
           q={lp.q}
-          onQ={(q) => lp.set({ q })}
+          onQ={(q) => setF({ q })}
           placeholder="Search name or code"
           searching="name and employee code"
           filters={filters}
-          values={Object.fromEntries(Object.entries(lp.filters).filter(([k]) => k !== 'date'))}
-          onFilter={(k, v) => lp.set({ [k]: v })}
+          values={Object.fromEntries(Object.entries(lp.filters).filter(([k]) => !['date', 'view', 'page', 'limit'].includes(k)))}
+          onFilter={(k, v) => setF({ [k]: v })}
           onClear={() => {
             lp.clearFilters();
-            lp.set({ date });
+            lp.set({ date: date === today ? null : date });
           }}
           list="attendance"
           searchParams={lp.searchParams}
           onApplyView={(q) => nav(`/attendance?${q}`)}
-          exportPath={`/attendance${qs({ ...params, format: 'csv', limit: undefined, cursor: undefined })}`}
+          exportPath={`/attendance${qs({ ...params, format: 'csv', limit: undefined, page: undefined })}`}
           exportName={`attendance-${date}.csv`}
-          total={list.total}
+          total={meta?.total ?? 0}
         >
           {selected.size > 0 && !frozen?.frozen && (
             <Button size="sm" onClick={() => setBulk(true)}>
@@ -152,16 +252,16 @@ export default function Register() {
           <SkeletonRows rows={12} cols={9} />
         ) : list.isError ? (
           <ErrorState error={list.error} onRetry={() => list.refetch()} />
-        ) : !list.rows.length ? (
+        ) : !rows.length ? (
           filtered ? (
-            <NoMatches onClear={lp.clearFilters} />
+            <NoMatches onClear={() => setF({ view: null, q: null })} />
           ) : (
             <EmptyState title="Nobody is employed on this date" body="Activate people from Offers and onboarding; they appear here from their joining date." />
           )
         ) : (
           <DataTable
             columns={cols}
-            rows={list.rows}
+            rows={rows}
             rowId={(r) => r.employee.id}
             sort={lp.sort}
             onSort={lp.toggleSort}
@@ -170,18 +270,16 @@ export default function Register() {
             selected={selected}
             onSelectedChange={setSelected}
             fetching={list.isFetching && !list.isLoading}
+            maxHeight="720px"
           />
         )}
-        <Pager
-          shown={list.rows.length}
-          total={list.total}
-          page={list.page}
-          hasPrev={list.hasPrev}
-          hasNext={list.hasNext}
-          onPrev={list.prev}
-          onNext={list.next}
-          limit={lp.limit}
-          onLimit={(n) => lp.set({ limit: String(n) })}
+        <NumberPager
+          page={meta?.page ?? page}
+          pages={meta?.pages ?? 1}
+          total={meta?.total ?? 0}
+          limit={limit}
+          onPage={(n) => lp.set({ page: n > 1 ? String(n) : null })}
+          onLimit={(n) => lp.set({ limit: n === 20 ? null : String(n), page: null })}
         />
       </Card>
       {open && <CorrectionDrawer employeeId={open} date={date} open onOpenChange={(o) => !o && setOpen(null)} />}

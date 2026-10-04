@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Undo2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Undo2 } from 'lucide-react';
+import { addDays } from '@ajpwer/shared';
 import { toast } from 'sonner';
 import { DAY_STATUS_LABELS } from '@ajpwer/shared';
 import { api, errorMessage } from '@/services/api';
 import { useDebounced } from '@/hooks';
+import { useLookups } from '@/hooks/useLookups';
+import { fullDate } from './dayVocab';
 import { hhmm, istTime, longDate, mins } from '@/utils';
 import { Mono } from '@/components/bits';
 import { Chip, DayChip, ErrorState, LockedNotice, SkeletonBlock } from '@/components/states';
@@ -56,8 +59,12 @@ function Outcome({ v, kind }) {
  * follow from them by the attendance rules, and typing the overtime moves the out time — or a
  * plain mark of the day with any overtime entered directly.
  */
-export function CorrectionDrawer({ employeeId, date, open, onOpenChange }) {
+export function CorrectionDrawer({ employeeId, date: startDate, open, onOpenChange }) {
   const qc = useQueryClient();
+  // Opens on the day that was clicked; the arrows step to the days around it.
+  const [date, setDate] = useState(startDate);
+  useEffect(() => setDate(startDate), [startDate, employeeId]);
+  const { data: lk } = useLookups();
   const q = useQuery({ queryKey: ['attendance-day', employeeId, date], queryFn: () => api.get('/attendance/day', { employee_id: employeeId, date }).then((r) => r.data), enabled: open });
   const d = q.data;
   const c = d?.context;
@@ -149,6 +156,18 @@ export function CorrectionDrawer({ employeeId, date, open, onOpenChange }) {
         ) : undefined
       }
     >
+      <div className="mb-4 flex items-center gap-2 rounded-lg border bg-muted/40 px-2 py-1.5">
+        <Button variant="ghost" size="icon" className="size-8" aria-label="Previous day" onClick={() => setDate(addDays(date, -1))}>
+          <ChevronLeft />
+        </Button>
+        <span className="flex-1 text-center text-[14px] font-semibold text-primary">
+          {fullDate(date)}
+          {lk?.today === date ? ' · today' : ''}
+        </span>
+        <Button variant="ghost" size="icon" className="size-8" aria-label="Next day" disabled={!!lk?.today && date >= lk.today} onClick={() => setDate(addDays(date, 1))}>
+          <ChevronRight />
+        </Button>
+      </div>
       {q.isLoading ? (
         <SkeletonBlock className="h-80" />
       ) : q.isError ? (

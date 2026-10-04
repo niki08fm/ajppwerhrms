@@ -11,6 +11,7 @@ import { attendanceFrozen, computeMonths, effectiveTravel } from '../services/at
 import { computePayslip, loadRecoveries } from '../services/payslip.service.js';
 import { payContext } from '../services/payroll.service.js';
 import { dayRegister } from '../services/register.service.js';
+import { inView, liveFigures, minutesNow, summarize, VIEWS } from '../services/dayview.service.js';
 
 const today = () => istDate(new Date());
 
@@ -29,21 +30,35 @@ export const getRegister = asyncHandler(async (req, res) => {
     ],
     'name',
   );
-  let rows = await dayRegister(prisma, date, undefined, today());
+  const isToday = date === today();
+  const nowMin = isToday ? minutesNow(date) : 0;
+  let rows = (await dayRegister(prisma, date, undefined, today())).map((r) => ({ ...r, live: liveFigures(r, nowMin) }));
   const counts = {};
   for (const r of rows) counts[r.day.status] = (counts[r.day.status] ?? 0) + 1;
 
-  // Filters are applied on the server, never in the browser.
-  const q = p.q?.toLowerCase();
-  if (q) rows = rows.filter((r) => r.employee.name.toLowerCase().includes(q) || r.employee.code.toLowerCase().includes(q));
+  // Filters are applied on the server, never in the browser. Scope first (department,
+  // pay group, site), then the counts the filter chips show, then the rest.
   const dept = filterValues(p.filter, 'dept');
   if (dept.length) rows = rows.filter((r) => dept.includes(r.employee.department.id));
   const pg = filterValues(p.filter, 'pay_group');
   if (pg.length) rows = rows.filter((r) => pg.includes(r.employee.pay_group_id));
+  const site = filterValues(p.filter, 'site');
+  // Absence and leave belong to no site; with a site picked they are still counted company-wide, as on Today.
+  const siteRows = site.length ? rows.filter((r) => r.day.sites.some((s) => site.includes(s))) : rows;
+  const summary = summarize(siteRows, nowMin);
+  if (site.length) {
+    const all = summarize(rows, nowMin);
+    summary.absent = all.absent;
+    summary.leave = all.leave;
+  }
+  const view = filterOne(p.filter, 'view');
+  if (view && !VIEWS.includes(view)) throw new AppError('VALIDATION', `Unknown view "${view}". Use one of: ${VIEWS.join(', ')}.`, 422, 'filter[view]');
+  if (site.length && !(view === 'absent' || view === 'leave')) rows = siteRows;
+  if (view) rows = rows.filter((r) => inView(view, r, r.live));
+  const q = p.q?.toLowerCase();
+  if (q) rows = rows.filter((r) => r.employee.name.toLowerCase().includes(q) || r.employee.code.toLowerCase().includes(q));
   const status = filterValues(p.filter, 'status');
   if (status.length) rows = rows.filter((r) => status.includes(r.day.status));
-  const site = filterValues(p.filter, 'site');
-  if (site.length) rows = rows.filter((r) => r.day.sites.some((s) => site.includes(s)));
   if (filterOne(p.filter, 'corrected') === 'yes') rows = rows.filter((r) => r.override);
   if (filterOne(p.filter, 'late') === 'yes') rows = rows.filter((r) => r.day.late_min > 0);
   if (filterOne(p.filter, 'early') === 'yes') rows = rows.filter((r) => r.day.early_min > 0);
@@ -53,13 +68,13 @@ export const getRegister = asyncHandler(async (req, res) => {
     p.sort.key === 'name'
       ? r.employee.name.toLowerCase()
       : p.sort.key === 'worked'
-        ? r.day.worked_min
+        ? r.live.worked_min
         : p.sort.key === 'late'
           ? r.day.late_min
           : p.sort.key === 'early'
             ? r.day.early_min
             : p.sort.key === 'ot'
-              ? r.day.ot_min
+              ? r.live.ot_min
               : (r.in_min ?? 99999);
   rows.sort((a, b) => {
     const ka = key(a);
@@ -106,9 +121,11 @@ export const getRegister = asyncHandler(async (req, res) => {
     return res.send(csv);
   }
 
-  // Keyset over the computed, sorted rows.
+  // Numbered pages (?page=3) or keyset over the computed, sorted rows.
   let start = 0;
-  if (p.cursor) {
+  const pageNo = Number(req.query.page);
+  if (Number.isInteger(pageNo) && pageNo > 1) start = Math.min((pageNo - 1) * p.limit, Math.max(0, Math.ceil(rows.length / p.limit) - 1) * p.limit);
+  else if (p.cursor) {
     const idx = rows.findIndex((r) => r.employee.id === p.cursor.id);
     start = idx >= 0 ? idx + 1 : 0;
   }
@@ -122,6 +139,12 @@ export const getRegister = asyncHandler(async (req, res) => {
       total: rows.length,
       nextCursor: hasMore && last ? Buffer.from(JSON.stringify({ v: null, id: last.employee.id })).toString('base64url') : null,
       counts,
+      summary,
+      page: Math.floor(start / p.limit) + 1,
+      pages: Math.max(1, Math.ceil(rows.length / p.limit)),
+      limit: p.limit,
+      is_today: isToday,
+      now_min: isToday ? nowMin : null,
       date,
       frozen,
     },

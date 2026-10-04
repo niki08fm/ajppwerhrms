@@ -43,7 +43,7 @@ export const siteLoginSchema = z
 
 // ─── Lists ───────────────────────────────────────────────────────────────────
 
-export const PAGE_SIZES = [50, 100, 200];
+export const PAGE_SIZES = [20, 50, 100, 200];
 export const listQuerySchema = z.object({
   q: z.string().max(100).optional(),
   sort: z.string().max(40).optional(),
@@ -51,7 +51,7 @@ export const listQuerySchema = z.object({
   limit: z.coerce
     .number()
     .int()
-    .refine((n) => PAGE_SIZES.includes(n), 'Page size is 50, 100 or 200')
+    .refine((n) => PAGE_SIZES.includes(n), 'Page size is 20, 50, 100 or 200')
     .optional(),
   filter: z.record(z.union([z.string(), z.array(z.string())])).optional(),
 });

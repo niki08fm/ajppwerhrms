@@ -25,9 +25,13 @@ async function resetMonth(page, ym) {
 
 test('the dashboard shows today at a glance', async ({ page }) => {
   await signIn(page);
-  await expect(page.getByText('Headcount', { exact: true })).toBeVisible();
-  await expect(page.getByText('Site network')).toBeVisible();
-  await expect(page.getByRole('img', { name: /Site network/ })).toBeVisible();
+  await expect(page.getByText('In today', { exact: true })).toBeVisible();
+  await expect(page.getByText('Sites right now')).toBeVisible();
+  await expect(page.getByText('Waiting on you')).toBeVisible();
+  // A card opens Attendance filtered to the same people, under the same name.
+  await page.getByRole('link', { name: /On site now/ }).click();
+  await expect(page).toHaveURL(/\/attendance\?.*view=onsite/);
+  await expect(page.getByRole('button', { name: /On site now/, pressed: true })).toBeVisible();
 });
 
 test('a month runs end to end: five steps, run, reports, lock, paid', async ({ page }) => {

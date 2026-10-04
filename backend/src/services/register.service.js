@@ -30,7 +30,7 @@ export async function dayRegister(db, date, employeeIds, today, opts = {}) {
       OR: [{ last_day: null }, { last_day: { gte: d } }],
       ...(employeeIds ? { id: { in: employeeIds } } : {}),
     },
-    select: { id: true, code: true, name: true, designation: true, pay_group_id: true, joined_on: true, last_day: true, department: { select: { id: true, name: true } } },
+    select: { id: true, code: true, name: true, designation: true, pay_group_id: true, joined_on: true, last_day: true, department: { select: { id: true, name: true, colour: true } } },
     orderBy: { name: 'asc' },
   });
   const ids = employees.map((e) => e.id);
