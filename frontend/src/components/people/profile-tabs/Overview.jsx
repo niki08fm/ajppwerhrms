@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import { CALENDAR_METHOD_INFO, formatINR, formatMinutes, GRATUITY_PART_YEAR_LABELS, MONTH_NAMES, OT_BASE_LABELS } from '@ajpwer/shared';
 import { leaveTypeSummary } from '../../setup/LeaveRulesForm';
 import { api, ApiError, errorMessage } from '@/services/api';
 import { useLookups } from '@/hooks/useLookups';
+import { useSession } from '@/context/SessionContext';
 import { hhmm, longDate } from '@/utils';
 import { KV, Mono } from '@/components/bits';
 import { Chip, Notice } from '@/components/states';
@@ -45,6 +46,11 @@ function describePolicy(kind, r) {
 
 export function OverviewTab({ e }) {
   const [editing, setEditing] = useState(false);
+  const [full, setFull] = useState(false);
+  const { can } = useSession();
+  // The unmasked numbers are a separate read, with its own permission and log line.
+  const fullId = useQuery({ queryKey: ['employee-identity', e.id], queryFn: () => api.get(`/employees/${e.id}/identity`).then((r) => r.data), enabled: full, staleTime: 0, gcTime: 0 });
+  const idn = full && fullId.data ? fullId.data : e.identity;
   const r = e.rules;
   return (
     <div className="grid gap-4 xl:grid-cols-3">
@@ -76,16 +82,26 @@ export function OverviewTab({ e }) {
           </CardBody>
         </Card>
         <Card>
-          <CardHeader title="Identity and bank" description="PAN, Aadhaar and bank details are encrypted at rest. Every read of this panel is logged." />
+          <CardHeader
+            title="Identity and bank"
+            description={full && fullId.data ? 'Full numbers shown. This view is in the log.' : 'Numbers only — no documents are stored. Encrypted at rest; every view is logged.'}
+            actions={
+              can('pii.read') && (
+                <Button variant="ghost" size="sm" loading={fullId.isFetching} onClick={() => setFull(!full)}>
+                  {full ? 'Hide' : 'Show full'}
+                </Button>
+              )
+            }
+          />
           <CardBody>
             <KV
               cols={3}
               items={[
-                ['PAN', e.identity.pan ? <Mono>{e.identity.pan}</Mono> : <Chip tone="warning">Missing</Chip>],
+                ['PAN', idn.pan ? <Mono>{idn.pan}</Mono> : <Chip tone="warning">Missing</Chip>],
                 ['Aadhaar', e.identity.aadhaar_masked ? <Mono>{e.identity.aadhaar_masked}</Mono> : <Chip tone="warning">Missing</Chip>],
                 ['UAN', e.identity.uan ? <Mono>{e.identity.uan}</Mono> : <Chip tone="warning">Missing</Chip>],
                 ['ESI number', e.identity.esi_number ? <Mono>{e.identity.esi_number}</Mono> : '—'],
-                ['Bank account', e.identity.has_bank ? <Mono>{e.identity.bank_account}</Mono> : <Chip tone="destructive">No bank account — blocks payroll</Chip>],
+                ['Bank account', idn.has_bank ? <Mono>{idn.bank_account}</Mono> : <Chip tone="destructive">No bank account — blocks payroll</Chip>],
                 ['IFSC', e.identity.bank_ifsc ? <Mono>{e.identity.bank_ifsc}</Mono> : '—'],
                 ['Bank', e.identity.bank_name],
                 ['Face', e.face.enrolled ? `Enrolled ${longDate(String(e.face.enrolled_at).slice(0, 10))}` : e.face.needs_registration ? <Chip tone="warning">Register again (new face system)</Chip> : <Chip tone="warning">Not enrolled</Chip>],
@@ -153,7 +169,7 @@ export function OverviewTab({ e }) {
   );
 }
 
-function EditDialog({ e, onClose }) {
+export function EditDialog({ e, onClose }) {
   const qc = useQueryClient();
   const { data: lk } = useLookups();
   const [f, setF] = useState({

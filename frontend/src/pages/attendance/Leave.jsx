@@ -370,10 +370,11 @@ function Adjust({ employee, onClose }) {
 }
 
 /** HR records leave on the person's behalf, choosing from their pay group's leave types. */
-function RecordLeave({ onClose }) {
+/** Record leave for anyone, or — with `employee` — for that one person (from their profile). */
+export function RecordLeave({ onClose, employee }) {
   const qc = useQueryClient();
-  const people = useQuery({ queryKey: ['people', 'active-leave'], queryFn: () => api.get('/employees', { 'filter[status]': 'ACTIVE,NOTICE', limit: 200 }).then((r) => r.data) });
-  const [f, setF] = useState({ employee_id: '', leave_type: '', from_date: '', to_date: '', half: false, reason: '', approve: true });
+  const people = useQuery({ queryKey: ['people', 'active-leave'], queryFn: () => api.get('/employees', { 'filter[status]': 'ACTIVE,NOTICE', limit: 200 }).then((r) => r.data), enabled: !employee });
+  const [f, setF] = useState({ employee_id: employee?.id ?? '', leave_type: '', from_date: '', to_date: '', half: false, reason: '', approve: true });
   const types = useQuery({
     queryKey: ['leave-types', f.employee_id],
     queryFn: () => api.get('/leave/types', { employee_id: f.employee_id }).then((r) => r.data),
@@ -399,6 +400,8 @@ function RecordLeave({ onClose }) {
       toast.success(r.warnings?.length ? `Leave recorded. ${r.warnings[0]}` : 'Leave recorded');
       qc.invalidateQueries({ queryKey: ['leave'] });
       qc.invalidateQueries({ queryKey: ['leave-balances'] });
+      qc.invalidateQueries({ queryKey: ['emp-leave'] });
+      qc.invalidateQueries({ queryKey: ['emp-attendance'] });
       onClose();
     },
     onError: (e) => toast.error(errorMessage(e)),
@@ -410,7 +413,7 @@ function RecordLeave({ onClose }) {
       open
       onOpenChange={(o) => !o && onClose()}
       title="Record leave"
-      description="Choose from the leave types in the person's pay group. Absences nobody records are paid from paid leave automatically."
+      description={employee ? `For ${employee.name}. Choose from the leave types in their pay group.` : "Choose from the leave types in the person's pay group. Absences nobody records are paid from paid leave automatically."}
       footer={
         <>
           <Button variant="outline" onClick={onClose}>
@@ -423,6 +426,7 @@ function RecordLeave({ onClose }) {
       }
     >
       <div className="grid gap-3 sm:grid-cols-2">
+        {!employee && (
         <Field label="Person" className="sm:col-span-2">
           {(id) => (
             <Select id={id} value={f.employee_id} onChange={(e) => setF({ ...f, employee_id: e.target.value, leave_type: '' })}>
@@ -435,6 +439,7 @@ function RecordLeave({ onClose }) {
             </Select>
           )}
         </Field>
+        )}
         <Field label="Type" className="sm:col-span-2" hint={chosen ? (chosen.balance !== null ? `${chosen.balance} days left today` : chosen.paid ? (chosen.allowance === 'PER_OCCASION' ? `${chosen.per_occasion} working days each time` : 'Paid, no balance') : 'Unpaid') : undefined}>
           {(id) => (
             <Select id={id} value={type} disabled={!f.employee_id} onChange={(e) => setF({ ...f, leave_type: e.target.value })}>

@@ -15,7 +15,7 @@ import { ChoiceCards, Field, Input, Select, Textarea } from '@/components/ui/for
 import { Checkbox, Dialog } from '@/components/ui/overlay';
 import { fnfStatus, SettlementPanel } from '../../../pages/people/SettlementStatement';
 
-const useExit = (id) => useQuery({ queryKey: ['exit', id], queryFn: () => api.get(`/employees/${id}/exit`).then((r) => r.data) });
+export const useExit = (id) => useQuery({ queryKey: ['exit', id], queryFn: () => api.get(`/employees/${id}/exit`).then((r) => r.data) });
 
 function refresh(qc, id) {
   for (const key of [['exit', id], ['employee', id], ['exits'], ['settlement', id], ['letters', id], ['hold', id]]) qc.invalidateQueries({ queryKey: key });

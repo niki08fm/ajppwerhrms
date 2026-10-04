@@ -76,7 +76,7 @@ export function SalaryHistoryTab({ e }) {
 }
 
 /** Anything that changes pay shows a before-and-after preview before it commits. */
-function ReviseDialog({ e, onClose }) {
+export function ReviseDialog({ e, onClose }) {
   const qc = useQueryClient();
   const { data: lk } = useLookups();
   const cur = e.salary;
