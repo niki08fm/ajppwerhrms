@@ -30,7 +30,7 @@ describe('Holding a salary', () => {
   });
 
   it('a held salary needs no bank account, so it does not block step 3', async () => {
-    await submitSteps(f.agent, YM, 4);
+    await submitSteps(f.agent, YM, 5);
   });
 
   it('the held month is calculated as usual and kept out of the bank file', async () => {
@@ -82,7 +82,7 @@ describe('Holding a salary', () => {
     await submitSteps(f.agent, SEP, 2);
     // C still has no bank account: left out of September.
     expect((await f.agent.post(`${P(SEP)}/exclusions`).send({ employee_id: f.employees.C, reason: 'Bank details still pending' })).status).toBe(200);
-    for (const s of [3, 4]) expect((await f.agent.post(`${P(SEP)}/steps/${s}/submit`)).status).toBe(200);
+    for (const s of [3, 4, 5]) expect((await f.agent.post(`${P(SEP)}/steps/${s}/submit`)).status).toBe(200);
     expect((await runAndWait(f.agent, SEP)).status).toBe('DONE');
 
     const aug = await heldRow('A');

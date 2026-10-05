@@ -62,7 +62,7 @@ await prisma.payrollPeriod.upsert({ where: { period_ym: lastMonth }, update: {},
 const p = await prisma.payrollPeriod.findUniqueOrThrow({ where: { period_ym: lastMonth } });
 if (p.state === 'PAID') await transition(lastMonth, 'unmark_paid', 'load', null);
 if (p.state === 'PAID' || p.state === 'LOCKED') await transition(lastMonth, 'unlock', 'load', null);
-await prisma.payrollPeriod.update({ where: { period_ym: lastMonth }, data: { steps_submitted: [1, 2, 3, 4] } });
+await prisma.payrollPeriod.update({ where: { period_ym: lastMonth }, data: { steps_submitted: [1, 2, 3, 4, 5] } });
 {
   const t = performance.now();
   const { totals } = await executeRun(lastMonth, 'load-test');

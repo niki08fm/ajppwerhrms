@@ -1,5 +1,5 @@
 import ExcelJS from 'exceljs';
-import { addMonths, formatYearMonth } from '@ajpwer/shared';
+import { addMonths, COMPANIES, companyOf, formatYearMonth } from '@ajpwer/shared';
 import { decryptPII } from '../utils/crypto.js';
 import { n } from '../utils/dbDates.js';
 import { AppError } from '../utils/errors.js';
@@ -20,12 +20,14 @@ export const REPORTS = [
   { key: 'adhoc', label: 'Adhoc' },
 ];
 
-async function loadSlips(db, periodId) {
-  return db.payslip.findMany({
+/** A month's payslips, optionally only one company's (told apart by the employee code). */
+async function loadSlips(db, periodId, company) {
+  const slips = await db.payslip.findMany({
     where: { period_id: periodId },
     include: { lines: { orderBy: { seq: 'asc' } }, employee: { select: { id: true, code: true, name: true } } },
     orderBy: { employee: { code: 'asc' } },
   });
+  return company ? slips.filter((s) => companyOf(s.employee.code) === company) : slips;
 }
 
 const meta = (s) => s.meta;
@@ -36,8 +38,9 @@ const base = (s) => ({ code: meta(s).employee.code, name: meta(s).employee.name,
 export async function buildReport(db, ym, key, opts) {
   const period = await db.payrollPeriod.findUnique({ where: { period_ym: ym } });
   if (!period || period.state === 'DRAFT') throw new AppError('STEP_NOT_SUBMITTED', `${formatYearMonth(ym)} has not been run yet. Reports are available once it is.`, 409);
-  const slips = await loadSlips(db, period.id);
-  const title = `${REPORTS.find((r) => r.key === key).label} — ${formatYearMonth(ym)}`;
+  const slips = await loadSlips(db, period.id, opts?.company);
+  const company = COMPANIES.find((c) => c.key === opts?.company);
+  const title = `${REPORTS.find((r) => r.key === key).label} — ${formatYearMonth(ym)}${company ? ` — ${company.name}` : ''}`;
 
   switch (key) {
     case 'summary': {
@@ -369,7 +372,7 @@ export async function buildReport(db, ym, key, opts) {
     case 'change': {
       const prevYm = addMonths(ym, -1);
       const prev = await db.payrollPeriod.findUnique({ where: { period_ym: prevYm } });
-      const prevSlips = prev && prev.state !== 'DRAFT' ? await loadSlips(db, prev.id) : [];
+      const prevSlips = prev && prev.state !== 'DRAFT' ? await loadSlips(db, prev.id, opts?.company) : [];
       const rows = [];
       for (const s of slips) {
         const p = prevSlips.find((x) => x.employee_id === s.employee_id);

@@ -33,29 +33,52 @@ describe('§20.25 Step gates', () => {
     expect(ok.status).toBe(200);
   });
 
-  it('a run is refused until steps 1–4 are submitted', async () => {
+  it('generating is refused until steps 1–5 are submitted', async () => {
     const r = await f.agent.post(`${P}/run`);
     expect(r.status).toBe(409);
     expect(r.body.error.code).toBe('STEP_NOT_SUBMITTED');
   });
+
+  it('there are five steps to submit; the sixth is generating', async () => {
+    const r = await f.agent.post(`${P}/steps/6/submit`);
+    expect(r.status).toBe(422);
+  });
+
+  it('adhoc items change until step 5 is submitted, not step 4', async () => {
+    await f.agent.post(`${P}/exclusions`).send({ employee_id: f.employees.C, reason: 'Bank details pending' });
+    await submitSteps(f.agent, YM, 4);
+    const item = { period_ym: YM, kind: 'EARNING', name: 'Diwali bonus', amount: 100000, is_taxable: true, target_type: 'ALL', target_ids: [], note: 'Approved by the MD' };
+    expect((await f.agent.post('/api/v1/adhoc').send(item)).status).toBe(201);
+    expect((await f.agent.post(`${P}/steps/5/submit`)).status).toBe(200);
+    const late = await f.agent.post('/api/v1/adhoc').send(item);
+    expect(late.status).toBe(409);
+    expect(late.body.error.message).toMatch(/Step 5/);
+  });
+
+  it('the overview summary splits the month by company', async () => {
+    const r = await f.agent.get(`${P}/summary`);
+    expect(r.status).toBe(200);
+    expect(r.body.data.source).toBe('estimate');
+    expect(r.body.data.all.headcount).toBe(r.body.data.AJ.headcount + r.body.data.TP.headcount);
+  });
 });
 
 describe('§20.26 Reopen cascades', () => {
-  it('reopening step 3 clears steps 3 and 4 and leaves 1 and 2 submitted', async () => {
+  it('reopening step 3 clears steps 3 to 5 and leaves 1 and 2 submitted', async () => {
     f = await buildFixture();
-    await submitSteps(f.agent, YM, 4);
+    await submitSteps(f.agent, YM, 5);
     const r = await f.agent.post(`${P}/steps/3/reopen`);
     expect(r.status).toBe(200);
     expect(r.body.data.steps_submitted).toEqual([1, 2]);
     const audit = await prisma.auditLog.findFirst({ where: { action: 'payroll.step.reopen' } });
-    expect(audit?.detail).toMatchObject({ step: 3, cleared: [3, 4] });
+    expect(audit?.detail).toMatchObject({ step: 3, cleared: [3, 4, 5] });
   });
 });
 
 describe('§20.27 Lock freezes', () => {
   it('a salary change after locking leaves the locked payslip; unlock and rerun picks it up', async () => {
     f = await buildFixture();
-    await submitSteps(f.agent, YM, 4);
+    await submitSteps(f.agent, YM, 5);
     const job = await runAndWait(f.agent, YM);
     expect(job.status).toBe('DONE');
     expect((await f.agent.post(`${P}/lock`)).status).toBe(200);
@@ -86,7 +109,7 @@ describe('§20.27 Lock freezes', () => {
 describe('§20.28 Full lifecycle', () => {
   it('DRAFT → RUN → LOCKED → PAID → LOCKED → RUN → rerun, each audited, totals reconciling', async () => {
     f = await buildFixture();
-    await submitSteps(f.agent, YM, 4);
+    await submitSteps(f.agent, YM, 5);
     const reconcile = async () => {
       const slips = await prisma.payslip.findMany({ where: { period: { period_ym: YM } } });
       for (const s of slips) expect(s.gross - s.total_deductions + s.reimbursements).toBe(s.net);
@@ -131,7 +154,7 @@ describe('§20.28 Full lifecycle', () => {
 describe('§20.29 Concurrent run', () => {
   it('two simultaneous run requests: one run and one clear rejection', async () => {
     f = await buildFixture();
-    await submitSteps(f.agent, YM, 4);
+    await submitSteps(f.agent, YM, 5);
     const [a, b] = await Promise.all([f.agent.post(`${P}/run`), f.agent.post(`${P}/run`)]);
     const statuses = [a.status, b.status].sort();
     expect(statuses).toEqual([202, 409]);
@@ -146,7 +169,7 @@ describe('§20.29 Concurrent run', () => {
 describe('§20.30 Pipeline excluded', () => {
   it('people on offer, accepted or onboarding never appear in a run', async () => {
     f = await buildFixture();
-    await submitSteps(f.agent, YM, 4);
+    await submitSteps(f.agent, YM, 5);
     await runAndWait(f.agent, YM);
     const ids = (await prisma.payslip.findMany({ select: { employee_id: true } })).map((p) => p.employee_id);
     expect(ids).not.toContain(f.employees.OFFER);
@@ -159,7 +182,7 @@ describe('§20.31 Held back', () => {
   it('someone excluded does not appear in the run and stays on the held-back list', async () => {
     f = await buildFixture();
     await f.agent.post(`${P}/exclusions`).send({ employee_id: f.employees.B, reason: 'Disputed attendance' });
-    await submitSteps(f.agent, YM, 4);
+    await submitSteps(f.agent, YM, 5);
     await runAndWait(f.agent, YM);
     const ids = (await prisma.payslip.findMany({ select: { employee_id: true } })).map((p) => p.employee_id);
     expect(ids).not.toContain(f.employees.B);
@@ -172,7 +195,7 @@ describe('§20.31 Held back', () => {
 describe('Reports', () => {
   it('all twelve reports build from the snapshot and the bank file carries only positive amounts', async () => {
     f = await buildFixture();
-    await submitSteps(f.agent, YM, 4);
+    await submitSteps(f.agent, YM, 5);
     await runAndWait(f.agent, YM);
     const list = await f.agent.get('/api/v1/payroll/reports');
     expect(list.body.data).toHaveLength(12);

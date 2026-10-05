@@ -74,7 +74,7 @@ const NAV = [
   {
     group: 'Payroll',
     items: [
-      { to: '/payroll', label: 'Run payroll', icon: <Banknote /> },
+      { to: '/payroll', label: 'Monthly payroll', icon: <Banknote /> },
       { to: '/held-salaries', label: 'Held salaries', icon: <PauseCircle /> },
       { to: '/money', label: 'Loans and advances', icon: <HandCoins /> },
     ],

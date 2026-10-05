@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { adhocCreateSchema, addMonths, exclusionSchema, firstOfMonth, formatYearMonth, istDate, lastOfMonth, markPaidSchema, PAYROLL_STEPS, yearMonth, ymOf } from '@ajpwer/shared';
+import { adhocCreateSchema, addMonths, COMPANIES, companyOf, exclusionSchema, firstOfMonth, formatYearMonth, istDate, lastOfMonth, markPaidSchema, PAYROLL_STEPS, yearMonth, ymOf } from '@ajpwer/shared';
 import { audit, auditReq, who } from '../utils/audit.js';
 import { can } from '../middleware/auth.js';
 import { fromDbDate, n, toDbDate } from '../utils/dbDates.js';
@@ -17,6 +17,8 @@ import { randomUUID } from 'node:crypto';
 const today = () => istDate(new Date());
 
 const ymParam = (v) => yearMonth.parse(v);
+/** `AJ` or `TP` to see one company; nothing for both. */
+const companyParam = (v) => (v ? z.enum(COMPANIES.map((c) => c.key)).parse(v) : undefined);
 
 function periodOut(p) {
   return {
@@ -163,7 +165,7 @@ export const includeSettlement = asyncHandler(async (req, res) => {
   if (s.state === 'PAID') throw new AppError('CONFLICT', 'This settlement has already been paid.', 409);
   const p = await getPeriod(prisma, b.period_ym);
   if (p.state !== 'DRAFT') throw new AppError('PERIOD_LOCKED', `${formatYearMonth(b.period_ym)} has been run. Take it back to its steps first.`, 409);
-  if (p.steps_submitted.includes(2)) throw new AppError('PERIOD_LOCKED', 'Step 2 is submitted. Reopen it to change which settlements go out.', 409);
+  if (p.steps_submitted.includes(4)) throw new AppError('PERIOD_LOCKED', 'Step 4 (F&F) is submitted. Reopen it to change which settlements go out.', 409);
   if (b.include && fromDbDate(s.last_day) > lastOfMonth(b.period_ym)) throw new AppError('VALIDATION', 'A settlement goes out with the run for the month the last day falls in, or later.', 422);
   await upsertSettlement(prisma, s.employee_id);
   const ids = new Set(p.settlement_ids);
@@ -248,15 +250,32 @@ export const reopenPayrollStep = asyncHandler(async (req, res) => {
 
 // ─── Step 4: adhoc ──────────────────────────────────────────────────────────
 
-async function resolveTargets(item, ym) {
+/** Who an adhoc item reaches this month: working some day of it, in the group it names. */
+function targetWhere(item, ym) {
   const last = toDbDate(lastOfMonth(ym));
   const first = toDbDate(firstOfMonth(ym));
   const base = { deleted_at: null, status: { in: ['ACTIVE', 'NOTICE'] }, joined_on: { lte: last }, OR: [{ last_day: null }, { last_day: { gte: first } }] };
-  if (item.target_type === 'ALL') return prisma.employee.count({ where: base });
-  if (item.target_type === 'EMPLOYEE') return prisma.employee.count({ where: { ...base, id: { in: item.target_ids } } });
-  if (item.target_type === 'PAY_GROUP') return prisma.employee.count({ where: { ...base, pay_group_id: { in: item.target_ids } } });
-  return prisma.employee.count({ where: { ...base, department_id: { in: item.target_ids } } });
+  if (item.target_type === 'ALL') return base;
+  if (item.target_type === 'EMPLOYEE') return { ...base, id: { in: item.target_ids } };
+  if (item.target_type === 'PAY_GROUP') return { ...base, pay_group_id: { in: item.target_ids } };
+  return { ...base, department_id: { in: item.target_ids } };
 }
+
+async function resolveTargets(item, ym) {
+  return prisma.employee.count({ where: targetWhere(item, ym) });
+}
+
+/** The people an adhoc item goes to, as it stands now (it is resolved again when the payroll is generated). */
+export const getAdhocPeople = asyncHandler(async (req, res) => {
+  const i = await prisma.adhocItem.findUnique({ where: { id: req.params.id } });
+  if (!i || i.deleted_at) throw notFound('That adhoc item');
+  const people = await prisma.employee.findMany({
+    where: targetWhere(i, i.period_ym),
+    select: { id: true, code: true, name: true, department: { select: { name: true } }, pay_group: { select: { name: true } } },
+    orderBy: { name: 'asc' },
+  });
+  res.json({ data: people.map((p) => ({ id: p.id, code: p.code, name: p.name, department: p.department?.name ?? null, pay_group: p.pay_group?.name ?? null })) });
+});
 
 export const listAdhoc = asyncHandler(async (req, res) => {
   const ym = yearMonth.parse(req.query.period ?? addMonths(ymOf(today()), -1));
@@ -272,7 +291,7 @@ export const listAdhoc = asyncHandler(async (req, res) => {
 async function assertAdhocOpen(ym) {
   const p = await getPeriod(prisma, ym);
   if (p.state !== 'DRAFT') throw new AppError('PERIOD_LOCKED', `${formatYearMonth(ym)} has been run. Take it back to its steps first.`, 409);
-  if (p.steps_submitted.includes(4)) throw new AppError('PERIOD_LOCKED', 'Step 4 is submitted. Reopen it to change adhoc items.', 409);
+  if (p.steps_submitted.includes(5)) throw new AppError('PERIOD_LOCKED', 'Step 5 (adhoc) is submitted. Reopen it to change adhoc items.', 409);
 }
 
 export const createAdhoc = asyncHandler(async (req, res) => {
@@ -320,6 +339,97 @@ export const previewRun = asyncHandler(async (req, res) => {
       errors: run.errors,
     },
   });
+});
+
+/**
+ * The month at a glance for the payroll overview, for both companies and each one: from the
+ * payslips once generated, otherwise worked out live as an estimate.
+ */
+export const getSummary = asyncHandler(async (req, res) => {
+  const ym = ymParam(req.params.ym);
+  const p = await getPeriod(prisma, ym);
+  const blank = () => ({ headcount: 0, gross: 0, net: 0, deductions: 0, employer: 0, on_hold: 0, on_hold_net: 0 });
+  const out = { all: blank(), ...Object.fromEntries(COMPANIES.map((c) => [c.key, blank()])) };
+  const add = (code, r) => {
+    for (const k of ['all', companyOf(code)]) {
+      const t = out[k];
+      t.headcount++;
+      t.gross += r.gross;
+      t.net += r.net;
+      t.deductions += r.deductions;
+      t.employer += r.employer;
+      if (r.hold) {
+        t.on_hold++;
+        t.on_hold_net += r.net;
+      }
+    }
+  };
+  let errors = 0;
+  if (p.state !== 'DRAFT') {
+    const slips = await prisma.payslip.findMany({
+      where: { period_id: p.id },
+      select: { gross: true, net: true, total_deductions: true, employer_total: true, meta: true, employee: { select: { code: true } } },
+    });
+    for (const s of slips) add(s.employee.code, { gross: n(s.gross), net: n(s.net), deductions: n(s.total_deductions), employer: n(s.employer_total), hold: !!s.meta?.held });
+  } else {
+    const { run } = await computeIssues(prisma, ym);
+    for (const x of run.payslips) add(x.employee.code, { gross: x.result.gross, net: x.result.net, deductions: x.result.total_deductions, employer: x.result.employer_total, hold: !!x.hold });
+    errors = run.errors.length;
+  }
+  res.json({ data: { period_ym: ym, state: p.state, source: p.state === 'DRAFT' ? 'estimate' : 'payslips', errors, ...out } });
+});
+
+/**
+ * Step 4: every F&F this month's payroll can settle — leavers whose last day is in this
+ * month or earlier and whose F&F is still open, and those already processed into this month.
+ */
+export const getFnfStep = asyncHandler(async (req, res) => {
+  const ym = ymParam(req.params.ym);
+  const p = await getPeriod(prisma, ym);
+  const last = toDbDate(lastOfMonth(ym));
+  const leavers = await prisma.employee.findMany({
+    where: {
+      deleted_at: null,
+      OR: [
+        { status: 'NOTICE', last_day: { lte: last } },
+        ...(p.settlement_ids.length ? [{ settlements: { some: { id: { in: p.settlement_ids } } } }] : []),
+      ],
+    },
+    include: { department: { select: { name: true } } },
+    orderBy: { last_day: 'asc' },
+  });
+  const closed = p.state !== 'DRAFT' ? `${formatYearMonth(ym)} payroll has been generated` : p.steps_submitted.includes(4) ? 'The F&F step is submitted' : null;
+  const rows = [];
+  for (const l of leavers) {
+    const s = await prisma.settlement.findFirst({ where: { employee_id: l.id, deleted_at: null }, orderBy: { created_at: 'desc' }, include: { period: { select: { period_ym: true } } } });
+    if (s?.state === 'PAID' && !p.settlement_ids.includes(s.id)) continue;
+    let result = null;
+    let checklist = [];
+    let error = null;
+    try {
+      ({ result, checklist } = await computeSettlementFor(prisma, l.id));
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Could not work it out';
+    }
+    const elsewhere = s?.state === 'INCLUDED' && s.period && s.period.period_ym !== ym ? s.period.period_ym : null;
+    const open = checklist.filter((t) => t.required && !t.done_at);
+    rows.push({
+      employee: { id: l.id, code: l.code, name: l.name, department: l.department.name, status: l.status },
+      last_day: fromDbDate(l.last_day),
+      exit_reason: l.exit_reason,
+      settlement_id: s?.id ?? null,
+      mode: s && p.settlement_ids.includes(s.id) ? (s.paid_separately ? 'SEPARATE' : 'PAYROLL') : 'LATER',
+      paid_separately: s?.paid_separately ?? null,
+      processed_elsewhere: elsewhere,
+      checklist_open: open.map((t) => t.label),
+      blocking: (result?.clearance ?? []).filter((c) => c.severity === 'BLOCKING' && c.code !== 'ATTENDANCE_NOT_SUBMITTED').map((c) => c.message),
+      total_earnings: result?.total_earnings ?? null,
+      total_deductions: result?.total_deductions ?? null,
+      net: result?.net ?? null,
+      error,
+    });
+  }
+  res.json({ data: { rows, closed } });
 });
 
 /** Queued; returns a job id. A second concurrent run is rejected, not queued. */
@@ -373,7 +483,8 @@ export const getReport = asyncHandler(async (req, res) => {
   if (!REPORTS.some((r) => r.key === key)) throw notFound('That report');
   const format = req.query.format || 'json';
   const wantsPii = format !== 'json' && can(req, 'pii.read');
-  const report = await buildReport(prisma, ym, key, { pii: wantsPii });
+  const company = companyParam(req.query.company);
+  const report = await buildReport(prisma, ym, key, { pii: wantsPii, company });
   if (report.pii && wantsPii) await auditReq(req, { action: 'pii.read', entity_type: 'report', entity_id: null, detail: { report: key, period: ym, rows: report.rows.length } });
   if (format === 'json') {
     const q = req.query.q?.toLowerCase();
@@ -406,7 +517,7 @@ export const getReport = asyncHandler(async (req, res) => {
         ),
       }
     : report;
-  const suffix = q ? `-${q.replace(/[^a-z0-9]+/g, '-')}` : '';
+  const suffix = `${company ? `-${company.toLowerCase()}` : ''}${q ? `-${q.replace(/[^a-z0-9]+/g, '-')}` : ''}`;
   await auditReq(req, { action: 'export.report', entity_type: 'report', detail: { report: key, period: ym, format, rows: filtered.rows.length } });
   if (format === 'xlsx') {
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

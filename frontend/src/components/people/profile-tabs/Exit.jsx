@@ -241,7 +241,7 @@ function ProcessDialog({ e, x, onClose }) {
             </Select>
           )}
         </Field>
-        {open.length === 0 && <Notice tone="warning">None of these months can take it now. Reopen step 2 of a month's payroll first.</Notice>}
+        {open.length === 0 && <Notice tone="warning">None of these months can take it now. Reopen the F&F step (step 4) of a month's payroll first.</Notice>}
         <ChoiceCards
           name="how"
           value={f.how}

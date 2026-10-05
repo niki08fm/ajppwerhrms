@@ -59,7 +59,7 @@ export function SettlementPanel({ employeeId, print }) {
   const totalE = r?.total_earnings ?? d.settlement?.total_earnings ?? 0;
   const totalD = r?.total_deductions ?? d.settlement?.total_deductions ?? 0;
   const net = r?.net ?? d.settlement?.net ?? 0;
-  // HR can change it while live, until the payroll it is processed in moves past step 2.
+  // HR can change it while live, until the payroll it is processed in moves past its F&F step (step 4).
   const editable = !print && !d.frozen && !d.locked;
   const lineMenu = (l) => {
     const items = [];

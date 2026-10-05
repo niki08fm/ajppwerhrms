@@ -1,4 +1,4 @@
-import { firstOfMonth, formatYearMonth, lastOfMonth, ymOf } from '@ajpwer/shared';
+import { firstOfMonth, formatYearMonth, GENERATE_STEP, LAST_REVIEW_STEP, lastOfMonth, ymOf } from '@ajpwer/shared';
 import { solveGrossFromCtc } from '../calculations/index.js';
 import { audit } from '../utils/audit.js';
 import { fromDbDate, n, toDbDate } from '../utils/dbDates.js';
@@ -246,11 +246,11 @@ export async function submitStep(ym, step, actor, ip) {
       const period = await getPeriod(tx, ym);
       await tx.$queryRaw`SELECT id FROM payroll_period WHERE id = ${period.id}::uuid FOR UPDATE`;
       if (period.state !== 'DRAFT') throw new AppError('PERIOD_LOCKED', `${formatYearMonth(ym)} has been run. Take it back to its steps to change them.`, 409);
-      if (step < 1 || step > 4) throw new AppError('VALIDATION', 'Steps 1 to 4 are submitted; step 5 is the run itself.', 422);
+      if (step < 1 || step > LAST_REVIEW_STEP) throw new AppError('VALIDATION', `Steps 1 to ${LAST_REVIEW_STEP} are submitted; step ${GENERATE_STEP} is generating the payroll.`, 422);
       for (let s = 1; s < step; s++) {
         if (!period.steps_submitted.includes(s)) throw new AppError('STEP_NOT_SUBMITTED', `Submit step ${s} first.`, 409);
       }
-      if (step === 2) {
+      if (step === 4) {
         // A ticked settlement with a blocking clearance issue stops the step.
         for (const sid of period.settlement_ids) {
           const s = await tx.settlement.findUnique({ where: { id: sid }, include: { employee: true } });
@@ -309,8 +309,8 @@ export async function claimRun(ym, jobId) {
   if (period.state === 'LOCKED' || period.state === 'PAID') {
     throw new AppError('PERIOD_LOCKED', `${formatYearMonth(ym)} is ${period.state.toLowerCase()}. Unlock it to rerun.`, 409);
   }
-  for (const s of [1, 2, 3, 4]) {
-    if (!period.steps_submitted.includes(s)) throw new AppError('STEP_NOT_SUBMITTED', `Submit step ${s} before running payroll.`, 409);
+  for (let s = 1; s <= LAST_REVIEW_STEP; s++) {
+    if (!period.steps_submitted.includes(s)) throw new AppError('STEP_NOT_SUBMITTED', `Submit step ${s} before generating the payroll.`, 409);
   }
   const claimed = await prisma.$executeRaw`
     UPDATE payroll_period SET running_job_id = ${jobId}::uuid
@@ -454,7 +454,7 @@ export async function executeRun(ym, actor, onProgress) {
         totals.ot_amount += r.ot?.amount ?? 0;
       }
 
-      const steps = [...new Set([...p.steps_submitted, 5])].sort();
+      const steps = [...new Set([...p.steps_submitted, GENERATE_STEP])].sort();
       const updated = await tx.payrollPeriod.update({
         where: { id: p.id },
         data: {
@@ -512,7 +512,7 @@ export async function transition(ym, t, actor, ip, opts = {}) {
     if (t === 'back_to_steps') {
       await tx.payslip.deleteMany({ where: { period_id: p.id } });
       await tx.heldPay.deleteMany({ where: { period_ym: p.period_ym, state: 'HELD' } });
-      data.steps_submitted = p.steps_submitted.filter((s) => s !== 5);
+      data.steps_submitted = p.steps_submitted.filter((s) => s !== GENERATE_STEP);
       data.run_at = null;
       data.totals = null;
     }

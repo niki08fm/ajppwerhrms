@@ -103,7 +103,7 @@ describe('Processing the F&F', () => {
   it('paid separately, it is in that month’s payroll but never in its bank file — and paid once', async () => {
     const r = await processFnf({ period_ym: YM, paid_separately: { paid_on: '2026-09-02', payment_ref: 'CHQ-004512' } });
     expect(r.status).toBe(200);
-    await submitSteps(f.agent, YM, 4);
+    await submitSteps(f.agent, YM, 5);
     expect((await runAndWait(f.agent, YM)).status).toBe('DONE');
 
     const bank = (await f.agent.get(`${P}/report/bank`)).body.data;

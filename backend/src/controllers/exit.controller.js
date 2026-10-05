@@ -23,7 +23,7 @@ const leaving = (e) => {
 function closedReason(p) {
   if (!p) return null;
   if (p.state !== 'DRAFT') return `${formatYearMonth(p.period_ym)} payroll has been run`;
-  if (p.steps_submitted.includes(2)) return `${formatYearMonth(p.period_ym)} payroll is past step 2`;
+  if (p.steps_submitted.includes(4)) return `${formatYearMonth(p.period_ym)} payroll is past its F&F step`;
   return null;
 }
 
@@ -162,7 +162,7 @@ export const processSettlement = asyncHandler(async (req, res) => {
   if (b.paid_separately && result.net < 0) throw new AppError('VALIDATION', 'The net is recoverable from the employee, so there is nothing to pay separately. Process it through payroll and record the decision.', 422);
   const p = await getPeriod(prisma, b.period_ym);
   const why = closedReason(p);
-  if (why) throw new AppError('PERIOD_LOCKED', `${why}. Choose a later month, or reopen step 2 there.`, 409, 'period_ym');
+  if (why) throw new AppError('PERIOD_LOCKED', `${why}. Choose a later month, or reopen its F&F step (step 4) there.`, 409, 'period_ym');
   const { actor, ip } = who(req);
   await prisma.$transaction(async (tx) => {
     await tx.payrollPeriod.update({ where: { id: p.id }, data: { settlement_ids: [...new Set([...p.settlement_ids, s.id])] } });
@@ -191,7 +191,7 @@ export const processSettlement = asyncHandler(async (req, res) => {
   res.json({ data: { state: 'INCLUDED', period_ym: b.period_ym, paid_separately: b.paid_separately ?? null, net: n(fresh.net) } });
 });
 
-/** Take a processed F&F back out of its month, while that payroll is not past step 2. */
+/** Take a processed F&F back out of its month, while that payroll is not past its F&F step (step 4). */
 export const unprocessSettlement = asyncHandler(async (req, res) => {
   const e = await loadPerson(req.params.id);
   leaving(e);
@@ -220,7 +220,7 @@ export const adjustSettlement = asyncHandler(async (req, res) => {
   const b = settlementAdjustSchema.parse(req.body);
   const e = await loadPerson(req.params.employeeId);
   leaving(e);
-  // Checked before it is worked out again: a settlement past step 2 of its payroll is frozen.
+  // Checked before it is worked out again: a settlement past the F&F step of its payroll is frozen.
   await assertSettlementEditable(prisma, await currentSettlement(prisma, e.id));
   const s = await upsertSettlement(prisma, e.id);
   const { result } = await computeSettlementFor(prisma, e.id);

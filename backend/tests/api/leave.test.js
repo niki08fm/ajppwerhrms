@@ -65,7 +65,7 @@ describe('Leave HR records is paid from its own balance', () => {
 
 describe('A locked month keeps its leave', () => {
   it('no adjustment can be dated in it, and the next month starts from what its payslips recorded', async () => {
-    await submitSteps(f.agent, YM, 4);
+    await submitSteps(f.agent, YM, 5);
     expect((await runAndWait(f.agent, YM)).status).toBe('DONE');
     expect((await f.agent.post(`${P}/lock`)).status).toBe(200);
 

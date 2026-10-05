@@ -155,7 +155,7 @@ export const getSettlement = asyncHandler(async (req, res) => {
       },
     });
   }
-  // HR can change it until it is paid, and once processed only until step 2 of that payroll is submitted.
+  // HR can change it until it is paid, and once processed only until the F&F step (step 4) of that payroll is submitted.
   let locked = e.status === 'NOTICE' ? null : 'Only the settlement of someone leaving can be changed.';
   if (!locked) {
     try {
@@ -165,7 +165,7 @@ export const getSettlement = asyncHandler(async (req, res) => {
     }
   }
   const { result, checklist, adjustments } = await computeSettlementFor(prisma, e.id);
-  // The stored amounts follow the live ones until the payroll it is processed in moves past step 2.
+  // The stored amounts follow the live ones until the payroll it is processed in moves past its F&F step (step 4).
   const s = locked && stored ? stored : await upsertSettlement(prisma, e.id);
   const period = s.period_id ? await prisma.payrollPeriod.findUnique({ where: { id: s.period_id }, select: { period_ym: true } }) : null;
   const company = await prisma.company.findFirst();

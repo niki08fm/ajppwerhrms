@@ -797,7 +797,7 @@ async function main() {
   const { rebuildAggregates } = await import('../src/services/aggregates.service.js');
   await upsertSettlement(prisma, leaver.id);
   for (const ym of [M3, M2]) {
-    await prisma.payrollPeriod.upsert({ where: { period_ym: ym }, update: { steps_submitted: [1, 2, 3, 4] }, create: { period_ym: ym, steps_submitted: [1, 2, 3, 4] } });
+    await prisma.payrollPeriod.upsert({ where: { period_ym: ym }, update: { steps_submitted: [1, 2, 3, 4, 5] }, create: { period_ym: ym, steps_submitted: [1, 2, 3, 4, 5] } });
     await payroll.executeRun(ym, 'seed');
     await payroll.transition(ym, 'lock', 'seed', null);
     await payroll.transition(ym, 'mark_paid', 'seed', null, { payment_ref: `NEFT-${ym.replace('-', '')}-SEED` });

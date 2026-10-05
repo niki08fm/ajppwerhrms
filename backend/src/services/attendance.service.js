@@ -311,7 +311,7 @@ export async function attendanceFrozen(db, ym) {
     return { frozen: true, reason: `Payroll for ${ym} is ${p.state.toLowerCase()}. Corrections open again if the run is taken back to its steps and step 1 is reopened.` };
   }
   if (p.steps_submitted.includes(1)) {
-    return { frozen: true, reason: `Attendance for ${ym} was submitted in payroll step 1. Reopen step 1 in Run payroll to make corrections.` };
+    return { frozen: true, reason: `Attendance for ${ym} was submitted in payroll step 1. Reopen step 1 in Payroll to make corrections.` };
   }
   return { frozen: false, reason: null };
 }

@@ -17,15 +17,15 @@ export function currentSettlement(db, employeeId) {
 
 /**
  * A settlement can be changed until it is paid, and once processed into a month's payroll
- * only until step 2 of that payroll is submitted.
+ * only until that payroll's F&F step (step 4) is submitted.
  */
 export async function assertSettlementEditable(db, s) {
   if (!s) return;
   if (s.state === 'PAID') throw new AppError('CONFLICT', 'This settlement has been paid and is frozen.', 409);
   if (s.state === 'INCLUDED' && s.period_id) {
     const p = await db.payrollPeriod.findUnique({ where: { id: s.period_id } });
-    if (p && (p.state !== 'DRAFT' || p.steps_submitted.includes(2))) {
-      throw new AppError('PERIOD_LOCKED', `It is processed in the ${formatYearMonth(p.period_ym)} payroll, which has moved past step 2. Reopen step 2 there to change it.`, 409);
+    if (p && (p.state !== 'DRAFT' || p.steps_submitted.includes(4))) {
+      throw new AppError('PERIOD_LOCKED', `It is processed in the ${formatYearMonth(p.period_ym)} payroll, which has moved past its F&F step. Reopen step 4 there to change it.`, 409);
     }
   }
 }

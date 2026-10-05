@@ -134,13 +134,25 @@ export const FACE_EXCEPTION_STATUSES = ['PENDING', 'APPROVED', 'REJECTED'];
 
 export const PERIOD_STATES = ['DRAFT', 'RUN', 'LOCKED', 'PAID'];
 
+/** Five reviewed steps, submitted in order, then the sixth: generating the payroll. */
 export const PAYROLL_STEPS = [
   { n: 1, key: 'attendance', label: 'Attendance' },
   { n: 2, key: 'joiners', label: 'Joiners and exits' },
-  { n: 3, key: 'issues', label: 'Issues' },
-  { n: 4, key: 'adhoc', label: 'Adhoc' },
-  { n: 5, key: 'run', label: 'Run' },
+  { n: 3, key: 'held', label: 'Held salary' },
+  { n: 4, key: 'fnf', label: 'F&F' },
+  { n: 5, key: 'adhoc', label: 'Adhoc' },
+  { n: 6, key: 'generate', label: 'Generate' },
 ];
+/** The last step HR submits; the one after it is generating. */
+export const LAST_REVIEW_STEP = 5;
+export const GENERATE_STEP = 6;
+
+/** The two companies, told apart by the employee code prefix. */
+export const COMPANIES = [
+  { key: 'AJ', name: 'AJ Power' },
+  { key: 'TP', name: 'Techpi' },
+];
+export const companyOf = (code) => (String(code ?? '').toUpperCase().startsWith('TP') ? 'TP' : 'AJ');
 
 export const PAYSLIP_LINE_KINDS = ['COMPONENT', 'YEARLY', 'OT', 'OFFDAY', 'ADHOC', 'DEDUCTION', 'REIMBURSEMENT', 'EMPLOYER'];
 

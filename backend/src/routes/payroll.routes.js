@@ -29,9 +29,12 @@ payrollRouter.post('/payroll/periods/:ym/steps/:n/reopen', requirePerm('payroll.
 payrollRouter.get('/adhoc', requirePerm('payroll.read'), payrollController.listAdhoc);
 payrollRouter.post('/adhoc', requirePerm('payroll.run'), payrollController.createAdhoc);
 payrollRouter.delete('/adhoc/:id', requirePerm('payroll.run'), payrollController.deleteAdhoc);
+payrollRouter.get('/adhoc/:id/people', requirePerm('payroll.read'), payrollController.getAdhocPeople);
 
 // ─── Step 5: preview and run ────────────────────────────────────────────────
 payrollRouter.get('/payroll/periods/:ym/preview', requirePerm('payroll.read'), payrollController.previewRun);
+payrollRouter.get('/payroll/periods/:ym/summary', requirePerm('payroll.read'), payrollController.getSummary);
+payrollRouter.get('/payroll/periods/:ym/fnf', requirePerm('payroll.read'), payrollController.getFnfStep);
 payrollRouter.post('/payroll/periods/:ym/run', requirePerm('payroll.run'), idempotent('payroll.run'), payrollController.startRun);
 payrollRouter.get('/jobs/:id', requirePerm('payroll.read'), payrollController.getJob);
 // ─── State transitions ──────────────────────────────────────────────────────

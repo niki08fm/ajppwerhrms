@@ -28,21 +28,22 @@ const REPORTS = [
   ['adhoc', 'Adhoc'],
 ];
 
-export function Reports({ ym, period }) {
+/** Every report of a generated month, optionally for one company (`AJ` or `TP`). */
+export function Reports({ ym, period, company }) {
   const [sp, setSp] = useSearchParams();
   const tab = sp.get('tab') ?? 'summary';
   const [text, setText] = useState('');
   const q = useDebounced(text, 250);
   const r = useQuery({
-    queryKey: ['report', ym, tab, q],
-    queryFn: () => api.get(`/payroll/periods/${ym}/report/${tab}`, { q }).then((x) => x.data),
+    queryKey: ['report', ym, tab, q, company ?? 'all'],
+    queryFn: () => api.get(`/payroll/periods/${ym}/report/${tab}`, { q, company }).then((x) => x.data),
     placeholderData: (prev) => (prev?.key === tab ? prev : undefined),
   });
   const [exporting, setExporting] = useState(null);
   const exp = async (format) => {
     setExporting(format);
     try {
-      await download(`/payroll/periods/${ym}/report/${tab}?format=${format}${q ? `&q=${encodeURIComponent(q)}` : ''}`, `payroll-${tab}-${ym}.${format}`);
+      await download(`/payroll/periods/${ym}/report/${tab}?format=${format}${company ? `&company=${company}` : ''}${q ? `&q=${encodeURIComponent(q)}` : ''}`, `payroll-${tab}-${ym}${company ? `-${company.toLowerCase()}` : ''}.${format}`);
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
@@ -78,7 +79,7 @@ export function Reports({ ym, period }) {
   return (
     <div className="flex flex-col gap-3">
       <p className="text-[14px] text-muted-foreground">
-        {monthLabel(ym)} was run {period.run_at?.slice(0, 16).replace('T', ' ')} UTC by {period.run_by}. Every figure below is read from the snapshot. Read{' '}
+        {monthLabel(ym)} was generated {period.run_at?.slice(0, 16).replace('T', ' ')} UTC by {period.run_by}. Every figure below is read from that snapshot. Read{' '}
         <button className="text-primary hover:underline" onClick={() => setTab('change')}>
           Change vs last month
         </button>{' '}

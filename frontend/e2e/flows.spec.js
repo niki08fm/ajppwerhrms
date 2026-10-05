@@ -34,22 +34,30 @@ test('the dashboard shows today at a glance', async ({ page }) => {
   await expect(page.getByRole('button', { name: /On site now/, pressed: true })).toBeVisible();
 });
 
-test('a month runs end to end: five steps, run, reports, lock, paid', async ({ page }) => {
+test('a month runs end to end: overview, five steps, generate, reports, lock, paid', async ({ page }) => {
   await signIn(page);
   const ym = await page.evaluate(async () => (await (await fetch('/api/v1/payroll/periods')).json()).meta.suggested);
   await resetMonth(page, ym);
-  await page.goto(`/payroll/${ym}?step=1`);
+  await page.goto(`/payroll/${ym}`);
 
-  await page.getByRole('button', { name: /Submit attendance/ }).click();
-  await expect(page.getByText('Step 1 submitted')).toBeVisible();
-  await page.getByRole('button', { name: 'Submit joiners and exits' }).click();
-  await expect(page.getByText('Step 2 submitted')).toBeVisible();
-  await page.getByRole('button', { name: 'Submit issues' }).click();
-  await expect(page.getByText('Step 3 submitted')).toBeVisible();
-  await page.getByRole('button', { name: 'Submit adhoc items' }).click();
-  await expect(page.getByText('Step 4 submitted')).toBeVisible();
+  // The overview says where the month stopped; continuing opens that step full screen.
+  await expect(page.getByRole('heading', { name: 'Payroll', exact: true })).toBeVisible();
+  await expect(page.getByText('Payroll cost · last six months')).toBeVisible();
+  await page.getByRole('button', { name: /Continue · step 1, Attendance/ }).click();
 
-  await page.getByRole('button', { name: /Run payroll for/ }).click();
+  const steps = [
+    ['Submit attendance', 'Step 2 · Joiners and exits'],
+    ['Submit joiners and exits', 'Step 3 · Held salary'],
+    ['Submit held salaries', 'Step 4 · F&F'],
+    ['Submit F&F', 'Step 5 · Adhoc'],
+    ['Submit adhoc', 'Generate payroll'],
+  ];
+  for (const [button, next] of steps) {
+    await page.getByRole('button', { name: button }).click();
+    await expect(page.getByRole('heading', { name: next })).toBeVisible();
+  }
+
+  await page.getByRole('button', { name: 'Generate payroll' }).click();
   await expect(page.getByRole('tab', { name: 'Salary register' })).toBeVisible({ timeout: 60_000 });
 
   for (const report of ['Salary register', 'Bank transfer', 'PF (ECR)', 'Change vs last month']) {
@@ -59,12 +67,17 @@ test('a month runs end to end: five steps, run, reports, lock, paid', async ({ p
 
   await page.getByRole('button', { name: 'Lock' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Lock' }).click();
-  await expect(page.getByText('Locked', { exact: true })).toBeVisible();
+  await expect(page.getByText(/locked · payslips are final/)).toBeVisible();
 
+  const ref = `E2E-${Date.now()}`;
   await page.getByRole('button', { name: 'Mark paid' }).click();
-  await page.getByLabel('Payment reference').fill(`E2E-${Date.now()}`);
+  await page.getByLabel('Payment reference').fill(ref);
   await page.getByRole('dialog').getByRole('button', { name: 'Mark paid' }).click();
-  await expect(page.getByText('Paid', { exact: true })).toBeVisible();
+  await expect(page.getByText(new RegExp(`paid · ref ${ref}`))).toBeVisible();
+
+  // Back on the overview, the month's reports are there to download.
+  await page.getByRole('button', { name: 'Back to overview' }).click();
+  await expect(page.getByText(/Reports and files ·/)).toBeVisible();
 
   await resetMonth(page, ym);
 });
