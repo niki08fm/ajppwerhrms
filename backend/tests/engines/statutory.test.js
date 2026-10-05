@@ -182,3 +182,13 @@ describe('TDS', () => {
     expect(b.tds.regular).toBe(a.tds.regular);
   });
 });
+
+describe('ESI switched off mid-period', () => {
+  it('continues to the end of the contribution period once paid in it, then stops', () => {
+    const april = esiEligibility({ esi_enabled: true, date: '2026-04-30', fixed_gross_at_block_start: R(20000), esi_locked_until: null }, RATES.esi);
+    const june = esiEligibility({ esi_enabled: false, date: '2026-06-30', fixed_gross_at_block_start: R(20000), esi_locked_until: april.esi_locked_until }, RATES.esi);
+    expect(june.applicable).toBe(true);
+    const october = esiEligibility({ esi_enabled: false, date: '2026-10-31', fixed_gross_at_block_start: R(20000), esi_locked_until: april.esi_locked_until }, RATES.esi);
+    expect(october.applicable).toBe(false);
+  });
+});

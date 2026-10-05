@@ -4,11 +4,11 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, ApiError, errorMessage } from '@/services/api';
 import { useLookups } from '@/hooks/useLookups';
-import { toPaise } from '@/utils';
 import { Button } from '@/components/ui/button';
-import { Field, Input, MoneyInput, Select } from '@/components/ui/form';
+import { Field, Input, Select } from '@/components/ui/form';
 import { Dialog } from '@/components/ui/overlay';
-import { SalaryPreviewPanel } from './SalaryPreview';
+import { SalaryPreviewPanel, useSalaryPreview } from './SalaryPreview';
+import { agreement, SalaryAmountFields, StatutoryChoice } from './SalaryEntry';
 
 /** For people already on the payroll before this system. New hires go through offers. */
 export function NewEmployeeDialog({ open, onOpenChange }) {
@@ -26,12 +26,16 @@ export function NewEmployeeDialog({ open, onOpenChange }) {
     status: 'ONBOARDING',
     mode: 'GROSS',
     amount: '',
+    pf_enabled: true,
+    esi_enabled: true,
     pt_state: 'Andhra Pradesh',
     tax_regime_code: 'NEW',
   });
   const [chosen, setChosen] = useState();
   const [errors, setErrors] = useState({});
   const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
+  const previewArgs = { ...agreement(f.mode, f.amount), pay_group_id: f.pay_group_id, gender: f.gender, pt_state: f.pt_state, date: f.joined_on || undefined, pf_enabled: f.pf_enabled, esi_enabled: f.esi_enabled };
+  const pv = useSalaryPreview(previewArgs, !!f.pay_group_id);
 
   const create = useMutation({
     mutationFn: () =>
@@ -46,7 +50,9 @@ export function NewEmployeeDialog({ open, onOpenChange }) {
         status: f.status,
         pt_state: f.pt_state,
         tax_regime_code: f.tax_regime_code,
-        salary: { mode: f.mode, amount: toPaise(f.amount), ...(chosen ? { chosen_gross: chosen } : {}) },
+        pf_enabled: f.pf_enabled,
+        esi_enabled: f.esi_enabled && (pv.data?.esi_within_ceiling ?? true),
+        salary: { ...agreement(f.mode, f.amount), ...(chosen ? { chosen_gross: chosen } : {}) },
       }),
     onSuccess: (r) => {
       toast.success(`Added as ${r.data.code}`);
@@ -60,7 +66,7 @@ export function NewEmployeeDialog({ open, onOpenChange }) {
     },
   });
 
-  const amount = toPaise(f.amount);
+  const amount = agreement(f.mode, f.amount).amount;
   return (
     <Dialog
       open={open}
@@ -143,23 +149,16 @@ export function NewEmployeeDialog({ open, onOpenChange }) {
               </Select>
             )}
           </Field>
-          <Field label="Pay agreed as">
-            {(id) => (
-              <Select id={id} value={f.mode} onChange={(e) => set('mode', e.target.value)}>
-                <option value="GROSS">Monthly gross</option>
-                <option value="CTC">Annual CTC</option>
-              </Select>
-            )}
-          </Field>
-          <Field label={f.mode === 'CTC' ? 'Annual CTC' : 'Monthly gross'} required error={errors.amount}>
-            {(id, inv) => <MoneyInput id={id} aria-invalid={inv} value={f.amount} onChange={(e) => set('amount', e.target.value)} />}
-          </Field>
+          <SalaryAmountFields label="Pay agreed as" mode={f.mode} annual={f.amount} onMode={(v) => set('mode', v)} onAnnual={(v) => set('amount', v)} error={errors.amount} />
+          <div className="col-span-2">
+            <StatutoryChoice pf={f.pf_enabled} esi={f.esi_enabled} onPf={(v) => set('pf_enabled', v)} onEsi={(v) => set('esi_enabled', v)} preview={pv.data} />
+          </div>
         </div>
         <div className="rounded-md border bg-muted/30 p-3">
           <h4 className="mb-2 font-display font-semibold">Preview</h4>
           {f.pay_group_id ? (
             <SalaryPreviewPanel
-              args={{ mode: f.mode, amount, pay_group_id: f.pay_group_id, gender: f.gender, pt_state: f.pt_state, date: f.joined_on || undefined }}
+              args={previewArgs}
               chosen={chosen}
               onChoose={setChosen}
             />

@@ -374,6 +374,9 @@ export const offerCreateSchema = z
     valid_till: isoDate,
     pt_state: z.string().min(1),
     chosen_gross: paise.optional(),
+    /** Whether the offer gives PF and ESI. ESI can only be on while the gross is within its ceiling. */
+    pf_enabled: z.boolean().optional(),
+    esi_enabled: z.boolean().optional(),
   })
   .strict();
 

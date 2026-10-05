@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/services/api';
+import { inr } from '@/utils';
 import { useDebounced } from '@/hooks';
 import { Money, ProportionBar } from '@/components/bits';
 import { ErrorState, Notice, SkeletonBlock } from '@/components/states';
@@ -46,15 +47,15 @@ export function SalaryPreviewPanel({ args, chosen, onChoose, compact }) {
       {p.structure.over_budget && <Notice tone="warning">The components add up to more than this gross, so the Special Allowance is zero.</Notice>}
       <div className="grid grid-cols-2 gap-3 text-[14px] sm:grid-cols-4">
         <div>
-          <div className="text-[13px] text-muted-foreground">Monthly gross</div>
+          <div className="text-[13px] text-muted-foreground">Annual gross</div>
           <div className="text-lg font-semibold num">
-            <Money value={p.gross} />
+            <Money value={p.gross * 12} />
           </div>
         </div>
         <div>
-          <div className="text-[13px] text-muted-foreground">Cost to company / month</div>
+          <div className="text-[13px] text-muted-foreground">Monthly gross</div>
           <div className="text-lg font-semibold num">
-            <Money value={p.ctc.monthly_cost} />
+            <Money value={p.gross} />
           </div>
         </div>
         <div>
@@ -70,6 +71,12 @@ export function SalaryPreviewPanel({ args, chosen, onChoose, compact }) {
           </div>
         </div>
       </div>
+      <p className="m-0 rounded-md bg-card px-3 py-2 text-[13px] text-muted-foreground">
+        {args.mode === 'CTC'
+          ? `A CTC of ${inr(p.ctc.annual_ctc)} a year is ${inr(p.ctc.monthly_cost)} a month. Less the employer's PF ${inr(p.ctc.employer_pf ?? 0)} and ESI ${inr(p.ctc.employer_esi ?? 0)}, the gross is ${inr(p.gross)} a month.`
+          : `A gross of ${inr(p.gross * 12)} a year is ${inr(p.gross)} a month. With the employer's PF ${inr(p.ctc.employer_pf ?? 0)} and ESI ${inr(p.ctc.employer_esi ?? 0)} on top, the CTC is ${inr(p.ctc.annual_ctc)} a year.`}
+        {p.esi_within_ceiling === false ? ' Not eligible for ESI: the gross is above the ceiling.' : ''}
+      </p>
       {!compact && (
         <>
           <ProportionBar parts={p.structure.monthly.map((c) => ({ label: c.name, value: c.amount, colour: c.colour }))} />

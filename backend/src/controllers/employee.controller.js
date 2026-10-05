@@ -8,6 +8,7 @@ import {
   employeeIdentitySchema,
   employeeUpdateSchema,
   faceEnrolSchema,
+  formatINR,
   formatYearMonth,
   isoDate,
   istDate,
@@ -163,6 +164,8 @@ const createSchema = employeeCoreSchema
     salary: z.object({ mode: z.enum(SALARY_MODES), amount: z.number().int().min(1), chosen_gross: z.number().int().optional() }).strict(),
     pt_state: z.string().min(1),
     tax_regime_code: z.enum(TAX_REGIMES).default('NEW'),
+    pf_enabled: z.boolean().optional(),
+    esi_enabled: z.boolean().optional(),
     identity: employeeIdentitySchema.optional(),
   })
   .strict();
@@ -189,13 +192,15 @@ export const createEmployee = asyncHandler(async (req, res) => {
   const b = createSchema.parse(req.body);
   const group = await prisma.payGroup.findFirst({ where: { id: b.pay_group_id, deleted_at: null } });
   if (!group) throw notFound('Pay group');
-  const { monthly_gross } = await resolveMonthlyGross(prisma, {
+  const { monthly_gross, preview } = await resolveMonthlyGross(prisma, {
     mode: b.salary.mode,
     amount: b.salary.amount,
     structure_id: group.structure_id,
     date: b.joined_on,
     gender: b.gender,
     pt_state: b.pt_state,
+    pf_enabled: b.pf_enabled ?? true,
+    esi_enabled: b.esi_enabled ?? true,
     chosen_gross: b.salary.chosen_gross,
   });
   const { actor, ip } = who(req);
@@ -217,7 +222,7 @@ export const createEmployee = asyncHandler(async (req, res) => {
         joined_on: toDbDate(b.joined_on),
         status: b.status,
         activated_at: b.status === 'ACTIVE' ? new Date() : null,
-        statutory: { create: { pt_state: b.pt_state, tax_regime_code: b.tax_regime_code, esi_enabled: monthly_gross <= 2_100_000 } },
+        statutory: { create: { pt_state: b.pt_state, tax_regime_code: b.tax_regime_code, pf_enabled: b.pf_enabled ?? true, esi_enabled: (b.esi_enabled ?? true) && preview.esi_within_ceiling } },
         identity: { create: identityData(b.identity ?? {}) },
         salaries: {
           create: {
@@ -312,6 +317,9 @@ const previewSchema = z
     gender: z.enum(['MALE', 'FEMALE', 'OTHER']).optional(),
     pt_state: z.string().optional(),
     chosen_gross: z.number().int().optional(),
+    /** What an offer is being worked out with, before the person has statutory settings of their own. */
+    pf_enabled: z.boolean().optional(),
+    esi_enabled: z.boolean().optional(),
   })
   .strict();
 
@@ -331,10 +339,10 @@ export const getSalaryPreview = asyncHandler(async (req, res) => {
     gender: b.gender ?? e?.gender ?? 'MALE',
     pt_state: b.pt_state ?? st?.pt_state ?? 'Andhra Pradesh',
     pt_applicable: st?.pt_applicable,
-    pf_enabled: st?.pf_enabled,
+    pf_enabled: b.pf_enabled ?? st?.pf_enabled,
     pf_restrict_to_ceiling: st?.pf_restrict_to_ceiling,
     vpf_pct: st ? Number(st.vpf_pct) : 0,
-    esi_enabled: st?.esi_enabled,
+    esi_enabled: b.esi_enabled ?? st?.esi_enabled,
     tax_regime_code: st?.tax_regime_code,
     declarations: st ? { decl_80c: n(st.decl_80c), decl_80d: n(st.decl_80d), decl_rent_monthly: n(st.decl_rent_monthly), decl_metro: st.decl_metro } : undefined,
     chosen_gross: b.chosen_gross,
@@ -525,6 +533,17 @@ export const updateStatutory = asyncHandler(async (req, res) => {
   if (b.decl_80d !== undefined) data.decl_80d = BigInt(b.decl_80d);
   if (b.decl_rent_monthly !== undefined) data.decl_rent_monthly = BigInt(b.decl_rent_monthly);
   if (b.pt_applicable === true) data.pt_exempt_reason = null;
+  // ESI can be switched on only for someone eligible: gross within the ceiling, or still
+  // covered for the current contribution period.
+  if (b.esi_enabled === true && !before.esi_enabled) {
+    const now = today();
+    const sal = await salaryOn(prisma, e.id, now > fromDbDate(e.joined_on) ? now : fromDbDate(e.joined_on));
+    const rates = await ratesOn(prisma, now);
+    const covered = before.esi_locked_until && fromDbDate(before.esi_locked_until) >= now;
+    if (sal && sal.monthly_gross > rates.esi.ceiling && !covered) {
+      throw new AppError('VALIDATION', `${e.name} is not eligible for ESI: the gross is above the ${formatINR(rates.esi.ceiling)} ceiling.`, 422, 'esi_enabled');
+    }
+  }
   const { actor, ip } = who(req);
   await prisma.$transaction(async (tx) => {
     await tx.employeeStatutory.update({ where: { employee_id: e.id }, data });

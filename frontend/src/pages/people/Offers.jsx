@@ -6,14 +6,14 @@ import { Check, FileSignature, Play, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, ApiError, errorMessage } from '@/services/api';
 import { useLookups } from '@/hooks/useLookups';
-import { toPaise } from '@/utils';
 import { Money, Mono, PageHeader, PersonLink } from '@/components/bits';
 import { EmptyState, ErrorState, SkeletonRows } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Field, Input, MoneyInput, Select } from '@/components/ui/form';
+import { Field, Input, Select } from '@/components/ui/form';
 import { Dialog, TabsContent, TabsList, TabsRoot } from '@/components/ui/overlay';
-import { SalaryPreviewPanel } from '../../components/people/SalaryPreview';
+import { SalaryPreviewPanel, useSalaryPreview } from '../../components/people/SalaryPreview';
+import { agreement, SalaryAmountFields, StatutoryChoice } from '../../components/people/SalaryEntry';
 
 export default function Offers() {
   const qc = useQueryClient();
@@ -92,7 +92,7 @@ export default function Offers() {
                         <td className="text-right">
                           {p.offer && (
                             <>
-                              <Money value={p.offer.amount} /> <span className="text-muted-foreground">{p.offer.mode === 'CTC' ? 'CTC' : '/ mo'}</span>
+                              <Money value={p.offer.mode === 'CTC' ? p.offer.amount : p.offer.amount * 12} /> <span className="text-muted-foreground">{p.offer.mode === 'CTC' ? 'CTC a year' : 'gross a year'}</span>
                             </>
                           )}
                         </td>
@@ -150,6 +150,8 @@ function IssueOfferDialog({ onClose }) {
     pay_group_id: '',
     mode: 'GROSS',
     amount: '',
+    pf_enabled: true,
+    esi_enabled: true,
     join_by: in30,
     valid_till: in14,
     pt_state: 'Andhra Pradesh',
@@ -157,8 +159,10 @@ function IssueOfferDialog({ onClose }) {
   const [chosen, setChosen] = useState();
   const [errors, setErrors] = useState({});
   const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
+  const previewArgs = { ...agreement(f.mode, f.amount), pay_group_id: f.pay_group_id, gender: f.gender, pt_state: f.pt_state, date: f.join_by, pf_enabled: f.pf_enabled, esi_enabled: f.esi_enabled };
+  const pv = useSalaryPreview(previewArgs, !!f.pay_group_id);
   const save = useMutation({
-    mutationFn: () => api.post('/offers', { ...f, amount: toPaise(f.amount), ...(chosen ? { chosen_gross: chosen } : {}) }),
+    mutationFn: () => api.post('/offers', { ...f, ...agreement(f.mode, f.amount), esi_enabled: f.esi_enabled && (pv.data?.esi_within_ceiling ?? true), ...(chosen ? { chosen_gross: chosen } : {}) }),
     onSuccess: async (r) => {
       toast.success(`Offer ${r.data.ref} issued. The letter's figures are frozen.`);
       qc.invalidateQueries({ queryKey: ['offers'] });
@@ -184,7 +188,7 @@ function IssueOfferDialog({ onClose }) {
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button loading={save.isPending} disabled={!f.name || !f.phone || !f.department_id || !f.designation || !f.pay_group_id || !toPaise(f.amount)} onClick={() => save.mutate()}>
+          <Button loading={save.isPending} disabled={!f.name || !f.phone || !f.department_id || !f.designation || !f.pay_group_id || !agreement(f.mode, f.amount).amount} onClick={() => save.mutate()}>
             <FileSignature /> Issue offer and print letter
           </Button>
         </>
@@ -234,17 +238,10 @@ function IssueOfferDialog({ onClose }) {
               </Select>
             )}
           </Field>
-          <Field label="Offered as">
-            {(id) => (
-              <Select id={id} value={f.mode} onChange={(e) => set('mode', e.target.value)}>
-                <option value="GROSS">Monthly gross</option>
-                <option value="CTC">Annual CTC</option>
-              </Select>
-            )}
-          </Field>
-          <Field label={f.mode === 'CTC' ? 'Annual CTC' : 'Monthly gross'} required error={errors.amount}>
-            {(id, inv) => <MoneyInput id={id} aria-invalid={inv} value={f.amount} onChange={(e) => set('amount', e.target.value)} />}
-          </Field>
+          <SalaryAmountFields label="Offered as" mode={f.mode} annual={f.amount} onMode={(v) => set('mode', v)} onAnnual={(v) => set('amount', v)} error={errors.amount} />
+          <div className="col-span-2">
+            <StatutoryChoice pf={f.pf_enabled} esi={f.esi_enabled} onPf={(v) => set('pf_enabled', v)} onEsi={(v) => set('esi_enabled', v)} preview={pv.data} />
+          </div>
           <Field label="Joining date">{(id) => <Input id={id} type="date" value={f.join_by} onChange={(e) => set('join_by', e.target.value)} />}</Field>
           <Field label="Offer valid till">{(id) => <Input id={id} type="date" value={f.valid_till} onChange={(e) => set('valid_till', e.target.value)} />}</Field>
           <Field label="Works in (PT state)" className="col-span-2" hint="Defaults professional tax. It stays on the person, because people move.">
@@ -260,7 +257,7 @@ function IssueOfferDialog({ onClose }) {
         <div className="rounded-md border bg-muted/30 p-3">
           {f.pay_group_id ? (
             <SalaryPreviewPanel
-              args={{ mode: f.mode, amount: toPaise(f.amount), pay_group_id: f.pay_group_id, gender: f.gender, pt_state: f.pt_state, date: f.join_by }}
+              args={previewArgs}
               chosen={chosen}
               onChoose={setChosen}
             />

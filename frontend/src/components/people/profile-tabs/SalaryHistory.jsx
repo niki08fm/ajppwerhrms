@@ -4,14 +4,15 @@ import { ArrowRight, TrendingUp } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, errorMessage } from '@/services/api';
 import { useLookups } from '@/hooks/useLookups';
-import { cn, toPaise } from '@/utils';
+import { cn } from '@/utils';
 import { Money } from '@/components/bits';
 import { Chip, EmptyState, ErrorState, SkeletonRows } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
-import { Field, Input, MoneyInput, Select } from '@/components/ui/form';
+import { Field, Input, Select } from '@/components/ui/form';
 import { Dialog } from '@/components/ui/overlay';
 import { useSalaryPreview } from '../SalaryPreview';
+import { agreement, annualText, SalaryAmountFields } from '../SalaryEntry';
 
 export function SalaryHistoryTab({ e }) {
   const q = useQuery({ queryKey: ['salary-history', e.id], queryFn: () => api.get(`/employees/${e.id}/salary`).then((r) => r.data) });
@@ -55,9 +56,9 @@ export function SalaryHistoryTab({ e }) {
               <tr key={r.id} className={cn(!r.valid_to && 'font-medium')}>
                 <td className="num">{r.valid_from}</td>
                 <td className="num">{r.valid_to ?? <Chip tone="success">Current</Chip>}</td>
-                <td>{r.mode === 'CTC' ? 'Annual CTC' : 'Monthly gross'}</td>
+                <td>{r.mode === 'CTC' ? 'Annual CTC' : 'Annual gross'}</td>
                 <td className="text-right">
-                  <Money value={r.amount} />
+                  <Money value={r.mode === 'CTC' ? r.amount : r.monthly_gross * 12} />
                 </td>
                 <td className="text-right">
                   <Money value={r.monthly_gross} />
@@ -80,15 +81,14 @@ export function ReviseDialog({ e, onClose }) {
   const qc = useQueryClient();
   const { data: lk } = useLookups();
   const cur = e.salary;
-  const [f, setF] = useState({ mode: cur.mode, amount: String((cur.mode === 'GROSS' ? cur.monthly_gross : cur.amount) / 100), valid_from: '', structure_id: cur.structure_id, reason: '' });
+  const [f, setF] = useState({ mode: cur.mode, amount: annualText(cur.mode, cur.amount, cur.monthly_gross), valid_from: '', structure_id: cur.structure_id, reason: '' });
   const [chosen, setChosen] = useState();
   const before = useSalaryPreview({ mode: cur.mode, amount: cur.amount, employee_id: e.id, structure_id: cur.structure_id, chosen_gross: cur.monthly_gross });
-  const after = useSalaryPreview({ mode: f.mode, amount: toPaise(f.amount), employee_id: e.id, structure_id: f.structure_id, chosen_gross: chosen, date: f.valid_from || undefined });
+  const after = useSalaryPreview({ ...agreement(f.mode, f.amount), employee_id: e.id, structure_id: f.structure_id, chosen_gross: chosen, date: f.valid_from || undefined });
   const save = useMutation({
     mutationFn: () =>
       api.post(`/employees/${e.id}/salary`, {
-        mode: f.mode,
-        amount: toPaise(f.amount),
+        ...agreement(f.mode, f.amount),
         valid_from: f.valid_from,
         structure_id: f.structure_id,
         reason: f.reason,
@@ -106,6 +106,7 @@ export function ReviseDialog({ e, onClose }) {
   const b = before.data;
   const a = after.data;
   const rows = [
+    ['Annual gross', b && b.gross * 12, a && a.gross * 12],
     ['Monthly gross', b?.gross, a?.gross],
     ['Take-home', b?.take_home, a?.take_home],
     ['Employer cost per month', b?.ctc.monthly_cost, a?.ctc.monthly_cost],
@@ -123,7 +124,7 @@ export function ReviseDialog({ e, onClose }) {
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button loading={save.isPending} disabled={!f.valid_from || f.reason.trim().length < 3 || !toPaise(f.amount) || (a?.solution?.ambiguous && !chosen)} onClick={() => save.mutate()}>
+          <Button loading={save.isPending} disabled={!f.valid_from || f.reason.trim().length < 3 || !agreement(f.mode, f.amount).amount || (a?.solution?.ambiguous && !chosen)} onClick={() => save.mutate()}>
             Save revision
           </Button>
         </>
@@ -131,15 +132,7 @@ export function ReviseDialog({ e, onClose }) {
     >
       <div className="grid gap-4 md:grid-cols-2">
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Agreed as">
-            {(id) => (
-              <Select id={id} value={f.mode} onChange={(ev) => setF({ ...f, mode: ev.target.value })}>
-                <option value="GROSS">Monthly gross</option>
-                <option value="CTC">Annual CTC</option>
-              </Select>
-            )}
-          </Field>
-          <Field label="Amount">{(id) => <MoneyInput id={id} value={f.amount} onChange={(ev) => setF({ ...f, amount: ev.target.value })} />}</Field>
+          <SalaryAmountFields mode={f.mode} annual={f.amount} onMode={(mode) => setF({ ...f, mode })} onAnnual={(amount) => setF({ ...f, amount })} />
           <Field label="Effective from" required>
             {(id) => <Input id={id} type="date" value={f.valid_from} onChange={(ev) => setF({ ...f, valid_from: ev.target.value })} />}
           </Field>
