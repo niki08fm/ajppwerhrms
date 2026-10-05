@@ -4,40 +4,16 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowRight, ChevronRight } from 'lucide-react';
 import { addDays } from '@ajpwer/shared';
 import { api } from '@/services/api';
-import { cn, hhmm } from '@/utils';
+import { cn, hhmm, mins } from '@/utils';
 import { ErrorState, SkeletonBlock } from '@/components/states';
 import { Card } from '@/components/ui/card';
+import { Select } from '@/components/ui/form';
+import { Drawer } from '@/components/ui/overlay';
 import { CorrectionDrawer } from '@/components/attendance/CorrectionDrawer';
 import { DayPicker, useMonth } from '@/components/attendance/DayPicker';
-import { SiteCircles, countSegments, segmentDefs } from '@/components/attendance/SiteCircles';
-import { TONE, dayName, faceStack, fullDate, shortDate, viewsFor } from '@/components/attendance/dayVocab';
+import { TONE, dayName, fullDate, viewsFor } from '@/components/attendance/dayVocab';
 
 // ─── Small pieces ────────────────────────────────────────────────────────────
-
-/** Grey initials, two at most, then "+N". */
-function Faces({ list, n = 2, size = 26 }) {
-  const { faces, more } = faceStack(list, n);
-  if (!list.length) return <span className="text-[12px] text-muted-foreground">Nobody</span>;
-  return (
-    <span className="flex items-center pl-[7px]">
-      {faces.map((f) => (
-        <span
-          key={f.id ?? f.ini}
-          title={f.name}
-          className="-ml-[7px] inline-flex items-center justify-center rounded-full border-2 border-card bg-muted text-[10px] font-semibold text-muted-foreground"
-          style={{ width: size, height: size }}
-        >
-          {f.ini}
-        </span>
-      ))}
-      {more > 0 && (
-        <span className="-ml-[7px] inline-flex h-6 min-w-6 items-center justify-center rounded-full border-2 border-card bg-muted/60 px-1 text-[10px] font-semibold text-muted-foreground num" style={{ height: size }}>
-          +{more}
-        </span>
-      )}
-    </span>
-  );
-}
 
 function CardTitle({ title, description, children }) {
   return (
@@ -54,9 +30,9 @@ function CardTitle({ title, description, children }) {
 // ─── The screen ──────────────────────────────────────────────────────────────
 
 /**
- * Today: the morning glance for HR. Pick any day; the cards, the site circles and the
- * charts follow. Every count opens Attendance filtered to exactly those people, under the
- * same name.
+ * Today: the glance for HR. One row of figures, then sites and departments as two small
+ * tables, what waits on HR, and the month's attendance line. Pick a site at the top; click
+ * any number to see who, in a side panel.
  */
 export default function Dashboard() {
   const nav = useNavigate();
@@ -75,7 +51,6 @@ export default function Dashboard() {
     queryFn: () => api.get('/dashboard/overview', { date: sp.get('date') ?? undefined }).then((r) => r.data),
     refetchInterval: sp.get('date') ? false : 60_000,
   });
-  const [bin, setBin] = useState(-1);
   const [open, setOpen] = useState(null);
 
   if (ov.isLoading)
@@ -84,10 +59,10 @@ export default function Dashboard() {
         <SkeletonBlock className="h-24" />
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
           {Array.from({ length: 7 }).map((_, i) => (
-            <SkeletonBlock key={i} className="h-[118px]" />
+            <SkeletonBlock key={i} className="h-[92px]" />
           ))}
         </div>
-        <SkeletonBlock className="h-[520px]" />
+        <SkeletonBlock className="h-[420px]" />
       </div>
     );
   if (ov.isError) return <ErrorState error={ov.error} onRetry={() => ov.refetch()} />;
@@ -97,22 +72,42 @@ export default function Dashboard() {
       d={ov.data}
       site={sp.get('site')}
       dept={sp.get('dept')}
-      hl={sp.get('hl')}
       set={set}
       nav={nav}
       updatedAt={ov.dataUpdatedAt}
-      bin={bin}
-      setBin={setBin}
       onPerson={(id) => setOpen(id)}
       drawer={open && <CorrectionDrawer employeeId={open} date={ov.data.date} open onOpenChange={(o) => !o && setOpen(null)} />}
     />
   );
 }
 
-function TodayBody({ d, site, dept, hl, set, nav, updatedAt, bin, setBin, onPerson, drawer }) {
+/** Where someone's day is: on site (in overtime or not), done, or gone early. */
+function segmentOf(p, isToday) {
+  if (isToday) {
+    if (p.open_now) return p.ot_min > 0 ? 'ot' : 'work';
+    return p.early_min > 0 ? 'early' : 'done';
+  }
+  if (p.status === 'MISSING_PUNCH' && !p.corrected) return 'nopunch';
+  if (p.early_min > 0) return 'early';
+  if (p.ot_min > 0) return 'ot';
+  return 'done';
+}
+
+const SEGMENTS = {
+  work: { label: 'On site', colour: TONE.ok },
+  ot: { label: 'In overtime', colour: TONE.warn },
+  done: { label: 'Done for the day', colour: TONE.soft },
+  early: { label: 'Left early', colour: TONE.bad },
+  nopunch: { label: 'No punch-out', colour: 'color-mix(in srgb, var(--muted-foreground) 55%, var(--card))' },
+};
+
+function TodayBody({ d, site, dept, set, nav, updatedAt, onPerson, drawer }) {
   const isToday = d.is_today;
   const views = viewsFor(isToday);
+  const label = (key) => views.find((v) => v.key === key)?.label ?? key;
   const siteName = (id) => d.sites.find((s) => s.id === id)?.name ?? 'a site';
+  const deptName = (id) => d.departments.find((x) => x.id === id)?.name ?? 'a department';
+  const [panel, setPanel] = useState(null);
 
   // Department first; then site. Absence and leave belong to no site, so they stay company-wide.
   const inDept = useMemo(() => d.people.filter((p) => !dept || p.dept_id === dept), [d.people, dept]);
@@ -121,29 +116,49 @@ function TodayBody({ d, site, dept, hl, set, nav, updatedAt, bin, setBin, onPers
   const listOf = (key) => scopeFor(key).filter((p) => p.views.includes(key));
   const expected = inDept.filter((p) => p.expected).length;
 
-  const attendanceLink = (view, siteId = site) => {
+  const attendanceLink = (view, siteId = site, deptId = dept) => {
     const q = new URLSearchParams({ date: d.date });
     if (view) q.set('view', view);
     if (siteId && view !== 'absent' && view !== 'leave') q.set('site', siteId);
-    if (dept) q.set('dept', dept);
+    if (deptId) q.set('dept', deptId);
     return `/attendance?${q}`;
   };
-
-  // Waiting on you: highlight the sites where the selected kind of item sits.
-  const hlItem = d.waiting.find((w) => w.key === hl);
-  const hlIds = hlItem ? new Set(hlItem.employee_ids) : new Set(d.waiting.filter((w) => !['hold', 'heldback'].includes(w.key)).flatMap((w) => w.employee_ids));
+  // A number clicked: who, in a side panel. `scope` narrows it to one site or department.
+  const show = (key, scope = {}) => {
+    const s = scope.site ?? site;
+    const dp = scope.dept ?? dept;
+    const base = d.people.filter((p) => (!dp || p.dept_id === dp) && (key === 'absent' || key === 'leave' || !s || p.sites.includes(s)));
+    setPanel({ key, site: s, dept: dp, list: base.filter((p) => p.views.includes(key)) });
+  };
 
   const inN = listOf('in').length;
+  const where = [site ? `at ${siteName(site)}` : '', dept ? `in ${deptName(dept)}` : ''].filter(Boolean).join(' ');
   const summary = isToday
-    ? `${inN} of ${expected} came in${site ? ` at ${siteName(site)}` : ''}. ${listOf('onsite').length} still on site, ${listOf('ot').length} in overtime.${d.waiting_total ? ` ${d.waiting_total} ${d.waiting_total === 1 ? 'thing waits' : 'things wait'} on you${d.oldest ? ` — the oldest is ${d.oldest.hours} hours old` : ''}.` : ' Nothing waits on you.'}`
-    : `On ${fullDate(d.date).split(',')[0]}, ${inN} of ${expected} came in${site ? ` at ${siteName(site)}` : ''}. ${listOf('ot').length} did overtime, ${listOf('late').length} came late, ${listOf('early').length} left early.${listOf('nopunch').length ? ` ${listOf('nopunch').length} forgot to punch out.` : ''}`;
+    ? `${inN} of ${expected} came in${where ? ` ${where}` : ''}. ${listOf('onsite').length} still on site, ${listOf('ot').length} in overtime.${d.waiting_total ? ` ${d.waiting_total} ${d.waiting_total === 1 ? 'thing waits' : 'things wait'} on you${d.oldest ? ` — the oldest is ${d.oldest.hours} hours old` : ''}.` : ' Nothing waits on you.'}`
+    : `On ${fullDate(d.date).split(',')[0]}, ${inN} of ${expected} came in${where ? ` ${where}` : ''}. ${listOf('ot').length} did overtime, ${listOf('late').length} came late, ${listOf('early').length} left early.${listOf('nopunch').length ? ` ${listOf('nopunch').length} forgot to punch out.` : ''}`;
 
   const updated = new Date(updatedAt + 330 * 60_000);
   const updatedText = `${String(updated.getUTCHours()).padStart(2, '0')}:${String(updated.getUTCMinutes()).padStart(2, '0')}`;
 
+  // The columns both tables share: came in, then the views that matter for the day.
+  const cols = [isToday ? 'onsite' : 'nopunch', 'ot', 'late', 'early'];
+  const rowOf = (people, scope) => {
+    const came = people.filter((p) => p.views.includes('in'));
+    const seg = {};
+    for (const p of came) {
+      const k = segmentOf(p, isToday);
+      seg[k] = (seg[k] ?? 0) + 1;
+    }
+    return { came, expected: people.filter((p) => p.expected).length, seg, n: (k) => people.filter((p) => p.views.includes(k)).length, scope };
+  };
+  const siteRows = d.sites.map((s) => ({ id: s.id, name: s.name, ...rowOf(inDept.filter((p) => p.sites.includes(s.id)), { site: s.id }) }));
+  const deptRows = d.departments
+    .map((x) => ({ id: x.id, name: x.name, ...rowOf(d.people.filter((p) => p.dept_id === x.id && (!site || p.sites.includes(site))), { dept: x.id }) }))
+    .filter((r) => r.expected > 0 || r.came.length > 0);
+
   return (
     <div className="flex flex-col gap-4">
-      {/* Header */}
+      {/* Header: the day on the left, the site on the right */}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
@@ -153,186 +168,310 @@ function TodayBody({ d, site, dept, hl, set, nav, updatedAt, bin, setBin, onPers
           <div className="mt-0.5 flex flex-wrap items-center gap-x-3.5 gap-y-2">
             <h1 className="font-display text-[30px] leading-tight font-semibold">{dayName(d.date, d.today, addDays)}</h1>
             <span className="text-[15px] text-muted-foreground">{fullDate(d.date)}</span>
-            <DayPicker date={d.date} today={d.today} onChange={(x) => set({ date: x === d.today ? null : x, hl: null })} />
+            <DayPicker date={d.date} today={d.today} onChange={(x) => set({ date: x === d.today ? null : x })} />
           </div>
-          <p className="mt-1.5 text-[15px] text-foreground/85">{summary}</p>
         </div>
-        <div role="radiogroup" aria-label="Site" className="inline-flex max-w-full flex-wrap rounded-md border bg-muted p-0.5">
-          {[{ id: null, name: 'All sites' }, ...d.sites].map((s) => (
-            <button
-              key={s.id ?? 'all'}
-              type="button"
-              role="radio"
-              aria-checked={site === s.id || (!site && !s.id)}
-              onClick={() => set({ site: s.id, hl: null })}
-              className={cn('rounded-[5px] px-3 py-1.5 text-sm font-medium', site === s.id || (!site && !s.id) ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}
-            >
-              {s.name}
-            </button>
-          ))}
-        </div>
+        <label className="flex items-center gap-2 text-[13px] text-muted-foreground">
+          Site
+          <Select className="h-9 min-w-56" value={site ?? ''} onChange={(e) => set({ site: e.target.value || null })} aria-label="Site">
+            <option value="">All sites · {d.people.filter((p) => (!dept || p.dept_id === dept) && p.views.includes('in')).length} in</option>
+            {siteRows.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name} · {s.came.length} in
+              </option>
+            ))}
+          </Select>
+        </label>
       </div>
+      <p className="-mt-1 text-[15px] text-foreground/85">{summary}</p>
 
-      {/* Departments */}
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="mr-1 text-[12px] font-semibold tracking-wide text-muted-foreground uppercase">Departments</span>
-        {[{ id: null, name: 'All' }, ...d.departments].map((dep) => {
-          const ppl = d.people.filter((p) => !dep.id || p.dept_id === dep.id);
-          const exp = ppl.filter((p) => p.expected).length;
-          const came = (site ? ppl.filter((p) => p.sites.includes(site)) : ppl).filter((p) => p.views.includes('in')).length;
-          const pct = exp ? Math.min(100, Math.round((came / exp) * 100)) : 0;
-          const on = (dept ?? null) === dep.id;
-          if (dep.id && !ppl.length) return null;
-          return (
-            <button
-              key={dep.id ?? 'all'}
-              type="button"
-              aria-pressed={on}
-              onClick={() => set({ dept: dep.id })}
-              className={cn('inline-flex h-8 items-center gap-2 rounded-full border px-3 text-[13px] font-medium transition-colors', on ? 'border-primary bg-secondary' : 'bg-card hover:border-primary/40')}
-            >
-              <span className="relative inline-block size-[18px] rounded-full" style={{ background: `conic-gradient(var(--primary) ${pct}%, var(--border) 0)` }}>
-                <span className={cn('absolute inset-[4px] rounded-full', on ? 'bg-secondary' : 'bg-card')} />
-              </span>
-              {dep.name} <b className="font-semibold num">{came}</b>
-              {!site && <span className="text-muted-foreground num">/ {exp}</span>}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* The cards */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
+      {/* The figures, one slim row */}
+      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4 xl:grid-cols-7">
         {views.map((v) => {
-          const list = listOf(v.key);
+          const n = listOf(v.key).length;
           return (
-            <Link
+            <button
               key={v.key}
-              to={attendanceLink(v.key)}
-              className="flex flex-col gap-1 rounded-xl border bg-card px-4 py-3.5 shadow-sm transition-[border-color,box-shadow] hover:border-primary/50 hover:shadow-md focus-visible:outline-2 focus-visible:outline-ring"
+              type="button"
+              onClick={() => show(v.key)}
+              className="flex flex-col gap-0.5 rounded-xl border bg-card px-3.5 py-3 text-left shadow-sm transition-[border-color,box-shadow] hover:border-primary/50 hover:shadow-md focus-visible:outline-2 focus-visible:outline-ring"
             >
-              <span className="text-[12px] font-semibold tracking-wide text-muted-foreground uppercase">{v.label}</span>
-              <span className="text-[28px] leading-tight font-semibold whitespace-nowrap num" style={{ color: list.length || v.key === 'in' ? v.colour : 'var(--foreground)' }}>
-                {v.key === 'in' ? `${list.length} / ${expected}` : list.length}
+              <span className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">{v.label}</span>
+              <span className="text-[24px] leading-tight font-semibold whitespace-nowrap num" style={{ color: n || v.key === 'in' ? v.colour : 'var(--foreground)' }}>
+                {v.key === 'in' ? `${n} / ${expected}` : n}
               </span>
               <span className="text-[12px] text-muted-foreground">{v.sub}</span>
-              <span className="mt-1 flex min-h-7 items-center">
-                <Faces list={list} />
-              </span>
-            </Link>
+            </button>
           );
         })}
       </div>
 
-      <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
-        <SitesCard d={d} people={inDept} site={site} isToday={isToday} hlIds={hlIds} focus={!!hlItem} set={set} nav={nav} attendanceLink={attendanceLink} listOf={listOf} siteName={siteName} />
-        <WaitingCard d={d} hl={hl} set={set} />
+      <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+        <div className="flex min-w-0 flex-col gap-4">
+          <DayTable
+            title={isToday ? 'Sites right now' : `Sites on ${fullDate(d.date).split(',')[0]}`}
+            description="Click a site to see only its people. Click any number to see who."
+            first="Site"
+            rows={siteRows}
+            cols={cols}
+            label={label}
+            isToday={isToday}
+            selected={site}
+            onPick={(id) => set({ site: site === id ? null : id })}
+            onClear={site ? () => set({ site: null }) : null}
+            clearLabel="Show all sites"
+            onShow={show}
+            footer={
+              <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                Not at a site:
+                <button type="button" className="font-medium text-primary hover:underline" onClick={() => show('absent')}>
+                  {listOf('absent').length} absent
+                </button>
+                ·
+                <button type="button" className="font-medium text-primary hover:underline" onClick={() => show('leave')}>
+                  {listOf('leave').length} on leave
+                </button>
+                {d.moves.length > 0 && (
+                  <Link to="/approvals?kind=move" className="inline-flex items-center gap-1 hover:underline">
+                    · <ArrowRight className="size-3.5" /> {d.moves.length} moved site
+                  </Link>
+                )}
+              </span>
+            }
+          />
+          <DayTable
+            title={isToday ? 'Departments right now' : 'Departments'}
+            description={`The same, by department${site ? ` at ${siteName(site)}` : ''}. Click one to see only its people.`}
+            first="Department"
+            rows={deptRows}
+            cols={cols}
+            label={label}
+            isToday={isToday}
+            showExpected
+            selected={dept}
+            onPick={(id) => set({ dept: dept === id ? null : id })}
+            onClear={dept ? () => set({ dept: null }) : null}
+            clearLabel="Show all departments"
+            onShow={show}
+          />
+        </div>
+        <div className="flex min-w-0 flex-col gap-4">
+          <WaitingCard d={d} />
+          <MonthCard d={d} site={site} siteName={siteName} />
+        </div>
       </div>
 
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)]">
-        <ArrivalsCard d={d} people={atSite} bin={bin} setBin={setBin} onPerson={onPerson} />
-        <MonthCard d={d} site={site} siteName={siteName} />
-      </div>
+      <PeoplePanel
+        panel={panel}
+        d={d}
+        label={label}
+        siteName={siteName}
+        deptName={deptName}
+        link={panel ? attendanceLink(panel.key, panel.site, panel.dept) : ''}
+        onPerson={(id) => {
+          setPanel(null);
+          onPerson(id);
+        }}
+        onClose={() => setPanel(null)}
+        nav={nav}
+      />
       {drawer}
     </div>
   );
 }
 
-// ─── Sites ───────────────────────────────────────────────────────────────────
+// ─── Sites and departments: one small table each ─────────────────────────────
 
-function SitesCard({ d, people, site, isToday, hlIds, focus, set, nav, attendanceLink, listOf, siteName }) {
-  const defs = segmentDefs(isToday);
-  const scoped = site ? people.filter((p) => p.sites.includes(site)) : people;
-  const seg = countSegments(
-    scoped.filter((p) => p.sites.length),
-    isToday,
+const toneOf = (k, n) => (!n ? 'text-muted-foreground' : k === 'ot' || k === 'late' ? 'text-warning-foreground dark:text-warning' : k === 'early' ? 'text-destructive' : '');
+
+/** A count that opens the people behind it. */
+function Num({ n, k, scope, strong, extra, onShow }) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onShow(k, scope);
+      }}
+      className={cn('-mx-1.5 rounded px-1.5 py-0.5 num hover:bg-primary/10 hover:underline', strong && 'font-semibold', toneOf(k, n))}
+    >
+      {n}
+      {extra}
+    </button>
   );
+}
+
+function DayTable({ title, description, first, rows, cols, label, isToday, showExpected, selected, onPick, onClear, clearLabel, onShow, footer }) {
+  const segs = isToday ? ['work', 'ot', 'done', 'early'] : ['nopunch', 'ot', 'done', 'early'];
   return (
     <Card className="overflow-hidden">
-      <CardTitle
-        title={isToday ? 'Sites right now' : `Sites on ${shortDate(d.date)}`}
-        description={`Circle size follows how many punched in. The ring shows how their day ${isToday ? 'is going' : 'went'}. Tap any number to see those people.`}
-      >
-        <div className="flex flex-wrap gap-0.5">
-          {defs.map((s) => (
-            <Link key={s.key} to={attendanceLink(s.view)} className="inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-[12px] font-medium text-muted-foreground hover:bg-accent">
-              <span className="size-3 rounded-full" style={{ background: s.colour }} />
-              {s.label} <b className="text-foreground num">{seg[s.key] ?? 0}</b>
-            </Link>
-          ))}
-        </div>
-      </CardTitle>
-      <div className="px-4 pt-3 pb-2">
-        <SiteCircles
-          sites={d.sites}
-          people={people}
-          isToday={isToday}
-          site={site}
-          highlightIds={hlIds}
-          focus={focus}
-          onPickSite={(id) => set({ site: id })}
-          onOpen={(view, siteId) => nav(attendanceLink(view, siteId))}
-        />
-      </div>
-      <div className="flex flex-wrap items-center gap-2.5 border-t bg-muted/30 px-5 py-3">
-        <span className="text-[12px] font-semibold tracking-wide text-muted-foreground uppercase">Not at a site</span>
-        {[
-          { key: 'absent', label: 'Absent', colour: TONE.bad },
-          { key: 'leave', label: 'On leave', colour: 'var(--muted-foreground)' },
-        ].map((a) => (
-          <Link key={a.key} to={attendanceLink(a.key)} className="inline-flex h-[30px] items-center gap-1.5 rounded-full border bg-card px-3 text-[13px] font-medium hover:border-primary/40">
-            <span className="size-2 rounded-full" style={{ background: a.colour }} />
-            {a.label} <b className="num">{listOf(a.key).length}</b>
-          </Link>
-        ))}
-        <span className="flex-1" />
-        {d.moves.length > 0 && (
-          <Link to="/approvals?kind=move" className="inline-flex h-[30px] max-w-full items-center gap-1.5 truncate rounded-full border bg-card px-3 text-[13px] font-medium hover:border-primary/40">
-            <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
-            {d.moves.length} moved site · {d.moves[0].name?.split(' ')[0]}, {siteName(d.moves[0].from_site_id)} → {siteName(d.moves[0].to_site_id)}
-            {d.moves[0].travel_min ? `, ${d.moves[0].travel_min} min travel` : ''}
-            {d.moves.length > 1 ? ` and ${d.moves.length - 1} more` : ''}
-          </Link>
+      <CardTitle title={title} description={description}>
+        {onClear && (
+          <button type="button" onClick={onClear} className="rounded-md border px-2.5 py-1 text-[13px] font-medium hover:bg-accent">
+            {clearLabel}
+          </button>
         )}
+      </CardTitle>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[14px]">
+          <thead>
+            <tr className="bg-muted/50 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+              <th className="px-4 py-2 text-left">{first}</th>
+              <th className="px-3 py-2 text-right">{label('in')}</th>
+              {cols.map((k) => (
+                <th key={k} className="px-3 py-2 text-right whitespace-nowrap">
+                  {label(k)}
+                </th>
+              ))}
+              <th className="px-4 py-2 text-left">Day so far</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const total = r.came.length;
+              return (
+                <tr key={r.id} onClick={() => onPick(r.id)} className={cn('cursor-pointer border-t hover:bg-accent/40', selected === r.id && 'bg-primary/5')}>
+                  <td className="px-4 py-2.5 font-medium">{r.name}</td>
+                  <td className="px-3 py-2.5 text-right">
+                    <Num onShow={onShow} n={total} k="in" scope={r.scope} strong extra={showExpected ? <span className="font-normal text-muted-foreground"> / {r.expected}</span> : null} />
+                  </td>
+                  {cols.map((k) => (
+                    <td key={k} className="px-3 py-2.5 text-right">
+                      <Num onShow={onShow} n={r.n(k)} k={k} scope={r.scope} />
+                    </td>
+                  ))}
+                  <td className="px-4 py-2.5">
+                    <div className="flex h-2 w-36 overflow-hidden rounded-full bg-muted" title={segs.map((k) => `${SEGMENTS[k].label} ${r.seg[k] ?? 0}`).join(' · ')}>
+                      {segs.map((k) => (
+                        <span key={k} style={{ width: total ? `${((r.seg[k] ?? 0) / total) * 100}%` : 0, background: SEGMENTS[k].colour }} />
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+            {!rows.length && (
+              <tr>
+                <td colSpan={cols.length + 3} className="px-4 py-4 text-muted-foreground">
+                  Nothing to show.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t bg-muted/30 px-4 py-2.5 text-[12px] text-muted-foreground">
+        {segs.map((k) => (
+          <span key={k} className="flex items-center gap-1.5">
+            <span className="size-2.5 rounded-sm" style={{ background: SEGMENTS[k].colour }} />
+            {SEGMENTS[k].label}
+          </span>
+        ))}
+        {footer && <span className="ml-auto">{footer}</span>}
       </div>
     </Card>
   );
 }
 
+// ─── Who: the side panel a number opens ──────────────────────────────────────
+
+function PeoplePanel({ panel, d, label, siteName, deptName, link, onPerson, onClose, nav }) {
+  const scope = panel ? [panel.site ? siteName(panel.site) : '', panel.dept ? deptName(panel.dept) : ''].filter(Boolean).join(' · ') : '';
+  // The note says what put them on this list, then how their day is going.
+  const note = (p) => {
+    const k = panel?.key;
+    if (k === 'late' || (!k && p.views.includes('late'))) return { t: p.late_min ? `${mins(p.late_min)} late` : 'Late in', c: 'text-warning-foreground dark:text-warning' };
+    if (k === 'early') return { t: p.early_min ? `Left ${mins(p.early_min)} early` : 'Left early', c: 'text-destructive' };
+    if (k === 'ot') return { t: p.ot_min ? `${mins(p.ot_min)} overtime` : 'In overtime', c: 'text-warning-foreground dark:text-warning' };
+    if (p.views.includes('absent')) return { t: 'No punch, no leave', c: 'text-destructive' };
+    if (p.views.includes('leave')) return { t: 'On leave', c: 'text-muted-foreground' };
+    if (p.views.includes('nopunch')) return { t: 'No punch-out', c: 'text-muted-foreground' };
+    if (p.views.includes('ot')) return { t: 'In overtime', c: 'text-warning-foreground dark:text-warning' };
+    if (p.views.includes('early')) return { t: 'Left early', c: 'text-destructive' };
+    if (p.views.includes('late')) return { t: 'Late in', c: 'text-warning-foreground dark:text-warning' };
+    return { t: p.open_now ? 'On site' : 'Done for the day', c: 'text-muted-foreground' };
+  };
+  return (
+    <Drawer
+      open={!!panel}
+      onOpenChange={(o) => !o && onClose()}
+      title={panel ? `${label(panel.key)} · ${panel.list.length}` : ''}
+      description={panel ? `${scope || 'All sites and departments'} · ${fullDate(d.date)}` : ''}
+      footer={
+        <button
+          type="button"
+          onClick={() => {
+            onClose();
+            nav(link);
+          }}
+          className="inline-flex h-9 items-center rounded-md border px-3.5 text-sm font-medium hover:bg-accent"
+        >
+          Open in Attendance
+        </button>
+      }
+    >
+      {panel && !panel.list.length ? (
+        <p className="text-muted-foreground">Nobody.</p>
+      ) : (
+        <ul className="-mx-5 divide-y">
+          {panel?.list.map((p) => {
+            const n = note(p);
+            return (
+              <li key={p.id}>
+                <button type="button" onClick={() => onPerson(p.id)} className="flex w-full items-center gap-3 px-5 py-2.5 text-left hover:bg-accent/40">
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[12px] font-semibold text-primary">
+                    {p.name
+                      .split(' ')
+                      .map((w) => w[0])
+                      .join('')
+                      .slice(0, 2)}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-medium">
+                      {p.name} <span className="font-mono text-[12px] text-muted-foreground">{p.code}</span>
+                    </span>
+                    <span className="block truncate text-[12px] text-muted-foreground">
+                      {deptName(p.dept_id)}
+                      {p.sites.length ? ` · ${p.sites.map(siteName).join(', ')}` : ''}
+                    </span>
+                  </span>
+                  <span className="text-right">
+                    <span className="block font-medium num">{p.in_min === null ? '—' : p.out_min !== null && !p.open_now ? `${hhmm(p.in_min)}–${hhmm(p.out_min)}` : `in ${hhmm(p.in_min)}`}</span>
+                    <span className={cn('block text-[12px]', n.c)}>{n.t}</span>
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </Drawer>
+  );
+}
+
 // ─── Waiting on you ──────────────────────────────────────────────────────────
 
-function WaitingCard({ d, hl, set }) {
-  const work = d.waiting.filter((w) => !['hold', 'heldback'].includes(w.key));
-  const pay = d.waiting.filter((w) => ['hold', 'heldback'].includes(w.key));
+function WaitingCard({ d }) {
+  const work = d.waiting.filter((w) => !['hold', 'heldback'].includes(w.key) && w.n > 0);
+  const pay = d.waiting.filter((w) => ['hold', 'heldback'].includes(w.key) && w.n > 0);
   return (
     <Card className="overflow-hidden">
-      <CardTitle title="Waiting on you" description={work.length ? 'Time counts only after you decide. Tap a kind to see which sites have them.' : 'Nothing to decide right now.'}>
+      <CardTitle title="Waiting on you" description={work.length ? 'Time counts only after you decide.' : 'Nothing to decide right now.'}>
         <span className={cn('text-[26px] font-semibold num', d.waiting_total ? 'text-destructive' : 'text-muted-foreground')}>{d.waiting_total}</span>
       </CardTitle>
-      {work.map((w) => {
-        const on = hl === w.key;
-        return (
-          <div
-            key={w.key}
-            role="button"
-            tabIndex={0}
-            aria-pressed={on}
-            onClick={() => set({ hl: on ? null : w.key, site: null })}
-            onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && set({ hl: on ? null : w.key, site: null })}
-            className={cn('flex cursor-pointer items-center gap-3 border-b px-4 py-3 hover:bg-accent/40', on && 'bg-destructive/5 shadow-[inset_3px_0_0_var(--destructive)]')}
-          >
-            <span className="flex size-[34px] shrink-0 items-center justify-center rounded-lg bg-muted font-semibold num">{w.n}</span>
-            <div className="min-w-0 flex-1">
-              <div className="font-medium">{w.label}</div>
-              <div className="truncate text-[12px] text-muted-foreground">{w.names.map((n) => n.split(' ')[0]).join(', ')}</div>
+      {work.map((w) => (
+        <Link key={w.key} to={w.to} className="flex items-center gap-3 border-b px-4 py-2.5 hover:bg-accent/40">
+          <span className="flex size-[34px] shrink-0 items-center justify-center rounded-lg bg-muted font-semibold num">{w.n}</span>
+          <div className="min-w-0 flex-1">
+            <div className="font-medium">{w.label}</div>
+            <div className="truncate text-[12px] text-muted-foreground">
+              {w.names.map((n) => n.split(' ')[0]).join(', ')}
+              {w.n > w.names.length ? ` and ${w.n - w.names.length} more` : ''}
             </div>
-            <Faces list={w.names.map((name, i) => ({ id: `${w.key}${i}`, name }))} size={22} />
-            <Link to={w.to} onClick={(e) => e.stopPropagation()} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground" aria-label={`Open ${w.label}`}>
-              <ChevronRight className="size-4" />
-            </Link>
           </div>
-        );
-      })}
+          <ChevronRight className="size-4 text-muted-foreground" />
+        </Link>
+      ))}
       {pay.length > 0 && (
         <div className="flex flex-wrap gap-2 border-b px-4 py-3">
           {pay.map((w) => (
@@ -351,68 +490,6 @@ function WaitingCard({ d, hl, set }) {
         <Link to="/approvals" className="inline-flex h-9 items-center justify-center rounded-md bg-primary px-3.5 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90">
           Review all in Approvals
         </Link>
-      </div>
-    </Card>
-  );
-}
-
-// ─── Arrivals ────────────────────────────────────────────────────────────────
-
-function ArrivalsCard({ d, people, bin, setBin, onPerson }) {
-  const start = d.shift.start_min;
-  const lateFrom = start + d.shift.grace_min;
-  const edges = Array.from({ length: 6 }, (_, i) => start - 20 + i * 10);
-  const arrivals = people.filter((p) => p.in_min !== null).sort((a, b) => a.in_min - b.in_min);
-  const bins = edges.map((e, i) => arrivals.filter((p) => (i === 0 ? p.in_min < e + 10 : i === edges.length - 1 ? p.in_min >= e : p.in_min >= e && p.in_min < e + 10)));
-  const max = Math.max(1, ...bins.map((b) => b.length));
-  const late = arrivals.filter((p) => p.in_min > lateFrom);
-  const med = arrivals[Math.floor(arrivals.length / 2)];
-  const shiftX = `${(100 * 2) / edges.length}%`;
-  return (
-    <Card>
-      <CardTitle title="How the morning arrived" description={`Punch-ins every 10 minutes. Shift starts ${hhmm(start)}, late after ${hhmm(lateFrom)}. Tap a bar.`} />
-      <div className="px-5 pt-4 pb-3">
-        <div className="relative flex h-[150px] items-end gap-2.5 border-b">
-          <span className="absolute top-[-6px] bottom-0 border-l-[1.5px] border-dashed border-muted-foreground/50" style={{ left: shiftX }} />
-          <span className="absolute top-[-8px] text-[11px] text-muted-foreground" style={{ left: `calc(${shiftX} + 6px)` }}>
-            {hhmm(start)} shift start
-          </span>
-          {bins.map((b, i) => (
-            <button key={i} type="button" onClick={() => setBin(bin === i ? -1 : i)} aria-label={`${hhmm(edges[i])}: ${b.length}`} className="flex h-full flex-1 flex-col items-center justify-end gap-1">
-              <span className="text-[12px] font-semibold num">{b.length}</span>
-              <span
-                className="w-full rounded-t-md"
-                style={{ height: Math.max(4, Math.round((b.length / max) * 118)), background: edges[i] + 10 > lateFrom + 1 ? 'color-mix(in srgb, var(--warning) 80%, var(--card))' : 'var(--primary)', boxShadow: bin === i ? '0 0 0 2px var(--foreground)' : 'none' }}
-              />
-            </button>
-          ))}
-        </div>
-        <div className="mt-1.5 flex gap-2.5">
-          {edges.map((e, i) => (
-            <span key={e} className="flex-1 text-center text-[12px] text-muted-foreground num">
-              {i === 0 ? `≤${hhmm(e)}` : hhmm(e)}
-            </span>
-          ))}
-        </div>
-        <div className="mt-3 min-h-[44px] rounded-lg bg-muted/60 px-3 py-2.5 text-[13px]">
-          {bin >= 0 ? (
-            bins[bin].length ? (
-              <span className="flex flex-wrap gap-x-2 gap-y-1">
-                {bins[bin].map((p) => (
-                  <button key={p.id} type="button" className="hover:underline" onClick={() => onPerson(p.id)}>
-                    {p.name} <span className="text-muted-foreground num">{hhmm(p.in_min)}</span>
-                  </button>
-                ))}
-              </span>
-            ) : (
-              'Nobody in this slot.'
-            )
-          ) : arrivals.length ? (
-            `Median punch-in ${hhmm(med.in_min)} · ${late.length} came after ${hhmm(lateFrom)} · earliest ${arrivals[0].name} ${hhmm(arrivals[0].in_min)}, latest ${arrivals[arrivals.length - 1].name} ${hhmm(arrivals[arrivals.length - 1].in_min)}.`
-          ) : (
-            'Nobody has punched in.'
-          )}
-        </div>
       </div>
     </Card>
   );
@@ -441,7 +518,7 @@ function MonthCard({ d, site, siteName }) {
   };
   return (
     <Card>
-      <CardTitle title="People in, this month" description="How many punched in each day. Pick a site at the top to bring its line forward." />
+      <CardTitle title="Attendance this month" description={site ? `People who came in each day at ${siteName(site)}; the other sites in grey.` : 'People who came in each day; each site in grey.'} />
       <div className="px-4 pt-3 pb-4">
         {month.isLoading ? (
           <SkeletonBlock className="h-[220px]" />

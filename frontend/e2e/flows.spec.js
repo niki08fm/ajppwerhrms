@@ -25,11 +25,14 @@ async function resetMonth(page, ym) {
 
 test('the dashboard shows today at a glance', async ({ page }) => {
   await signIn(page);
-  await expect(page.getByText('In today', { exact: true })).toBeVisible();
+  await expect(page.getByText('In today', { exact: true }).first()).toBeVisible();
   await expect(page.getByText('Sites right now')).toBeVisible();
   await expect(page.getByText('Waiting on you')).toBeVisible();
-  // A card opens Attendance filtered to the same people, under the same name.
-  await page.getByRole('link', { name: /On site now/ }).click();
+  await expect(page.getByText('Departments right now')).toBeVisible();
+  // A figure opens its people in a side panel, and from there Attendance filtered the same way.
+  await page.getByRole('button', { name: /On site now/ }).first().click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page.getByRole('button', { name: 'Open in Attendance' }).click();
   await expect(page).toHaveURL(/\/attendance\?.*view=onsite/);
   await expect(page.getByRole('button', { name: /On site now/, pressed: true })).toBeVisible();
 });
