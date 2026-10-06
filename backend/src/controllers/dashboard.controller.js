@@ -240,6 +240,7 @@ export const getOverview = asyncHandler(async (req, res) => {
         early_min: r.open_now ? 0 : r.day.early_min,
         ot_min: live.ot_min,
         open_now: r.open_now,
+        current_site_id: r.current_site_id,
         corrected: !!r.override,
         views: VIEWS.filter((v) => inView(v, r, live)),
         expected: isExpected(r),

@@ -82,6 +82,8 @@ export async function dayRegister(db, date, employeeIds, today, opts = {}) {
       : day;
     const ins = ep.filter((p) => p.direction === 'IN');
     const outs = ep.filter((p) => p.direction === 'OUT');
+    const lastPunch = ep[ep.length - 1];
+    const openNow = date === today && lastPunch?.direction === 'IN';
     const att = policies.attendance;
     rows.push({
       employee: { id: e.id, code: e.code, name: e.name, designation: e.designation, department: e.department, pay_group_id: e.pay_group_id },
@@ -91,7 +93,10 @@ export async function dayRegister(db, date, employeeIds, today, opts = {}) {
       // HR's times once the day is corrected by them; otherwise the first IN and last OUT.
       in_min: o && o.in_min !== null ? o.in_min : ins.length ? day.first_punch_min : null,
       out_min: o && o.out_min !== null ? o.out_min : outs.length ? day.last_punch_min : null,
-      open_now: date === today && ep.length > 0 && ep[ep.length - 1].direction === 'IN',
+      open_now: openNow,
+      // A worker who moved sites is here only at their latest open IN, not every
+      // site visited that day. Closed and past days have no current site.
+      current_site_id: openNow ? lastPunch.site_id : null,
       /** The rules the day is judged by, for HR correcting it */
       context: {
         kind: isHoliday ? 'HOLIDAY' : isOff ? 'WEEKLY_OFF' : 'WORKING',

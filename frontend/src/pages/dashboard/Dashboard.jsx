@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowRight, ChevronRight } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import { addDays } from '@ajpwer/shared';
 import { api } from '@/services/api';
 import { cn, hhmm, mins } from '@/utils';
@@ -92,7 +92,7 @@ function TodayBody({ d, site, dept, set, nav, updatedAt, onPerson, drawer }) {
   // Department first; then site. Absence and leave belong to no site, so they stay company-wide.
   const inDept = useMemo(() => d.people.filter((p) => !dept || p.dept_id === dept), [d.people, dept]);
   const atSite = useMemo(() => (site ? inDept.filter((p) => p.sites.includes(site)) : inDept), [inDept, site]);
-  const scopeFor = (key) => (key === 'absent' || key === 'leave' ? inDept : atSite);
+  const scopeFor = (key) => key === 'absent' || key === 'leave' ? inDept : key === 'onsite' && site ? inDept.filter((p) => p.current_site_id === site) : atSite;
   const listOf = (key) => scopeFor(key).filter((p) => p.views.includes(key));
   const expected = inDept.filter((p) => p.expected).length;
 
@@ -107,25 +107,34 @@ function TodayBody({ d, site, dept, set, nav, updatedAt, onPerson, drawer }) {
   const show = (key, scope = {}) => {
     const s = key === 'absent' || key === 'leave' ? null : scope.site ?? site;
     const dp = scope.dept ?? dept;
-    const base = d.people.filter((p) => (!dp || p.dept_id === dp) && (key === 'absent' || key === 'leave' || !s || p.sites.includes(s)));
+    const base = d.people.filter((p) => (!dp || p.dept_id === dp) && (key === 'absent' || key === 'leave' || !s || (key === 'onsite' ? p.current_site_id === s : p.sites.includes(s))));
     setPanel({ key, site: s, dept: dp, list: base.filter((p) => p.views.includes(key)) });
   };
 
   const updated = new Date(updatedAt + 330 * 60_000);
   const updatedText = `${String(updated.getUTCHours()).padStart(2, '0')}:${String(updated.getUTCMinutes()).padStart(2, '0')}`;
 
-  // The columns both tables share: came in, then the views that matter for the day.
-  const cols = [isToday ? 'onsite' : 'nopunch', 'ot', 'late', 'early'];
-  const rowOf = (people, scope) => {
-    const came = people.filter((p) => p.views.includes('in'));
-    const departments = d.departments.filter((department) => !dept || department.id === dept).map((department, index) => ({
-      ...department,
+  const headcountView = isToday ? 'onsite' : 'in';
+  const peopleAt = (siteId) => inDept.filter((person) =>
+    isToday ? person.open_now && person.current_site_id === siteId : person.sites.includes(siteId) && person.views.includes('in'),
+  );
+  const siteRows = d.sites.map((entry, index) => ({
+    id: entry.id,
+    name: entry.name,
+    colour: `var(--chart-${index % 5 + 1})`,
+    count: peopleAt(entry.id).length,
+    scope: { site: entry.id },
+  }));
+  const departmentRows = d.departments
+    .filter((department) => !dept || department.id === dept)
+    .map((department, index) => ({
+      id: department.id,
+      name: department.name,
       colour: `var(--chart-${index % 5 + 1})`,
-      count: came.filter((person) => person.dept_id === department.id).length,
+      count: peopleAt(site).filter((person) => person.dept_id === department.id).length,
+      scope: { site, dept: department.id },
     }));
-    return { came, departments, n: (k) => people.filter((p) => p.views.includes(k)).length, scope };
-  };
-  const siteRows = d.sites.map((s) => ({ id: s.id, name: s.name, ...rowOf(inDept.filter((p) => p.sites.includes(s.id)), { site: s.id }) }));
+
 
   return (
     <div className="flex flex-col gap-4">
@@ -145,17 +154,17 @@ function TodayBody({ d, site, dept, set, nav, updatedAt, onPerson, drawer }) {
         <label className="flex items-center gap-2 text-[13px] text-muted-foreground">
           Site
           <Select className="h-9 min-w-56" value={site ?? ''} onChange={(e) => set({ site: e.target.value || null })} aria-label="Site">
-            <option value="">All sites · {d.people.filter((p) => (!dept || p.dept_id === dept) && p.views.includes('in')).length} in</option>
+            <option value="">All sites · {inDept.filter((p) => p.views.includes(headcountView)).length} {isToday ? 'on site' : 'in'}</option>
             {siteRows.map((s) => (
               <option key={s.id} value={s.id}>
-                {s.name} · {s.came.length} in
+                {s.name} · {s.count} {isToday ? 'on site' : 'in'}
               </option>
             ))}
           </Select>
         </label>
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2 text-[13px] text-muted-foreground">
-        <p>Attendance by site. Select an overtime count to see names and hours.</p>
+        <p>Select a bar to see people and their overtime status.</p>
         {dept && <button type="button" className="text-primary hover:underline" onClick={() => set({ dept: null })}>{deptName(dept)} · Clear department</button>}
       </div>
 
@@ -180,43 +189,16 @@ function TodayBody({ d, site, dept, set, nav, updatedAt, onPerson, drawer }) {
         })}
       </div>
 
-      <div className="grid items-stretch gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
-        <div className="flex min-w-0 flex-col gap-4">
-          <DayTable
-            title={isToday ? 'Sites right now' : `Sites on ${fullDate(d.date).split(',')[0]}`}
-            description="People who punched in, grouped by department. Select a bar or count to see names."
-            first="Site"
-            rows={siteRows}
-            cols={cols}
-            label={label}
-            selected={site}
-            onPick={(id) => set({ site: site === id ? null : id })}
-            onClear={site ? () => set({ site: null }) : null}
-            clearLabel="Show all sites"
-            onShow={show}
-            footer={
-              <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                Not at a site:
-                <button type="button" className="font-medium text-primary hover:underline" onClick={() => show('absent')}>
-                  {listOf('absent').length} absent
-                </button>
-                ·
-                <button type="button" className="font-medium text-primary hover:underline" onClick={() => show('leave')}>
-                  {listOf('leave').length} on leave
-                </button>
-                {d.moves.length > 0 && (
-                  <Link to="/approvals?kind=move" className="inline-flex items-center gap-1 hover:underline">
-                    · <ArrowRight className="size-3.5" /> {d.moves.length} moved site
-                  </Link>
-                )}
-              </span>
-            }
-          />
-
-        </div>
-        <div className="flex min-w-0 flex-col gap-4">
-          <WaitingCard d={d} />
-        </div>
+      <div className="grid items-stretch gap-4 lg:grid-cols-2">
+        <HeadcountCard
+          title={site ? `${siteName(site)} · departments` : isToday ? 'Sites right now' : `Sites on ${fullDate(d.date).split(',')[0]}`}
+          isToday={isToday}
+          rows={site ? departmentRows : siteRows}
+          site={site}
+          onShow={(row) => show(headcountView, row.scope)}
+          onClear={site ? () => set({ site: null }) : null}
+        />
+        <WaitingCard d={d} />
       </div>
 
       <MonthCard d={d} site={site} siteName={siteName} />
@@ -240,81 +222,38 @@ function TodayBody({ d, site, dept, set, nav, updatedAt, onPerson, drawer }) {
   );
 }
 
-// ─── Site attendance ─────────────────────────────
+// ─── Current headcount: sites, or departments in the selected site ────────────
 
-const toneOf = (k, n) => (!n ? 'text-muted-foreground' : k === 'ot' || k === 'late' ? 'text-warning-foreground dark:text-warning' : k === 'early' ? 'text-destructive' : '');
-
-/** A count that opens the people behind it. */
-function Num({ n, k, scope, strong, extra, onShow, accessibleLabel }) {
-  return (
-    <button
-      type="button"
-      onClick={(e) => {
-        e.stopPropagation();
-        onShow(k, scope);
-      }}
-      aria-label={accessibleLabel}
-      className={cn('-mx-1.5 rounded px-1.5 py-0.5 num hover:bg-primary/10 hover:underline', strong && 'font-semibold', toneOf(k, n))}
-    >
-      {n}
-      {extra}
-    </button>
-  );
-}
-
-function DayTable({ title, description, first, rows, cols, label, selected, onPick, onClear, clearLabel, onShow, footer }) {
-  // One scale for every site makes department headcounts comparable.
-  const maxCount = Math.max(1, ...rows.flatMap((row) => row.departments.map((department) => department.count)));
+function HeadcountCard({ title, isToday, rows, site, onShow, onClear }) {
+  const maxCount = Math.max(1, ...rows.map((row) => row.count));
   return (
     <Card className="flex h-[440px] min-w-0 flex-col overflow-hidden">
       <div className="shrink-0">
-        <CardTitle title={title} description={description}>
-          {onClear && <button type="button" onClick={onClear} className="rounded-md border px-2.5 py-1 text-[13px] font-medium hover:bg-accent">{clearLabel}</button>}
+        <CardTitle title={title} description={isToday ? 'People currently on site. Select a bar to see names.' : 'People who punched in that day. Select a bar to see names.'}>
+          {onClear && <button type="button" onClick={onClear} className="rounded-md border px-2.5 py-1 text-[13px] font-medium hover:bg-accent">Back to all sites</button>}
         </CardTitle>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto" tabIndex={0} role="region" aria-label="Site attendance and department counts">
-        <table className="w-full text-[13px]">
-          <thead className="sticky top-0 z-10 bg-card">
-            <tr className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
-              <th scope="col" className="px-4 py-3 text-left">{first}</th>
-              <th scope="col" className="px-4 py-3 text-left whitespace-nowrap">Departments · punched in</th>
-              <th scope="col" className="px-3 py-3 text-right whitespace-nowrap">{label('in')}</th>
-              {cols.map((k) => <th scope="col" key={k} className="px-3 py-3 text-right whitespace-nowrap">{label(k)}</th>)}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.id} className={cn('border-t hover:bg-accent/40', selected === r.id && 'bg-primary/5')}>
-                <th scope="row" className="px-4 py-4 text-left font-medium">
-                  <button type="button" aria-pressed={selected === r.id} onClick={() => onPick(r.id)} className="min-w-20 rounded text-left hover:text-primary hover:underline">{r.name}</button>
-                </th>
-                <td className="min-w-56 px-4 py-3">
-                  <div className="flex flex-col gap-2">
-                    {r.departments.map((department) => (
-                      <button key={department.id} type="button" onClick={() => onShow('in', { ...r.scope, dept: department.id })} aria-label={`${r.name}: ${department.name}, ${department.count} people punched in`} className="group w-full rounded text-left focus-visible:outline-2 focus-visible:outline-ring">
-                        <span className="mb-1 flex justify-between gap-4 text-[12px]">
-                          <span className="group-hover:text-primary group-hover:underline">{department.name}</span>
-                          <span className="font-semibold num">{department.count}</span>
-                        </span>
-                        <span className="block h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden="true">
-                          <span className="block h-full rounded-full" style={{ width: `${department.count / maxCount * 100}%`, background: department.colour }} />
-                        </span>
-                      </button>
-                    ))}
-                    {!r.departments.length && <span className="text-muted-foreground">No departments</span>}
-                  </div>
-                </td>
-                <td className="px-3 py-3 text-right"><Num onShow={onShow} n={r.came.length} k="in" scope={r.scope} strong accessibleLabel={`${r.name}: ${label('in')}, ${r.came.length} people`} /></td>
-                {cols.map((k) => <td key={k} className="px-3 py-3 text-right"><Num onShow={onShow} n={r.n(k)} k={k} scope={r.scope} accessibleLabel={`${r.name}: ${label(k)}, ${r.n(k)} people`} /></td>)}
-              </tr>
-            ))}
-            {!rows.length && <tr><td colSpan={cols.length + 3} className="px-4 py-8 text-center text-muted-foreground">No sites to show.</td></tr>}
-          </tbody>
-        </table>
-      </div>
-      <div className="shrink-0 border-t bg-muted/30 px-4 py-3 text-[12px] text-muted-foreground">
-        <p className="mb-2">Scroll sideways for more attendance details. Bars use the same scale across sites.</p>
-        {footer}
+      <div className="min-h-0 flex-1 overflow-y-auto p-5" tabIndex={0} role="region" aria-label={site ? 'Department headcounts' : 'Site headcounts'}>
+        <ul className="flex flex-col gap-5">
+          {rows.map((row) => (
+            <li key={row.id}>
+              <button
+                type="button"
+                onClick={() => onShow(row)}
+                aria-label={`${row.name}: ${row.count} ${isToday ? 'people on site now' : 'people punched in'}`}
+                title={`${row.name} · ${row.count} ${isToday ? 'on site now' : 'punched in'}`}
+                className="group flex w-full items-center gap-3 rounded-md text-left focus-visible:outline-2 focus-visible:outline-ring"
+              >
+                <span className="w-24 shrink-0 break-words text-[13px] group-hover:text-primary sm:w-28">{row.name}</span>
+                <span className="h-10 min-w-0 flex-1 overflow-hidden rounded-md bg-muted/50" aria-hidden="true">
+                  <span className="block h-full rounded-md transition-[width,opacity] group-hover:opacity-85" style={{ width: `${row.count / maxCount * 100}%`, background: row.colour }} />
+                </span>
+                <span className="w-8 shrink-0 text-right text-[15px] font-semibold num">{row.count}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+        {!rows.length && <p className="py-8 text-center text-[13px] text-muted-foreground">{site ? 'No departments to show.' : 'No sites to show.'}</p>}
       </div>
     </Card>
   );
@@ -327,6 +266,7 @@ function PeoplePanel({ panel, d, label, siteName, deptName, link, onPerson, onCl
   // The note says what put them on this list, then how their day is going.
   const note = (p) => {
     const k = panel?.key;
+    if ((k === 'in' || k === 'onsite') && p.ot_min > 0) return { t: `${mins(p.ot_min)} overtime`, c: 'text-warning-foreground dark:text-warning' };
     if (k === 'late' || (!k && p.views.includes('late'))) return { t: p.late_min ? `${mins(p.late_min)} late` : 'Late in', c: 'text-warning-foreground dark:text-warning' };
     if (k === 'early') return { t: p.early_min ? `Left ${mins(p.early_min)} early` : 'Left early', c: 'text-destructive' };
     if (k === 'ot') return { t: p.ot_min ? `${mins(p.ot_min)} overtime` : 'In overtime', c: 'text-warning-foreground dark:text-warning' };
