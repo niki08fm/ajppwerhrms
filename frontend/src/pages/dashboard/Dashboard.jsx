@@ -10,7 +10,8 @@ import { Card } from '@/components/ui/card';
 import { Select } from '@/components/ui/form';
 import { Drawer } from '@/components/ui/overlay';
 import { CorrectionDrawer } from '@/components/attendance/CorrectionDrawer';
-import { DayPicker, useMonth } from '@/components/attendance/DayPicker';
+import { DayPicker } from '@/components/attendance/DayPicker';
+import AttendanceChart from '@/components/dashboard/AttendanceChart';
 import { dayName, fullDate, viewsFor } from '@/components/attendance/dayVocab';
 
 // ─── Small pieces ────────────────────────────────────────────────────────────
@@ -30,7 +31,7 @@ function CardTitle({ title, description, children }) {
 // ─── The screen ──────────────────────────────────────────────────────────────
 
 /**
- * Today: attendance figures, a site breakdown and pending actions, with one monthly
+ * Today: attendance figures, a site breakdown and pending actions, with one attendance
  * chart at the bottom. Pick a site at the top; click
  * any number to see who, in a side panel.
  */
@@ -201,7 +202,7 @@ function TodayBody({ d, site, dept, set, nav, updatedAt, onPerson, drawer }) {
         <WaitingCard d={d} />
       </div>
 
-      <MonthCard d={d} site={site} siteName={siteName} />
+      <AttendanceChart d={d} site={site} siteName={siteName} />
 
       <PeoplePanel
         panel={panel}
@@ -384,96 +385,3 @@ function WaitingCard({ d }) {
     </Card>
   );
 }
-
-// ─── The month ───────────────────────────────────────────────────────────────
-
-function MonthCard({ d, site, siteName }) {
-  const month = useMonth(d.date.slice(0, 7));
-  const days = (month.data?.days ?? []).filter((x) => !x.future);
-  const W = 720;
-  const H = 220;
-  const L = 36;
-  const R = 700;
-  const T = 20;
-  const B = 190;
-  const n = month.data?.days.length ?? 30;
-  const x = (i) => L + ((R - L) * i) / Math.max(1, n - 1);
-  const max = Math.max(1, ...days.map((x2) => x2.present));
-  const y = (v) => B - ((B - T) * v) / max;
-  const path = (get) => days.map((dd, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(get(dd)).toFixed(1)}`).join(' ');
-  const di = (month.data?.days ?? []).findIndex((x2) => x2.date === d.date);
-  const avg = (get) => {
-    const w = days.filter((x2) => !x2.off);
-    return w.length ? Math.round(w.reduce((a, x2) => a + get(x2), 0) / w.length) : 0;
-  };
-  return (
-    <Card>
-      <CardTitle title="Attendance this month" description={site ? `People who came in each day at ${siteName(site)}; the other sites in grey.` : 'People who came in each day; each site in grey.'} />
-      <div className="px-4 pt-3 pb-4">
-        {month.isLoading ? (
-          <SkeletonBlock className="h-[220px]" />
-        ) : month.isError ? (
-          <ErrorState error={month.error} onRetry={() => month.refetch()} compact />
-        ) : (
-          <>
-            <svg viewBox={`0 0 ${W} ${H}`} className="block h-auto w-full" role="img" aria-label="People who punched in each day this month">
-              {[0, 0.25, 0.5, 0.75, 1].map((f) => (
-                <g key={f}>
-                  <line x1={L} x2={R} y1={y(max * f)} y2={y(max * f)} stroke="var(--border)" />
-                  <text x={L - 6} y={y(max * f) + 4} fontSize="11" fill="var(--muted-foreground)" textAnchor="end">
-                    {Math.round(max * f)}
-                  </text>
-                </g>
-              ))}
-              {(month.data?.days ?? []).map((dd, i) =>
-                i % 4 === 0 ? (
-                  <text key={dd.date} x={x(i)} y={H - 10} fontSize="11" fill="var(--muted-foreground)" textAnchor="middle">
-                    {Number(dd.date.slice(8))}
-                  </text>
-                ) : null,
-              )}
-              {d.sites
-                .filter((s) => s.id !== site)
-                .map((s) => (
-                  <path key={s.id} d={path((dd) => dd.sites[s.id] ?? 0)} fill="none" stroke="var(--border)" strokeWidth="1.5" />
-                ))}
-              {site ? (
-                <path d={path((dd) => dd.sites[site] ?? 0)} fill="none" stroke="var(--primary)" strokeWidth="3" />
-              ) : (
-                <path d={path((dd) => dd.present)} fill="none" stroke="var(--primary)" strokeWidth="3" />
-              )}
-              {di >= 0 && (
-                <g>
-                  <line x1={x(di)} x2={x(di)} y1={T - 4} y2={B} stroke="var(--foreground)" strokeDasharray="3 3" />
-                  <text x={x(di)} y={T - 5} fontSize="10" fill="var(--foreground)" textAnchor="middle">
-                    {d.is_today ? 'Today' : Number(d.date.slice(8))}
-                  </text>
-                </g>
-              )}
-            </svg>
-            <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-muted-foreground">
-              <span className="flex items-center gap-1.5">
-                <span className="h-[3px] w-4 rounded bg-primary" />
-                {site ? siteName(site) : 'All sites'}
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="h-[2px] w-4 rounded bg-border" />
-                Other sites
-              </span>
-              <span>
-                Working-day average:{' '}
-                {d.sites.map((s, i) => (
-                  <span key={s.id}>
-                    {i > 0 && ' · '}
-                    {s.name} {avg((dd) => dd.sites[s.id] ?? 0)}
-                  </span>
-                ))}
-              </span>
-            </div>
-          </>
-        )}
-      </div>
-    </Card>
-  );
-}
-

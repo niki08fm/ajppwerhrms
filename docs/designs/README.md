@@ -10,13 +10,19 @@ The preview uses the application's actual AppShell, fonts, colours, seven summar
 - Current headcounts exclude people who punched out and count workers who moved sites only at their latest open punch-in site. Historical dates show people who punched in that day instead.
 - The chart has 7-day, 30-day, and 90-day (labelled “Last 3 months”) ranges, hover values, and an accessible daily-count table. Ranges end on the chosen date, excluding future dates.
 
-The new area chart is preview-only, supplied by `AttendanceChartPreview.jsx`. `today-preview.css` styles only that chart. `today-preview-entry.jsx` supplies sample data and the application's real layout. Attendance correction is replaced with read-only sample employee details; other screens show a preview notice.
+The area chart uses the application's `frontend/src/components/dashboard/AttendanceChart.jsx` and its CSS directly. There is no chart replacement in the preview builder. `today-preview-entry.jsx` supplies sample data and the application's real layout. Attendance correction is replaced with read-only sample employee details; other screens show a preview notice.
 
 Rebuild from the repository root:
 
 ```sh
 npm run build --workspace=@ajpwer/frontend
 node docs/designs/build-today-preview.cjs
+```
+
+With the frontend running, verify the real application chart using mocked API data:
+
+```sh
+npm run test:e2e --workspace=@ajpwer/frontend -- e2e/today-chart.spec.js
 ```
 
 `today-interactive.png` shows the overview, `today-department-detail.png` shows a selected site, and `attendance-chart-preview.png` shows the area chart with its hover tooltip.
