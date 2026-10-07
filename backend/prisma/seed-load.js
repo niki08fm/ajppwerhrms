@@ -21,8 +21,10 @@ async function main() {
   const today = istDate(new Date());
   const start = addDays(today, -Math.round(365.25 * YEARS));
   const group = await prisma.payGroup.findFirst({ where: { name: 'Site workforce' } });
+  // Load workers explicitly use the development salary template, independently of their pay group.
+  const structure = await prisma.salaryStructure.findFirst({ where: { name: 'Site staff', deleted_at: null }, orderBy: { created_at: 'asc' }, select: { id: true } });
   const depts = await prisma.department.findMany();
-  if (!group || !depts.length) throw new Error('Run the development seed first (npm run db:seed).');
+  if (!group || !structure || !depts.length) throw new Error('Run the development seed first (npm run db:seed).');
   const existing = await prisma.employee.count();
   const toAdd = Math.max(0, TARGET - existing);
   console.log(`Adding ${toAdd} employees (have ${existing}) and punches from ${start} to ${today}…`);
@@ -43,7 +45,7 @@ async function main() {
     st AS (INSERT INTO employee_statutory (id, employee_id, pt_state, esi_enabled) SELECT gen_random_uuid(), id, 'Andhra Pradesh', true FROM ins RETURNING employee_id),
     idn AS (INSERT INTO employee_identity (id, employee_id, uan, bank_last4, bank_ifsc, bank_account_enc) SELECT gen_random_uuid(), id, '1' || lpad((abs(hashtext(id::text)) % 100000000000)::text, 11, '0'), '1234', 'SBIN0001234', NULL FROM ins RETURNING employee_id)
     INSERT INTO employee_salary (id, employee_id, valid_from, mode, amount, monthly_gross, structure_id, reason, created_by)
-    SELECT gen_random_uuid(), id, joined_on, 'GROSS', 1600000 + (abs(hashtext(id::text)) % 80) * 25000, 1600000 + (abs(hashtext(id::text)) % 80) * 25000, '${group.structure_id}'::uuid, 'Load test', 'seed-load'
+    SELECT gen_random_uuid(), id, joined_on, 'GROSS', 1600000 + (abs(hashtext(id::text)) % 80) * 25000, 1600000 + (abs(hashtext(id::text)) % 80) * 25000, '${structure.id}'::uuid, 'Load test', 'seed-load'
     FROM ins`);
 
   // Punches — four a day on working days, skipping Sundays and ~5% of days.

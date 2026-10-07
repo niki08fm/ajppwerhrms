@@ -297,7 +297,7 @@ function BulkDialog({ action, ids, match, onClose, onDone }) {
       onOpenChange={(o) => !o && onClose()}
       title={title}
       wide
-      description={action === 'pay_group' ? 'Moving someone changes their calendar, weekly off, shift, salary structure and every policy at once.' : undefined}
+      description={action === 'pay_group' ? 'Moving someone applies the new group’s calendar, weekly off, shift and policies.' : undefined}
       footer={
         <>
           <Button variant="outline" onClick={onClose}>

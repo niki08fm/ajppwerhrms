@@ -4,8 +4,13 @@ import {
   formatMinutes,
   GRATUITY_PART_YEAR_LABELS,
   GRATUITY_PART_YEARS,
+  describeOvertimeBase,
+  overtimeBaseMonthly,
+  overtimeComponentKeys,
   OT_BASES,
   OT_BASE_LABELS,
+  OT_COMPONENTS,
+  OT_COMPONENT_LABELS,
   OT_COUNTS_FROM,
   OT_COUNTS_FROM_LABELS,
   STATUTORY_GRATUITY_RULES,
@@ -18,7 +23,7 @@ import { LeaveExample, LeaveRulesForm } from './LeaveRulesForm';
 
 export const DEFAULT_RULES = {
   ATTENDANCE: { standard_min: 540, half_day_min: 0, half_day_upto_min: 240, grace_min: 15 },
-  OVERTIME: { multiplier: 2, base: 'BASIC_HRA', divisor: null, hours_per_day: 8, after_min: 30, rounding_min: 30, monthly_cap_min: 3000, counts_from: 'SHIFT_END' },
+  OVERTIME: { multiplier: 2, base: 'COMPONENTS', components: ['basic', 'hra'], divisor: null, hours_per_day: 8, after_min: 30, rounding_min: 30, monthly_cap_min: 3000, counts_from: 'SHIFT_END' },
   WEEKOFF_PAY: { paid: true, sandwich: false },
   HOLIDAY_PAY: { paid: true, sandwich: false },
   HOLIDAY_WORK: { holiday: { mode: 'PAY', rate_pct: 200, base: 'GROSS', min_minutes: 240 }, weekly_off: { mode: 'PAY', rate_pct: 200, base: 'GROSS', min_minutes: 240 } },
@@ -62,18 +67,16 @@ export function PolicyForm({ kind, rules, onChange }) {
         </div>
       );
     }
-    case 'OVERTIME':
+    case 'OVERTIME': {
+      const selected = overtimeComponentKeys(rules);
       return (
         <div className="grid gap-3 sm:grid-cols-3">
           <Field label="Multiplier">{(id) => <Input id={id} type="number" step="0.25" min={1} value={rules.multiplier} onChange={(e) => set({ multiplier: num(e.target.value) })} />}</Field>
           <Field label="Worked out on">
             {(id) => (
-              <Select id={id} value={rules.base} onChange={(e) => set({ base: e.target.value })}>
-                {OT_BASES.map((b) => (
-                  <option key={b} value={b}>
-                    {OT_BASE_LABELS[b]}
-                  </option>
-                ))}
+              <Select id={id} value={rules.base === 'GROSS' ? 'GROSS' : 'COMPONENTS'} onChange={(e) => set(e.target.value === 'GROSS' ? { base: 'GROSS', components: undefined } : { base: 'COMPONENTS', components: selected.length ? selected : ['basic'] })}>
+                <option value="GROSS">Gross</option>
+                <option value="COMPONENTS">Selected salary components</option>
               </Select>
             )}
           </Field>
@@ -85,9 +88,24 @@ export function PolicyForm({ kind, rules, onChange }) {
             {(id) => <Input id={id} type="number" min={0} value={rules.after_min} onChange={(e) => set({ after_min: num(e.target.value) })} />}
           </Field>
           <Field label="Round down to (minutes)">{(id) => <Input id={id} type="number" min={1} value={rules.rounding_min} onChange={(e) => set({ rounding_min: num(e.target.value) })} />}</Field>
-          <Field label="Monthly cap (minutes)" hint={rules.monthly_cap_min ? formatMinutes(rules.monthly_cap_min) : 'No cap'}>
+          <Field label="Monthly cap (minutes)" hint={rules.monthly_cap_min != null ? formatMinutes(rules.monthly_cap_min) : 'No cap'}>
             {(id) => <Input id={id} type="number" min={0} value={rules.monthly_cap_min ?? ''} onChange={(e) => set({ monthly_cap_min: e.target.value ? num(e.target.value) : null })} />}
           </Field>
+          {rules.base !== 'GROSS' && (
+            <fieldset className="rounded-md border p-3 sm:col-span-3">
+              <legend className="px-1 text-[13px] font-medium">Salary components for overtime</legend>
+              <div className="flex flex-wrap gap-5">
+                {OT_COMPONENTS.map((component) => (
+                  <label key={component} className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" className="size-4 accent-primary" checked={selected.includes(component)} onChange={(e) => set({ base: 'COMPONENTS', components: OT_COMPONENTS.filter((key) => key === component ? e.target.checked : selected.includes(key)) })} />
+                    {OT_COMPONENT_LABELS[component]}
+                  </label>
+                ))}
+              </div>
+              <p className="mt-2 text-[13px] text-muted-foreground">The selected monthly amounts are added together. DA is zero on structures without DA.</p>
+              {!selected.length && <p className="mt-2 text-[13px] text-destructive" role="alert">Select at least one salary component.</p>}
+            </fieldset>
+          )}
           <Field label="Counts from" className="sm:col-span-3">
             {(id) => (
               <Select id={id} value={rules.counts_from ?? 'STANDARD_DAY'} onChange={(e) => set({ counts_from: e.target.value })}>
@@ -101,6 +119,7 @@ export function PolicyForm({ kind, rules, onChange }) {
           </Field>
         </div>
       );
+    }
     case 'WEEKOFF_PAY':
     case 'HOLIDAY_PAY':
       return (
@@ -217,19 +236,21 @@ export function WorkedExample({ kind, rules, s }) {
   let body = null;
   const day = s.gross / s.divisor;
   if (kind === 'OVERTIME') {
-    const base = rules.base === 'BASIC' ? s.basic : rules.base === 'BASIC_HRA' ? s.basic + s.hra : s.gross;
+    if (rules.base === 'COMPONENTS' && !rules.components?.length) return <Notice tone="warning">Select at least one salary component to see the hourly rate.</Notice>;
+    const base = overtimeBaseMonthly(rules, s);
     const div = rules.divisor ?? s.divisor;
     const hourly = base / (div * rules.hours_per_day);
-    const ten = hourly * 10 * rules.multiplier;
+    const paidMinutes = Math.min(600, rules.monthly_cap_min ?? 600);
+    const ten = hourly * (paidMinutes / 60) * rules.multiplier;
     body = (
       <>
-        On a {formatINR(s.gross)} worker, {OT_BASE_LABELS[rules.base].toLowerCase()} is {formatINR(base)}, so an hour is {formatINR(base)} ÷ ({div} × {rules.hours_per_day}) ={' '}
+        On a {formatINR(s.gross)} worker, {describeOvertimeBase(rules)} is {formatINR(base)}, so an hour is {formatINR(base)} ÷ ({div} × {rules.hours_per_day}) ={' '}
         <strong>{r2(hourly)}</strong>; ten hours of overtime at {rules.multiplier}× pays <strong>{formatINR(Math.round(ten))}</strong>.
         {rules.counts_from === 'SHIFT_END'
           ? ' It counts from the end of the shift, or for a late arrival from a full standard day after they came in, and only for time beyond a full day.'
           : ' It is time worked beyond the standard day.'}
         {rules.after_min > 0 && ` Extra time under ${rules.after_min} minutes earns nothing; above it, time is rounded down to ${rules.rounding_min}-minute steps.`}
-        {rules.monthly_cap_min ? ` Anything above ${formatMinutes(rules.monthly_cap_min)} a month is unpaid and reported on the payslip.` : ''}
+        {rules.monthly_cap_min != null ? ` Anything above ${formatMinutes(rules.monthly_cap_min)} a month is unpaid and reported on the payslip.` : ''}
       </>
     );
   } else if (kind === 'ATTENDANCE') {

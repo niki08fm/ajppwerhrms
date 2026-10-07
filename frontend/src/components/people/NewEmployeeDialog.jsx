@@ -22,6 +22,7 @@ export function NewEmployeeDialog({ open, onOpenChange }) {
     department_id: '',
     designation: '',
     pay_group_id: '',
+    structure_id: '',
     joined_on: '',
     status: 'ONBOARDING',
     mode: 'GROSS',
@@ -33,9 +34,12 @@ export function NewEmployeeDialog({ open, onOpenChange }) {
   });
   const [chosen, setChosen] = useState();
   const [errors, setErrors] = useState({});
-  const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
-  const previewArgs = { ...agreement(f.mode, f.amount), pay_group_id: f.pay_group_id, gender: f.gender, pt_state: f.pt_state, date: f.joined_on || undefined, pf_enabled: f.pf_enabled, esi_enabled: f.esi_enabled };
-  const pv = useSalaryPreview(previewArgs, !!f.pay_group_id);
+  const set = (k, v) => {
+    setF((x) => ({ ...x, [k]: v }));
+    if (['mode', 'amount', 'structure_id', 'gender', 'pt_state', 'joined_on', 'pf_enabled', 'esi_enabled'].includes(k)) setChosen(undefined);
+  };
+  const previewArgs = { ...agreement(f.mode, f.amount), structure_id: f.structure_id, gender: f.gender, pt_state: f.pt_state, date: f.joined_on || undefined, pf_enabled: f.pf_enabled, esi_enabled: f.esi_enabled, chosen_gross: chosen };
+  const pv = useSalaryPreview(previewArgs, !!f.structure_id);
 
   const create = useMutation({
     mutationFn: () =>
@@ -52,7 +56,7 @@ export function NewEmployeeDialog({ open, onOpenChange }) {
         tax_regime_code: f.tax_regime_code,
         pf_enabled: f.pf_enabled,
         esi_enabled: f.esi_enabled && (pv.data?.esi_within_ceiling ?? true),
-        salary: { ...agreement(f.mode, f.amount), ...(chosen ? { chosen_gross: chosen } : {}) },
+        salary: { ...agreement(f.mode, f.amount), structure_id: f.structure_id, ...(chosen ? { chosen_gross: chosen } : {}) },
       }),
     onSuccess: (r) => {
       toast.success(`Added as ${r.data.code}`);
@@ -79,7 +83,7 @@ export function NewEmployeeDialog({ open, onOpenChange }) {
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button loading={create.isPending} onClick={() => create.mutate()} disabled={!f.name || !f.department_id || !f.pay_group_id || !f.joined_on || !amount}>
+          <Button loading={create.isPending} onClick={() => create.mutate()} disabled={!f.name.trim() || !f.phone || !f.designation.trim() || !f.department_id || !f.pay_group_id || !f.structure_id || !f.joined_on || amount <= 0 || !pv.data || pv.isFetching || pv.isInputPending || (pv.data?.solution?.ambiguous && !chosen)}>
             Add employee
           </Button>
         </>
@@ -117,7 +121,7 @@ export function NewEmployeeDialog({ open, onOpenChange }) {
           <Field label="Designation" required>
             {(id) => <Input id={id} value={f.designation} onChange={(e) => set('designation', e.target.value)} />}
           </Field>
-          <Field label="Pay group" required hint="Calendar, weekly off, shift, structure and every policy come from here.">
+          <Field label="Pay group" required hint="Calendar, weekly off, shift and attendance policies.">
             {(id) => (
               <Select id={id} value={f.pay_group_id} onChange={(e) => set('pay_group_id', e.target.value)}>
                 <option value="">Choose…</option>
@@ -126,6 +130,14 @@ export function NewEmployeeDialog({ open, onOpenChange }) {
                     {d.name}
                   </option>
                 ))}
+              </Select>
+            )}
+          </Field>
+          <Field label="Salary structure" required className="col-span-2" hint="Attached to this employee. You can change it later in Salary and statutory." error={errors['salary.structure_id'] ?? errors.structure_id}>
+            {(id) => (
+              <Select id={id} value={f.structure_id} onChange={(e) => set('structure_id', e.target.value)}>
+                <option value="">Choose a structure…</option>
+                {lk?.structures.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </Select>
             )}
           </Field>
@@ -156,14 +168,14 @@ export function NewEmployeeDialog({ open, onOpenChange }) {
         </div>
         <div className="rounded-md border bg-muted/30 p-3">
           <h4 className="mb-2 font-display font-semibold">Preview</h4>
-          {f.pay_group_id ? (
+          {f.structure_id ? (
             <SalaryPreviewPanel
               args={previewArgs}
               chosen={chosen}
               onChoose={setChosen}
             />
           ) : (
-            <p className="text-[14px] text-muted-foreground">Pick a pay group to see the breakdown.</p>
+            <p className="text-[14px] text-muted-foreground">Pick a salary structure to see the breakdown.</p>
           )}
         </div>
       </div>

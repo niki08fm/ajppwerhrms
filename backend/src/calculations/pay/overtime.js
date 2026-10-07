@@ -1,6 +1,6 @@
-import { toMicroPct } from '@ajpwer/shared';
+import { overtimeBaseMonthly, toMicroPct } from '@ajpwer/shared';
 
-export function baseMonthly(base, s) {
+export function baseMonthly(base, s, components) {
   switch (base) {
     case 'BASIC':
       return s.basic;
@@ -8,6 +8,8 @@ export function baseMonthly(base, s) {
       return s.basic + s.hra;
     case 'GROSS':
       return s.gross;
+    case 'COMPONENTS':
+      return overtimeBaseMonthly({ base, components }, s);
   }
 }
 
@@ -29,7 +31,7 @@ function fraction(base, nums, dens) {
  */
 export function overtimePay(otMin, rules, s, groupDivisor) {
   const divisor = rules.divisor ?? groupDivisor;
-  const base_monthly = baseMonthly(rules.base, s);
+  const base_monthly = baseMonthly(rules.base, s, rules.components);
   const paid_min = rules.monthly_cap_min !== null ? Math.min(otMin, rules.monthly_cap_min) : otMin;
   const excess_min = otMin - paid_min;
   const hpd = toMicroPct(rules.hours_per_day);

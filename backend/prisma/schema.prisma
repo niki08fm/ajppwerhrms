@@ -459,7 +459,6 @@ model SalaryStructure {
   updated_at      DateTime?         @updatedAt @db.Timestamptz(6)
   deleted_at      DateTime?         @db.Timestamptz(6)
   components      SalaryComponent[]
-  pay_groups      PayGroup[]
   salaries        EmployeeSalary[]
   offers          Offer[]
 
@@ -491,7 +490,7 @@ model SalaryComponent {
   @@map("salary_component")
 }
 
-/// The centre of gravity: calendar, weekly off, shift, structure and every policy hang off here.
+/// Shared calendar, weekly off, shift and policies; salary structures belong to employee salaries and offers.
 model PayGroup {
   id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name            String           @unique
@@ -500,8 +499,6 @@ model PayGroup {
   weekly_off      String[]
   shift_id        String           @db.Uuid
   shift           Shift            @relation(fields: [shift_id], references: [id])
-  structure_id    String           @db.Uuid
-  structure       SalaryStructure  @relation(fields: [structure_id], references: [id])
   pay_day         Int              @default(1)
   created_at      DateTime         @default(now()) @db.Timestamptz(6)
   updated_at      DateTime?        @updatedAt @db.Timestamptz(6)

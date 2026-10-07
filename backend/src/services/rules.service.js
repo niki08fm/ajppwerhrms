@@ -114,7 +114,6 @@ export async function payGroupRules(db, payGroupId) {
     calendar_method: g.calendar_method,
     weekly_off: g.weekly_off,
     shift: g.shift,
-    structure_id: g.structure_id,
     policies: g.policies.filter((x) => !x.policy.deleted_at).map((x) => toAttachedPolicy(x.policy)),
   };
 }

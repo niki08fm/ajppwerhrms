@@ -36,7 +36,7 @@ describe('Salary records never overlap', () => {
   });
 
   it('a revision closes the old row the day before and inserts a new one', async () => {
-    const r = await f.agent.post(`/api/v1/employees/${f.employees.B}/salary`).send({ mode: 'GROSS', amount: R(25000), valid_from: '2026-10-01', reason: 'Increment' });
+    const r = await f.agent.post(`/api/v1/employees/${f.employees.B}/salary`).send({ mode: 'GROSS', amount: R(25000), valid_from: '2026-10-01', structure_id: f.structureId, reason: 'Increment' });
     expect(r.status).toBe(201);
     const rows = await prisma.employeeSalary.findMany({ where: { employee_id: f.employees.B }, orderBy: { valid_from: 'asc' } });
     expect(rows).toHaveLength(2);
@@ -281,7 +281,7 @@ describe('PF has one limit: the ceiling', () => {
   });
 });
 
-describe('A structure has no date: attaching it to a pay group decides who is paid on it, and from when', () => {
+describe('Salary structures belong to employee salary history, independently of pay groups', () => {
   const comp = (seq, name, calc_type, calc_value) => ({
     seq,
     name,
@@ -300,47 +300,18 @@ describe('A structure has no date: attaching it to a pay group decides who is pa
     expect(r.status).toBe(422);
   });
 
-  it('moves everyone in the group from the chosen month, keeps their agreed pay, and reports who it cannot move', async () => {
-    const created = await f.agent.post('/api/v1/structures').send({ name: 'Site staff v2', components: [comp(1, 'Basic', 'PCT_GROSS', 60), comp(2, 'HRA', 'PCT_BASIC', 30)] });
+  it('refuses group-wide structure changes and keeps employee salary records intact', async () => {
+    const created = await f.agent.post('/api/v1/structures').send({ name: 'Independent structure', components: [comp(1, 'Basic', 'PCT_GROSS', 60), comp(2, 'HRA', 'PCT_BASIC', 30)] });
     expect(created.status).toBe(201);
-    const sid = created.body.data.id;
-    const group = await prisma.payGroup.findFirstOrThrow({ where: { employees: { some: { id: f.employees.A } } } });
-
-    const plan = await f.agent.get(`/api/v1/pay-groups/${group.id}/structure-move?structure_id=${sid}&from=2026-10`);
-    expect(plan.status).toBe(200);
-    const moving = plan.body.data.move.map((m) => m.employee.id);
-    expect(moving).toContain(f.employees.A);
-    // B already has a revision starting 1 October (an earlier test): moved on that change instead, never overwritten.
-    expect(plan.body.data.skipped.find((x) => x.employee.id === f.employees.B)?.reason).toMatch(/Already has a salary change on 2026-10-01/);
-
-    const before = await prisma.employeeSalary.findFirstOrThrow({ where: { employee_id: f.employees.A, valid_to: null } });
-    const r = await f.agent.patch(`/api/v1/pay-groups/${group.id}`).send({ structure_id: sid, structure_from: '2026-10' });
-    expect(r.status).toBe(200);
-    expect(r.body.data.structure.id).toBe(sid);
-    expect(r.body.data.structure_move.moved).toBe(moving.length);
-
-    const rows = await prisma.employeeSalary.findMany({ where: { employee_id: f.employees.A }, orderBy: { valid_from: 'asc' } });
-    const [old, now] = rows.slice(-2);
-    expect(old.id).toBe(before.id);
-    expect(old.valid_to?.toISOString().slice(0, 10)).toBe('2026-09-30');
-    expect(now.valid_from.toISOString().slice(0, 10)).toBe('2026-10-01');
-    expect(now.structure_id).toBe(sid);
-    expect(now.monthly_gross).toBe(before.monthly_gross);
-    expect(await prisma.auditLog.count({ where: { action: 'salary.structure_change', entity_id: f.employees.A } })).toBe(1);
-  });
-
-  it('never reaches a month that has already been run', async () => {
-    const group = await prisma.payGroup.findFirstOrThrow({ where: { employees: { some: { id: f.employees.A } } } });
-    const other = await prisma.salaryStructure.findFirstOrThrow({ where: { name: 'Site staff' } });
-    await prisma.payrollPeriod.create({ data: { period_ym: '2026-11', state: 'LOCKED' } });
-    const r = await f.agent.patch(`/api/v1/pay-groups/${group.id}`).send({ structure_id: other.id, structure_from: '2026-11' });
-    expect(r.status).toBe(409);
-    expect(r.body.error.message).toMatch(/November 2026 has already been run/);
-    const plan = await f.agent.get(`/api/v1/pay-groups/${group.id}/structure-move?structure_id=${other.id}`);
-    // With no month given, the default is the earliest one not yet run: after November here, or the current month if later.
-    const nowYm = new Date().toISOString().slice(0, 7);
-    expect(plan.body.data.from).toBe(nowYm <= '2026-11' ? '2026-12' : nowYm);
-    await prisma.payrollPeriod.delete({ where: { period_ym: '2026-11' } });
+    const before = await prisma.employeeSalary.findMany({ where: { employee: { pay_group_id: f.payGroupId } }, orderBy: { id: 'asc' } });
+    const rejected = await f.agent.patch(`/api/v1/pay-groups/${f.payGroupId}`).send({ structure_id: created.body.data.id, structure_from: '2026-10' });
+    expect(rejected.status).toBe(422);
+    expect((await f.agent.get(`/api/v1/pay-groups/${f.payGroupId}/structure-move?structure_id=${created.body.data.id}`)).status).toBe(404);
+    const after = await prisma.employeeSalary.findMany({ where: { employee: { pay_group_id: f.payGroupId } }, orderBy: { id: 'asc' } });
+    expect(after).toEqual(before);
+    const group = await f.agent.get(`/api/v1/pay-groups/${f.payGroupId}`);
+    expect(group.body.data).not.toHaveProperty('structure');
+    expect(group.body.data).not.toHaveProperty('structure_id');
   });
 });
 

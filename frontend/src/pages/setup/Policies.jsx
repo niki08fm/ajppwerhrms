@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { GitBranchPlus, History, Plus } from 'lucide-react';
 import { toast } from 'sonner';
-import { formatINR, MONTH_NAMES, POLICY_KINDS, POLICY_KIND_LABELS, upgradeLeaveRules } from '@ajpwer/shared';
+import { describeOvertimeBase, formatINR, MONTH_NAMES, POLICY_KINDS, POLICY_KIND_LABELS, upgradeLeaveRules } from '@ajpwer/shared';
 import { api, ApiError, errorMessage } from '@/services/api';
 import { PageHeader } from '@/components/bits';
 import { Chip, EmptyState, ErrorState, SkeletonRows } from '@/components/states';
@@ -21,7 +21,7 @@ function summary(p) {
         ? `${r.standard_min / 60}h day, half from ${r.half_day_min / 60}h, ${r.grace_min} min grace`
         : `${r.standard_min / 60}h day, half day up to ${r.half_day_upto_min / 60}h, ${r.grace_min} min grace`;
     case 'OVERTIME':
-      return `${r.multiplier}× on ${r.base === 'BASIC_HRA' ? 'basic + HRA' : r.base.toLowerCase()}, ${r.counts_from === 'SHIFT_END' ? 'from shift end' : 'beyond the standard day'}, after ${r.after_min} min, cap ${r.monthly_cap_min ? `${r.monthly_cap_min / 60}h` : 'none'}`;
+      return `${r.multiplier}× on ${describeOvertimeBase(r)}, ${r.counts_from === 'SHIFT_END' ? 'from shift end' : 'beyond the standard day'}, after ${r.after_min} min, cap ${r.monthly_cap_min != null ? `${r.monthly_cap_min / 60}h` : 'none'}`;
     case 'WEEKOFF_PAY':
     case 'HOLIDAY_PAY':
       return `${r.paid ? 'Paid' : 'Unpaid'}${r.sandwich ? ', sandwich' : ''}`;
@@ -42,10 +42,12 @@ function summary(p) {
 export function useSample() {
   const s = useQuery({ queryKey: ['structures'], queryFn: () => api.get('/structures').then((r) => r.data) });
   return useMemo(() => {
-    const m = s.data?.[0]?.sample.monthly ?? [];
-    const basic = m.find((c) => c.name.toLowerCase() === 'basic')?.amount ?? 12_000_00;
-    const hra = m.find((c) => c.name.toLowerCase().includes('hra'))?.amount ?? 4_800_00;
-    return { gross: 24_000_00, basic, hra, divisor: 26 };
+    const sample = s.data?.[0]?.sample;
+    const m = sample?.monthly ?? [];
+    const basic = sample?.basic ?? m.find((c) => c.name.trim().toLowerCase() === 'basic')?.amount ?? 12_000_00;
+    const hra = sample?.hra ?? (sample ? m.filter((c) => /\bhra\b|house rent/i.test(c.name)).reduce((sum, c) => sum + c.amount, 0) : 4_800_00);
+    const da = sample?.da ?? m.filter((c) => ['da', 'dearness allowance'].includes(c.name.trim().toLowerCase())).reduce((sum, c) => sum + c.amount, 0);
+    return { gross: sample?.gross ?? 24_000_00, basic, hra, da, divisor: 26 };
   }, [s.data]);
 }
 
@@ -175,7 +177,7 @@ function Builder({ kind, from, onClose }) {
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button loading={save.isPending} disabled={!name.trim() || !validFrom} onClick={() => save.mutate()}>
+          <Button loading={save.isPending} disabled={!name.trim() || !validFrom || (kind === 'OVERTIME' && rules.base === 'COMPONENTS' && !rules.components?.length)} onClick={() => save.mutate()}>
             {from ? `Publish v${from.version + 1}` : 'Create policy'}
           </Button>
         </>

@@ -14,6 +14,7 @@ import { Field, Input, Select } from '@/components/ui/form';
 import { Dialog, TabsContent, TabsList, TabsRoot } from '@/components/ui/overlay';
 import { SalaryPreviewPanel, useSalaryPreview } from '../../components/people/SalaryPreview';
 import { agreement, SalaryAmountFields, StatutoryChoice } from '../../components/people/SalaryEntry';
+import { refreshEmployeePay } from '../../components/people/profile-tabs/SalaryHistory';
 
 export default function Offers() {
   const qc = useQueryClient();
@@ -27,6 +28,7 @@ export default function Offers() {
     onSuccess: (_d, v) => {
       qc.invalidateQueries({ queryKey: ['offers'] });
       qc.invalidateQueries({ queryKey: ['people'] });
+      refreshEmployeePay(qc, v.employee_id);
       setTab(v.next);
       toast.success(v.next === 'ACCEPTED' ? 'Marked accepted' : 'Onboarding started: the salary record now runs from the joining date.');
     },
@@ -107,12 +109,12 @@ export default function Offers() {
                         <td>{s === 'ONBOARDING' && `${p.onboarding.required_left ? `${p.onboarding.required_left} required left` : 'Ready to activate'}`}</td>
                         <td className="text-right">
                           {s === 'OFFER' && p.offer && (
-                            <Button size="sm" onClick={() => act.mutate({ path: `/offers/${p.offer.id}/accept`, next: 'ACCEPTED' })} loading={act.isPending}>
+                            <Button size="sm" onClick={() => act.mutate({ path: `/offers/${p.offer.id}/accept`, next: 'ACCEPTED', employee_id: p.id })} loading={act.isPending}>
                               <Check /> Mark accepted
                             </Button>
                           )}
                           {s === 'ACCEPTED' && p.offer && (
-                            <Button size="sm" onClick={() => act.mutate({ path: `/offers/${p.offer.id}/onboard`, next: 'ONBOARDING' })} loading={act.isPending}>
+                            <Button size="sm" onClick={() => act.mutate({ path: `/offers/${p.offer.id}/onboard`, next: 'ONBOARDING', employee_id: p.id })} loading={act.isPending}>
                               <Play /> Start onboarding
                             </Button>
                           )}
@@ -148,6 +150,7 @@ function IssueOfferDialog({ onClose }) {
     department_id: '',
     designation: '',
     pay_group_id: '',
+    structure_id: '',
     mode: 'GROSS',
     amount: '',
     pf_enabled: true,
@@ -158,18 +161,26 @@ function IssueOfferDialog({ onClose }) {
   });
   const [chosen, setChosen] = useState();
   const [errors, setErrors] = useState({});
-  const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
-  const previewArgs = { ...agreement(f.mode, f.amount), pay_group_id: f.pay_group_id, gender: f.gender, pt_state: f.pt_state, date: f.join_by, pf_enabled: f.pf_enabled, esi_enabled: f.esi_enabled };
-  const pv = useSalaryPreview(previewArgs, !!f.pay_group_id);
+  const set = (k, v) => {
+    setF((x) => ({ ...x, [k]: v }));
+    if (['mode', 'amount', 'structure_id', 'gender', 'pt_state', 'join_by', 'pf_enabled', 'esi_enabled'].includes(k)) setChosen(undefined);
+  };
+  const previewArgs = { ...agreement(f.mode, f.amount), structure_id: f.structure_id, gender: f.gender, pt_state: f.pt_state, date: f.join_by, pf_enabled: f.pf_enabled, esi_enabled: f.esi_enabled, chosen_gross: chosen };
+  const pv = useSalaryPreview(previewArgs, !!f.structure_id);
   const save = useMutation({
     mutationFn: () => api.post('/offers', { ...f, ...agreement(f.mode, f.amount), esi_enabled: f.esi_enabled && (pv.data?.esi_within_ceiling ?? true), ...(chosen ? { chosen_gross: chosen } : {}) }),
     onSuccess: async (r) => {
       toast.success(`Offer ${r.data.ref} issued. The letter's figures are frozen.`);
       qc.invalidateQueries({ queryKey: ['offers'] });
-      const letters = await api.get(`/employees/${r.data.employee_id}/letters`);
-      const offer = letters.data.find((l) => l.kind === 'OFFER');
-      if (offer) window.open(`/print/letter/${r.data.employee_id}/${offer.id}`, '_blank');
+      refreshEmployeePay(qc, r.data.employee_id);
       onClose();
+      try {
+        const letters = await api.get(`/employees/${r.data.employee_id}/letters`);
+        const offer = letters.data.find((l) => l.kind === 'OFFER');
+        if (offer) window.open(`/print/letter/${r.data.employee_id}/${offer.id}`, '_blank');
+      } catch (err) {
+        toast.error(`Offer issued, but the letter could not be opened. Open it from the employee's Letters tab. ${errorMessage(err)}`);
+      }
     },
     onError: (e) => {
       if (e instanceof ApiError && e.field) setErrors({ [e.field]: e.message });
@@ -188,7 +199,7 @@ function IssueOfferDialog({ onClose }) {
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button loading={save.isPending} disabled={!f.name || !f.phone || !f.department_id || !f.designation || !f.pay_group_id || !agreement(f.mode, f.amount).amount} onClick={() => save.mutate()}>
+          <Button loading={save.isPending} disabled={!f.name.trim() || !f.phone || !f.department_id || !f.designation.trim() || !f.pay_group_id || !f.structure_id || agreement(f.mode, f.amount).amount <= 0 || !pv.data || pv.isFetching || pv.isInputPending || (pv.data?.solution?.ambiguous && !chosen)} onClick={() => save.mutate()}>
             <FileSignature /> Issue offer and print letter
           </Button>
         </>
@@ -226,7 +237,7 @@ function IssueOfferDialog({ onClose }) {
           <Field label="Designation" required>
             {(id) => <Input id={id} value={f.designation} onChange={(e) => set('designation', e.target.value)} />}
           </Field>
-          <Field label="Pay group" required className="col-span-2">
+          <Field label="Pay group" required className="col-span-2" hint="Calendar, shift and attendance policies.">
             {(id) => (
               <Select id={id} value={f.pay_group_id} onChange={(e) => set('pay_group_id', e.target.value)}>
                 <option value="">Choose…</option>
@@ -235,6 +246,14 @@ function IssueOfferDialog({ onClose }) {
                     {d.name}
                   </option>
                 ))}
+              </Select>
+            )}
+          </Field>
+          <Field label="Salary structure" required className="col-span-2" hint="This employee's salary components." error={errors.structure_id}>
+            {(id) => (
+              <Select id={id} value={f.structure_id} onChange={(e) => set('structure_id', e.target.value)}>
+                <option value="">Choose a structure…</option>
+                {lk?.structures.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </Select>
             )}
           </Field>
@@ -255,14 +274,14 @@ function IssueOfferDialog({ onClose }) {
           </Field>
         </div>
         <div className="rounded-md border bg-muted/30 p-3">
-          {f.pay_group_id ? (
+          {f.structure_id ? (
             <SalaryPreviewPanel
               args={previewArgs}
               chosen={chosen}
               onChoose={setChosen}
             />
           ) : (
-            <p className="text-[14px] text-muted-foreground">Pick a pay group to see the breakdown.</p>
+            <p className="text-[14px] text-muted-foreground">Pick a salary structure to see the breakdown.</p>
           )}
         </div>
       </div>

@@ -9,6 +9,11 @@ export function isHra(c) {
   return n === 'hra' || n.includes('house rent') || /\bhra\b/.test(n);
 }
 
+export function isDa(c) {
+  const n = c.name.trim().toLowerCase();
+  return n === 'da' || n === 'dearness allowance';
+}
+
 /** The basic component — the one named Basic, or the first if none is named so. */
 export function findBasic(components) {
   const monthly = components.filter((c) => c.frequency === 'MONTHLY').sort((a, b) => a.seq - b.seq);
@@ -92,6 +97,7 @@ export function expandStructure(components, gross, annualCtc) {
 
   const monthlyGross = monthly.reduce((s, m) => s + m.amount, 0);
   const hra = monthly.filter(isHra).reduce((s, m) => s + m.amount, 0);
+  const da = monthly.filter(isDa).reduce((s, m) => s + m.amount, 0);
   const pf_base = monthly.filter((m) => m.counts_as_wages).reduce((s, m) => s + m.amount, 0);
 
   return {
@@ -100,6 +106,7 @@ export function expandStructure(components, gross, annualCtc) {
     gross: monthlyGross,
     basic,
     hra,
+    da,
     pf_base,
     yearly_total: yearly.reduce((s, y) => s + y.amount, 0),
     over_budget,
@@ -112,7 +119,7 @@ export function validateStructure(components, sampleGross, sampleCtc) {
   const errors = [];
   const warnings = [];
   const monthly = components.filter((c) => c.frequency === 'MONTHLY');
-  if (!components.some(isBasic)) errors.push('No component is named Basic. PF and HRA both need one.');
+  if (!monthly.some(isBasic)) errors.push('A monthly component must be named Basic. PF, HRA and overtime need one.');
   const balances = monthly.filter((c) => c.calc_type === 'BALANCE');
   if (balances.length > 1) errors.push('More than one Special Allowance. Only one can take what is left of gross.');
   if (balances.length === 0) warnings.push('No Special Allowance. Gross will not add up exactly at every salary.');

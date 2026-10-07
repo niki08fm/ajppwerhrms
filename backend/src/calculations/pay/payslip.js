@@ -10,7 +10,7 @@ import { expandStructure } from './structure.js';
 import { applyRecoveryCap } from './recovery.js';
 
 /** Stored on every payslip. Bump when a computation changes so old months stay explainable. */
-export const ENGINE_VERSION = '1.3.0';
+export const ENGINE_VERSION = '1.4.0';
 
 export class PayslipReconciliationError extends Error {
   constructor(message) {

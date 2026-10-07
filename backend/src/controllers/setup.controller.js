@@ -1,9 +1,8 @@
 import { z } from 'zod';
+import { Prisma } from '@prisma/client';
 import {
   addDays,
   CALENDAR_METHODS,
-  firstOfMonth,
-  yearMonth,
   departmentSchema,
   holidaySchema,
   istDate,
@@ -29,8 +28,6 @@ import { AppError, notFound } from '../utils/errors.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { prisma } from '../config/db.js';
 import { holidaysBetween, ptSlabs, ratesOn, regimesOn, toAttachedPolicy, toComponentDefs } from '../services/rules.service.js';
-import { insertSalary } from '../services/salary.service.js';
-import { firstOpenMonth, planStructureMove } from '../services/structureMove.service.js';
 import { randomUUID } from 'node:crypto';
 
 const today = () => istDate(new Date());
@@ -188,7 +185,7 @@ const AT_SAMPLE_GROSS = { mode: 'GROSS', amount: SAMPLE_GROSS, pf_enabled: true,
 async function structureView(id) {
   const s = await prisma.salaryStructure.findUniqueOrThrow({
     where: { id },
-    include: { components: { where: { deleted_at: null }, orderBy: { seq: 'asc' } }, pay_groups: { where: { deleted_at: null }, select: { id: true, name: true } } },
+    include: { components: { where: { deleted_at: null }, orderBy: { seq: 'asc' } } },
   });
   const components = toComponentDefs(s.components);
   const referenced = await prisma.payslip.count({ where: { employee: { salaries: { some: { structure_id: id } } } }, take: 1 }).catch(() => 0);
@@ -203,7 +200,6 @@ async function structureView(id) {
     created_at: s.created_at,
     duplicated_from: s.duplicated_from,
     components,
-    pay_groups: s.pay_groups,
     /** People paid on this structure today */
     people,
     immutable: used || referenced > 0,
@@ -284,7 +280,6 @@ async function payGroupView(id) {
     where: { id },
     include: {
       shift: true,
-      structure: { select: { id: true, name: true } },
       policies: { where: { deleted_at: null }, include: { policy: true } },
       _count: { select: { employees: { where: { deleted_at: null, status: { in: ['ACTIVE', 'NOTICE', 'ONBOARDING'] } } } } },
     },
@@ -302,7 +297,6 @@ async function payGroupView(id) {
     calendar_method: g.calendar_method,
     weekly_off: g.weekly_off,
     shift: g.shift,
-    structure: g.structure,
     policies: attached.sort((a, b) => a.kind.localeCompare(b.kind) || b.version - a.version),
     headcount: g._count.employees,
     divisor_this_month: calendarDivisor(g.calendar_method, ym, workingDaysInMonth(ym, g.weekly_off, hol)),
@@ -326,6 +320,7 @@ export const createPayGroup = asyncHandler(async (req, res) => {
   const b = payGroupSchema.parse(req.body);
   const { actor, ip } = who(req);
   const g = await prisma.$transaction(async (tx) => {
+    await validateGroupPolicies(tx, b.policy_ids);
     const created = await tx.payGroup.create({
       data: {
         name: b.name,
@@ -334,7 +329,6 @@ export const createPayGroup = asyncHandler(async (req, res) => {
         calendar_method: b.calendar_method,
         weekly_off: b.weekly_off,
         shift_id: b.shift_id,
-        structure_id: b.structure_id,
         policies: { create: b.policy_ids.map((policy_id) => ({ policy_id })) },
       },
     });
@@ -344,32 +338,36 @@ export const createPayGroup = asyncHandler(async (req, res) => {
   res.status(201).json({ data: await payGroupView(g.id) });
 });
 
-/**
- * What attaching a different structure to this group would do: who moves, from
- * which month, and who cannot be moved (with the reason). Nothing is written.
- */
-export const previewStructureMove = asyncHandler(async (req, res) => {
-  const q = z.object({ structure_id: z.string().uuid(), from: yearMonth.optional() }).parse(req.query);
-  const g = await prisma.payGroup.findFirst({ where: { id: req.params.id, deleted_at: null } });
-  if (!g) throw notFound('That pay group');
-  res.json({ data: { ...(await planStructureMove(prisma, g.id, q.structure_id, q.from)), first_open_month: await firstOpenMonth(prisma) } });
-});
+/** A group selects one policy lineage per kind; all dated versions can stay attached. */
+async function validateGroupPolicies(db, ids) {
+  if (!ids.length) return;
+  const policies = await db.policy.findMany({ where: { id: { in: ids }, deleted_at: null }, select: { id: true, kind: true, policy_key: true } });
+  if (policies.length !== ids.length) throw new AppError('VALIDATION', 'Choose existing policies without duplicates.', 422, 'policy_ids');
+  const byKind = new Map();
+  for (const policy of policies) {
+    const selected = byKind.get(policy.kind);
+    if (selected && selected !== policy.policy_key) {
+      throw new AppError('VALIDATION', 'Choose one policy for each kind. Versions of the same policy can stay attached.', 422, 'policy_ids');
+    }
+    byKind.set(policy.kind, policy.policy_key);
+  }
+}
 
 export const updatePayGroup = asyncHandler(async (req, res) => {
-  const { structure_from, ...b } = payGroupPatchSchema.parse(req.body);
-  const before = await prisma.payGroup.findUnique({ where: { id: req.params.id }, include: { policies: { where: { deleted_at: null } } } });
-  if (!before) throw notFound('That pay group');
-  // A new structure reaches everyone in the group from the chosen month, as a dated change on each salary.
-  const plan = b.structure_id && b.structure_id !== before.structure_id ? await planStructureMove(prisma, before.id, b.structure_id, structure_from) : null;
+  const b = payGroupPatchSchema.parse(req.body);
   const { actor, ip } = who(req);
   await prisma.$transaction(async (tx) => {
+    const before = await tx.payGroup.findFirst({ where: { id: req.params.id, deleted_at: null }, include: { policies: { where: { deleted_at: null } } } });
+    if (!before) throw notFound('That pay group');
     const { policy_ids, ...core } = b;
+    if (policy_ids) await validateGroupPolicies(tx, policy_ids);
     if (Object.keys(core).length) await tx.payGroup.update({ where: { id: before.id }, data: core });
     if (policy_ids) {
       const current = new Set(before.policies.map((p) => p.policy_id));
       const next = new Set(policy_ids);
-      const toRemove = before.policies.filter((p) => !next.has(p.policy_id));
-      for (const r of toRemove) await tx.payGroupPolicy.update({ where: { id: r.id }, data: { deleted_at: new Date() } });
+      for (const link of before.policies.filter((p) => !next.has(p.policy_id))) {
+        await tx.payGroupPolicy.update({ where: { id: link.id }, data: { deleted_at: new Date() } });
+      }
       for (const pid of policy_ids) {
         if (current.has(pid)) continue;
         await tx.payGroupPolicy.upsert({
@@ -379,53 +377,53 @@ export const updatePayGroup = asyncHandler(async (req, res) => {
         });
       }
     }
-    if (plan) {
-      const from = firstOfMonth(plan.from);
-      for (const m of plan.move) {
-        await insertSalary(
-          tx,
-          m.employee.id,
-          from,
-          { mode: m.mode, amount: m.amount, monthly_gross: m.to_gross, structure_id: plan.structure.id, reason: `Pay group ${before.name} moved to ${plan.structure.name}` },
-          actor,
-        );
-        await audit(tx, {
-          actor,
-          ip,
-          action: 'salary.structure_change',
-          entity_type: 'employee',
-          entity_id: m.employee.id,
-          detail: {
-            pay_group_id: before.id,
-            from: plan.from,
-            from_structure_id: m.from_structure_id,
-            to_structure_id: plan.structure.id,
-            mode: m.mode,
-            amount: m.amount,
-            monthly_gross: { before: m.from_gross, after: m.to_gross },
-          },
-        });
-      }
-    }
     await audit(tx, {
-      actor,
-      ip,
-      action: 'pay_group.update',
-      entity_type: 'pay_group',
-      entity_id: before.id,
-      detail: {
-        before: { ...before, policies: before.policies.map((p) => p.policy_id) },
-        after: b,
-        ...(plan ? { structure_move: { from: plan.from, moved: plan.move.length, unchanged: plan.unchanged, skipped: plan.skipped } } : {}),
-      },
+      actor, ip, action: 'pay_group.update', entity_type: 'pay_group', entity_id: before.id,
+      detail: { before: { ...before, policies: before.policies.map((p) => p.policy_id) }, after: b },
     });
   });
-  res.json({
-    data: {
-      ...(await payGroupView(before.id)),
-      structure_move: plan ? { from: plan.from, moved: plan.move.length, unchanged: plan.unchanged, skipped: plan.skipped } : null,
-    },
+  res.json({ data: await payGroupView(req.params.id) });
+});
+
+const groupMemberFields = { id: true, code: true, name: true, status: true, pay_group_id: true };
+
+export const listPayGroupEmployees = asyncHandler(async (req, res) => {
+  const group = await prisma.payGroup.findFirst({ where: { id: req.params.id, deleted_at: null }, select: { id: true } });
+  if (!group) throw notFound('That pay group');
+  const employees = await prisma.employee.findMany({
+    where: { pay_group_id: group.id, deleted_at: null }, select: groupMemberFields, orderBy: [{ name: 'asc' }, { code: 'asc' }],
   });
+  res.json({ data: employees });
+});
+
+/** Membership changes attendance/pay rules only; employee salary history stays intact. */
+export const movePayGroupEmployees = asyncHandler(async (req, res) => {
+  const { employee_ids: inputIds } = z.object({ employee_ids: z.array(z.string().uuid()).min(1).max(1000) }).strict().parse(req.body);
+  const ids = [...new Set(inputIds)].sort();
+  const { actor, ip } = who(req);
+  const result = await prisma.$transaction(async (tx) => {
+    const group = await tx.payGroup.findFirst({ where: { id: req.params.id, deleted_at: null }, select: { id: true } });
+    if (!group) throw notFound('That pay group');
+    // Lock in stable order so overlapping membership requests audit the actual prior group.
+    await tx.$queryRaw(Prisma.sql`SELECT id FROM employee WHERE id IN (${Prisma.join(ids.map((id) => Prisma.sql`${id}::uuid`))}) ORDER BY id FOR UPDATE`);
+    const employees = await tx.employee.findMany({ where: { id: { in: ids }, deleted_at: null }, select: groupMemberFields });
+    if (employees.length !== ids.length) throw new AppError('VALIDATION', 'One or more selected employees no longer exist. Refresh the list and try again.', 422, 'employee_ids');
+    const exited = employees.find((employee) => employee.status === 'EXITED');
+    if (exited) throw new AppError('FORBIDDEN', `${exited.name} has exited. Their profile is read-only.`, 403);
+    const moving = employees.filter((employee) => employee.pay_group_id !== group.id);
+    for (const employee of moving) {
+      await tx.employee.update({ where: { id: employee.id }, data: { pay_group_id: group.id } });
+      await audit(tx, {
+        actor, ip, action: 'employee.pay_group_change', entity_type: 'employee', entity_id: employee.id,
+        detail: { from: employee.pay_group_id, to: group.id },
+      });
+    }
+    return {
+      moved: moving.length, unchanged: employees.length - moving.length,
+      employees: employees.map((employee) => ({ ...employee, pay_group_id: group.id })),
+    };
+  });
+  res.json({ data: result });
 });
 
 // ─── Statutory ───────────────────────────────────────────────────────────────

@@ -35,7 +35,7 @@ const TABS = [
   ['loans', 'Advances'],
   ['letters', 'Letters'],
   ['exit', 'Exit and F&F'],
-  ['timeline', 'Timeline'],
+  ['timeline', 'Employee journey'],
 ];
 
 /** Old tab names (links from other screens, saved views) and where they live now. */
@@ -126,9 +126,9 @@ function Header({ e, go, onAction }) {
             <Button variant="outline" onClick={() => onAction('edit')}>
               Edit details
             </Button>
-            {working && e.salary && (
+            {working && (
               <Button variant="outline" onClick={() => onAction('revise')}>
-                Revise salary
+                {e.salary ? 'Revise salary' : 'Add salary'}
               </Button>
             )}
             {working && (
@@ -151,7 +151,7 @@ function Header({ e, go, onAction }) {
       </div>
       <div className="grid grid-cols-2 gap-2.5 p-5 md:grid-cols-3 xl:grid-cols-6">
         <Fact label="Joined" value={longDate(e.joined_on)} sub={tenure(e.joined_on, today)} onClick={() => go('overview')} />
-        <Fact label="Pay group · shift" value={e.pay_group.name} sub={shift ? `${shift.name} ${hhmm(shift.start_min)}–${hhmm(shift.end_min)}` : undefined} onClick={() => go('overview')} />
+        <Fact label="Pay group · shift" value={e.pay_group.name} sub={shift ? `${shift.name} ${hhmm(shift.start_min)}–${hhmm(shift.end_min)}` : undefined} onClick={() => go('salary')} />
         <Fact
           label="Monthly gross"
           value={e.salary ? formatINR(e.salary.monthly_gross) : '—'}

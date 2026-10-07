@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { CALENDAR_METHOD_INFO, formatINR, formatMinutes, GRATUITY_PART_YEAR_LABELS, MONTH_NAMES, OT_BASE_LABELS } from '@ajpwer/shared';
+import { CALENDAR_METHOD_INFO, describeOvertimeBase, formatINR, formatMinutes, GRATUITY_PART_YEAR_LABELS, MONTH_NAMES, OT_BASE_LABELS } from '@ajpwer/shared';
 import { leaveTypeSummary } from '../../setup/LeaveRulesForm';
 import { api, ApiError, errorMessage } from '@/services/api';
 import { useLookups } from '@/hooks/useLookups';
@@ -24,7 +24,7 @@ function describePolicy(kind, r) {
         ? `${formatMinutes(r.standard_min)} day, half day from ${formatMinutes(r.half_day_min)}, ${r.grace_min} min grace`
         : `${formatMinutes(r.standard_min)} day, half day up to ${formatMinutes(r.half_day_upto_min)}, ${r.grace_min} min grace`;
     case 'OVERTIME':
-      return `${r.multiplier}× on ${OT_BASE_LABELS[r.base]}, ${r.counts_from === 'SHIFT_END' ? 'from shift end' : 'beyond the standard day'}, after ${r.after_min} min, rounded down to ${r.rounding_min} min${r.monthly_cap_min ? `, cap ${formatMinutes(r.monthly_cap_min)} a month` : ''}`;
+      return `${r.multiplier}× on ${describeOvertimeBase(r)}, ${r.counts_from === 'SHIFT_END' ? 'from shift end' : 'beyond the standard day'}, after ${r.after_min} min, rounded down to ${r.rounding_min} min${r.monthly_cap_min ? `, cap ${formatMinutes(r.monthly_cap_min)} a month` : ''}`;
     case 'WEEKOFF_PAY':
     case 'HOLIDAY_PAY':
       return `${r.paid ? 'Paid' : 'Unpaid'}${r.paid && r.sandwich ? ', sandwich rule on' : ''}`;
@@ -73,20 +73,16 @@ export function OverviewTab({ e }) {
   const [full, setFull] = useState(false);
   const { can } = useSession();
   // The unmasked numbers are a separate read, with its own permission and log line.
-  const fullId = useQuery({ queryKey: ['employee-identity', e.id], queryFn: () => api.get(`/employees/${e.id}/identity`).then((r) => r.data), enabled: full, staleTime: 0, gcTime: 0 });
+  const fullId = useQuery({
+    queryKey: ['employee-identity', e.id],
+    queryFn: () => api.get(`/employees/${e.id}/identity`).then((r) => r.data),
+    enabled: full,
+    staleTime: 0,
+    gcTime: 0,
+  });
   const idn = full && fullId.data ? fullId.data : e.identity;
-  const r = e.rules;
   const age = yearsSince(e.dob, lk?.today);
   const missing = (tone = 'warning') => <Chip tone={tone}>Missing</Chip>;
-  const policy = (kind) => r.policies.find((x) => x.kind === kind);
-  const ruleLine = (kind, label) => {
-    const p = policy(kind);
-    return (
-      <Line key={kind} label={label ?? p?.label ?? kind}>
-        {p?.id ? describePolicy(kind, p.rules) : <span className="text-warning-foreground dark:text-warning">None attached</span>}
-      </Line>
-    );
-  };
   return (
     <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
       <div className="flex flex-col gap-4">
@@ -135,7 +131,14 @@ export function OverviewTab({ e }) {
                 ['PAN', idn.pan ? <Mono>{idn.pan}</Mono> : missing()],
                 ['UAN', idn.uan ? <Mono>{idn.uan}</Mono> : missing()],
                 ['ESI number', idn.esi_number ? <Mono>{idn.esi_number}</Mono> : '—'],
-                ['Bank', idn.has_bank ? `${idn.bank_name ? `${idn.bank_name} · ` : ''}${idn.bank_account}` : <Chip tone="destructive">No bank account — blocks payroll</Chip>],
+                [
+                  'Bank',
+                  idn.has_bank ? (
+                    `${idn.bank_name ? `${idn.bank_name} · ` : ''}${idn.bank_account}`
+                  ) : (
+                    <Chip tone="destructive">No bank account — blocks payroll</Chip>
+                  ),
+                ],
                 ['IFSC', idn.bank_ifsc ? <Mono>{idn.bank_ifsc}</Mono> : '—'],
               ]}
             />
@@ -158,38 +161,60 @@ export function OverviewTab({ e }) {
               cols={3}
               items={[
                 ['Registered', e.face.enrolled ? longDate(String(e.face.enrolled_at).slice(0, 10)) : '—'],
-                ['Status', e.face.enrolled ? 'Ready to punch' : e.face.needs_registration ? <Chip tone="warning">Register again (new face system)</Chip> : <Chip tone="warning">Not registered</Chip>],
+                [
+                  'Status',
+                  e.face.enrolled ? (
+                    'Ready to punch'
+                  ) : e.face.needs_registration ? (
+                    <Chip tone="warning">Register again (new face system)</Chip>
+                  ) : (
+                    <Chip tone="warning">Not registered</Chip>
+                  ),
+                ],
                 ['Face samples', e.face.enrolled ? String(e.face.templates ?? '—') : '—'],
               ]}
             />
           </CardBody>
         </Card>
       </div>
-      <Card>
-        <CardHeader title={`Rules from ${r.pay_group.name}`} description="Change these in the pay group, not here." />
-        <CardBody className="pt-1">
-          <Line label="Calendar">{CALENDAR_METHOD_INFO[r.calendar_method]?.label ?? r.calendar_method}</Line>
-          <Line label="Weekly off">{r.weekly_off.length ? r.weekly_off.map((d) => d.charAt(0) + d.slice(1).toLowerCase()).join(', ') : 'None'}</Line>
-          <Line label="Shift">
-            {r.shift.name} {hhmm(r.shift.start_min)}–{hhmm(r.shift.end_min)}
-          </Line>
-          <Line label="Salary structure">{r.structure ? r.structure.name : '—'}</Line>
-          {ruleLine('ATTENDANCE', 'Attendance')}
-          {ruleLine('OVERTIME', 'Overtime')}
-          {ruleLine('HOLIDAY_WORK', 'Holiday / week-off work')}
-          {ruleLine('LEAVE', 'Leave')}
-          {ruleLine('GRATUITY', 'Gratuity')}
-          {r.policies
-            .filter((p) => !['ATTENDANCE', 'OVERTIME', 'HOLIDAY_WORK', 'LEAVE', 'GRATUITY'].includes(p.kind))
-            .map((p) => ruleLine(p.kind))}
-          <Link to="/setup/pay-groups" className="mt-2 inline-block text-[13px] text-primary hover:underline">
-            Open {r.pay_group.name} pay group →
-          </Link>
-        </CardBody>
-      </Card>
+      <PayGroupRulesCard e={e} />
       {editing && <EditDialog e={e} onClose={() => setEditing(false)} />}
       {enrolling && <FaceEnrolDialog e={e} onClose={() => setEnrolling(false)} onDone={() => qc.invalidateQueries({ queryKey: ['employee', e.id] })} />}
     </div>
+  );
+}
+
+export function PayGroupRulesCard({ e }) {
+  const r = e.rules;
+  const policy = (kind) => r.policies.find((x) => x.kind === kind);
+  const ruleLine = (kind, label) => {
+    const p = policy(kind);
+    return (
+      <Line key={kind} label={label ?? p?.label ?? kind}>
+        {p?.id ? describePolicy(kind, p.rules) : <span className="text-warning-foreground dark:text-warning">None attached</span>}
+      </Line>
+    );
+  };
+  return (
+    <Card>
+      <CardHeader title={`Rules from ${r.pay_group.name}`} description="These policies apply independently of the employee’s salary structure." />
+      <CardBody className="pt-1">
+        <Line label="Calendar">{CALENDAR_METHOD_INFO[r.calendar_method]?.label ?? r.calendar_method}</Line>
+        <Line label="Weekly off">{r.weekly_off.length ? r.weekly_off.map((d) => d.charAt(0) + d.slice(1).toLowerCase()).join(', ') : 'None'}</Line>
+        <Line label="Shift">
+          {r.shift.name} {hhmm(r.shift.start_min)}–{hhmm(r.shift.end_min)}
+        </Line>
+        {ruleLine('ATTENDANCE', 'Attendance')}
+        {ruleLine('OVERTIME', 'Overtime')}
+        {ruleLine('HOLIDAY_WORK', 'Holiday / week-off work')}
+        {ruleLine('LEAVE', 'Leave')}
+        {ruleLine('GRATUITY', 'Gratuity')}
+        {r.policies.filter((p) => !['ATTENDANCE', 'OVERTIME', 'HOLIDAY_WORK', 'LEAVE', 'GRATUITY'].includes(p.kind)).map((p) => ruleLine(p.kind))}
+        <Link to="/setup/pay-groups" className="mt-2 inline-block text-[13px] text-primary hover:underline">
+          Open {r.pay_group.name} pay group →
+        </Link>
+      </CardBody>
+    </Card>
   );
 }
 
@@ -229,7 +254,7 @@ export function EditDialog({ e, onClose }) {
       if (f.bank_account) identity.bank_account = f.bank_account;
       if (f.bank_ifsc !== (e.identity.bank_ifsc ?? '')) identity.bank_ifsc = f.bank_ifsc.toUpperCase() || null;
       if (f.bank_name !== (e.identity.bank_name ?? '')) identity.bank_name = f.bank_name || null;
-      return api.patch(`/employees/${e.id}`, {
+      const core = {
         name: f.name,
         phone: f.phone,
         email: f.email || null,
@@ -239,6 +264,15 @@ export function EditDialog({ e, onClose }) {
         designation: f.designation,
         department_id: f.department_id,
         pay_group_id: f.pay_group_id,
+      };
+      const before = {
+        ...e,
+        department_id: e.department.id,
+        pay_group_id: e.pay_group.id,
+      };
+      const changedCore = Object.fromEntries(Object.entries(core).filter(([key, value]) => value !== (before[key] ?? (typeof value === 'string' ? '' : null))));
+      return api.patch(`/employees/${e.id}`, {
+        ...changedCore,
         ...(Object.keys(identity).length ? { identity } : {}),
         updated_at: e.updated_at,
       });
@@ -247,6 +281,7 @@ export function EditDialog({ e, onClose }) {
       toast.success('Saved');
       qc.invalidateQueries({ queryKey: ['employee', e.id] });
       qc.invalidateQueries({ queryKey: ['people'] });
+      for (const key of ['timeline', 'employee-pay', 'employee-tax', 'emp-attendance', 'emp-leave']) qc.invalidateQueries({ queryKey: [key, e.id] });
       onClose();
     },
     onError: (err) => {
@@ -313,9 +348,10 @@ export function EditDialog({ e, onClose }) {
         {groupChanged && newGroup && (
           <div className="sm:col-span-3">
             <Notice tone="warning">
-              Moving {e.name.split(' ')[0]} to <strong>{newGroup.name}</strong> changes their calendar ({CALENDAR_METHOD_INFO[e.pay_group.calendar_method]?.label} →{' '}
-              {CALENDAR_METHOD_INFO[newGroup.calendar_method]?.label}), weekly off, shift, salary structure and every policy at once. The pay group on the last day of a month applies to the whole
-              month.
+              Moving {e.name.split(' ')[0]} to <strong>{newGroup.name}</strong> changes their calendar (
+              {CALENDAR_METHOD_INFO[e.pay_group.calendar_method]?.label} → {CALENDAR_METHOD_INFO[newGroup.calendar_method]?.label}), weekly off, shift and group
+              policies. Their salary amount and explicitly selected salary structure stay unchanged. The pay group on the last day of a month applies to the
+              whole month.
             </Notice>
           </div>
         )}
@@ -323,19 +359,41 @@ export function EditDialog({ e, onClose }) {
           {(id) => <Textarea id={id} value={f.address} onChange={(ev) => set('address', ev.target.value)} />}
         </Field>
         <Field label="PAN" error={errors.pan} hint={e.identity.has_pan ? 'On file' : 'Missing'}>
-          {(id, inv) => <Input id={id} aria-invalid={inv} className="font-mono uppercase" value={f.pan} onChange={(ev) => set('pan', ev.target.value)} placeholder="ABCDE1234F" />}
+          {(id, inv) => (
+            <Input
+              id={id}
+              aria-invalid={inv}
+              className="font-mono uppercase"
+              value={f.pan}
+              onChange={(ev) => set('pan', ev.target.value)}
+              placeholder="ABCDE1234F"
+            />
+          )}
         </Field>
         <Field label="Aadhaar" error={errors.aadhaar} hint={e.identity.aadhaar_masked ?? 'Missing'}>
-          {(id, inv) => <Input id={id} aria-invalid={inv} className="font-mono" value={f.aadhaar} onChange={(ev) => set('aadhaar', ev.target.value)} placeholder="12 digits" />}
+          {(id, inv) => (
+            <Input
+              id={id}
+              aria-invalid={inv}
+              className="font-mono"
+              value={f.aadhaar}
+              onChange={(ev) => set('aadhaar', ev.target.value)}
+              placeholder="12 digits"
+            />
+          )}
         </Field>
         <Field label="UAN" error={errors.uan}>
           {(id, inv) => <Input id={id} aria-invalid={inv} className="font-mono" value={f.uan} onChange={(ev) => set('uan', ev.target.value)} />}
         </Field>
         <Field label="Bank account" error={errors.bank_account} hint={e.identity.has_bank ? `On file ${e.identity.bank_account}` : 'Missing'}>
-          {(id, inv) => <Input id={id} aria-invalid={inv} className="font-mono" value={f.bank_account} onChange={(ev) => set('bank_account', ev.target.value)} />}
+          {(id, inv) => (
+            <Input id={id} aria-invalid={inv} className="font-mono" value={f.bank_account} onChange={(ev) => set('bank_account', ev.target.value)} />
+          )}
         </Field>
         <Field label="IFSC" error={errors.bank_ifsc}>
-          {(id, inv) => <Input id={id} aria-invalid={inv} className="font-mono uppercase" value={f.bank_ifsc} onChange={(ev) => set('bank_ifsc', ev.target.value)} />}
+          {(id, inv) => (
+            <Input id={id} aria-invalid={inv} className="font-mono uppercase" value={f.bank_ifsc} onChange={(ev) => set('bank_ifsc', ev.target.value)} />
+          )}
         </Field>
         <Field label="Bank name">{(id) => <Input id={id} value={f.bank_name} onChange={(ev) => set('bank_name', ev.target.value)} />}</Field>
         <Field label="ESI number" error={errors.esi_number}>

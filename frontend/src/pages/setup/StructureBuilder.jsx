@@ -9,7 +9,7 @@ import { useDebounced } from '@/hooks';
 import { useLookups } from '@/hooks/useLookups';
 import { cn, toPaise } from '@/utils';
 import { PageHeader, ProportionBar } from '@/components/bits';
-import { Notice } from '@/components/states';
+import { ErrorState, Notice, SkeletonBlock } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { Field, Input, MoneyInput, Select } from '@/components/ui/form';
@@ -31,7 +31,11 @@ const blank = (i, over = {}) => ({
   ...over,
 });
 
-const DEFAULT_ROWS = [blank(0, { name: 'Basic', of: 'PCT_GROSS', value: '50', counts_as_wages: true }), blank(1, { name: 'HRA', of: 'PCT_BASIC', value: '40' })];
+const DEFAULT_ROWS = [
+  blank(0, { name: 'Basic', of: 'PCT_GROSS', value: '50', counts_as_wages: true }),
+  blank(1, { name: 'HRA', of: 'PCT_BASIC', value: '40' }),
+  blank(2, { name: 'DA', kind: 'FIXED', value: '0', counts_as_wages: true }),
+];
 const DEFAULT_SPECIAL = { is_taxable: true, counts_as_wages: false };
 
 const isBasicName = (name) => name.trim().toLowerCase() === 'basic';
@@ -136,7 +140,7 @@ export default function StructureBuilder() {
   const preview = useQuery({
     queryKey: ['structure-validate', debounced],
     queryFn: () => api.post('/structures/validate', { components: debounced.comps, sample: debounced.sample }).then((r) => r.data),
-    enabled: debounced.comps.every((c) => c.name) && debounced.sample.amount > 0,
+    enabled: (!from || !!src.data) && debounced.comps.every((c) => c.name) && debounced.sample.amount > 0,
     placeholderData: (p) => p,
     retry: false,
   });
@@ -165,6 +169,8 @@ export default function StructureBuilder() {
   const cappedAt = (n) => p?.breakup.structure.monthly.find((c) => c.name === n && c.max_amount !== null && c.amount === c.max_amount);
   const cappedNames = new Set((p?.breakup.structure.monthly ?? []).filter((c) => c.max_amount !== null && c.amount === c.max_amount).map((c) => c.name));
   const ruleNames = Object.fromEntries(comps.map((c) => [c.name, describeComponentRule(c)]));
+  if (from && src.isLoading) return <SkeletonBlock className="h-80" />;
+  if (from && src.isError) return <ErrorState error={src.error} onRetry={() => src.refetch()} />;
 
   return (
     <div className="flex flex-col gap-4">
@@ -174,7 +180,7 @@ export default function StructureBuilder() {
         description={
           from
             ? 'A new structure built from a copy. The original is untouched, and so is everyone paid on it.'
-            : 'Build it here, then attach it to a pay group: that decides who is paid on it and from which month.'
+            : "Build it here, then choose it in the employee's Salary section when adding or revising their salary."
         }
       />
       <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_380px]">
@@ -185,7 +191,7 @@ export default function StructureBuilder() {
               description="For each one: its name, then percentage or fixed, then what the percentage is of. Basic is worked out first; whatever is left of gross is the Special Allowance."
             />
             <CardBody className="flex flex-col gap-3">
-              <Field label="Structure name" required hint="No date here: it applies to the people of whichever pay group you attach it to, from the month you choose there." className="max-w-xl">
+              <Field label="Structure name" required hint="The effective date is chosen on the employee's salary revision. Each employee can have their own salary structure." className="max-w-xl">
                 {(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Site staff 2027" />}
               </Field>
               <div className="overflow-x-auto">
@@ -263,7 +269,7 @@ export default function StructureBuilder() {
                                 aria-label="Frequency"
                               >
                                 <option value="MONTHLY">Monthly</option>
-                                <option value="YEARLY">Yearly</option>
+                                <option value="YEARLY" disabled={basicRow}>Yearly</option>
                               </Select>
                               {r.frequency === 'YEARLY' && (
                                 <Select value={r.pay_month ?? 10} onChange={(e) => set(i, { pay_month: Number(e.target.value) })} aria-label="Payout month">
@@ -469,12 +475,12 @@ function StatutoryCard({ rates }) {
           </div>
           <div>
             <div className="font-semibold text-foreground">What counts as PF wage</div>
-            <p className="text-muted-foreground">The PF wage switch on each component above — normally Basic alone.</p>
+            <p className="text-muted-foreground">The PF wage switch on each component above — normally Basic and DA.</p>
           </div>
           <div>
             <div className="font-semibold text-foreground">For one person</div>
             <p className="text-muted-foreground">
-              PF on or off, restrict to the ceiling, voluntary PF, ESI on or off, PT state and tax regime: their profile → Pay and Tax tabs. It is per person because two people in one crew can differ.
+              PF on or off, restrict to the ceiling, voluntary PF, ESI on or off, PT state and tax regime: their profile → Salary and statutory → Statutory. These settings can differ for each employee.
             </p>
           </div>
         </div>

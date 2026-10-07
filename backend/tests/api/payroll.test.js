@@ -76,7 +76,7 @@ describe('§20.26 Reopen cascades', () => {
 });
 
 describe('§20.27 Lock freezes', () => {
-  it('a salary change after locking leaves the locked payslip; unlock and rerun picks it up', async () => {
+  it('a salary change affecting locked payroll is refused; unlock, revise and rerun picks it up', async () => {
     f = await buildFixture();
     await submitSteps(f.agent, YM, 5);
     const job = await runAndWait(f.agent, YM);
@@ -87,12 +87,11 @@ describe('§20.27 Lock freezes', () => {
     expect(before.status).toBe(200);
     const lockedGross = before.body.data.gross;
 
-    // Raise A's salary effective the first of the locked month.
-    const rev = await f.agent.post(`/api/v1/employees/${f.employees.A}/salary`).send({ mode: 'GROSS', amount: R(26000), valid_from: `${YM}-01`, reason: 'Increment' });
-    expect(rev.status).toBe(201);
-
-    const live = await f.agent.get(`/api/v1/employees/${f.employees.A}/payslip-preview?month=${YM}`);
-    expect(live.body.data.result.gross).toBeGreaterThan(lockedGross);
+    const revision = { mode: 'GROSS', amount: R(26000), valid_from: `${YM}-01`, structure_id: f.structureId, reason: 'Increment' };
+    const blocked = await f.agent.post(`/api/v1/employees/${f.employees.A}/salary`).send(revision);
+    expect(blocked.status).toBe(409);
+    expect(blocked.body.error.code).toBe('SALARY_PROTECTED');
+    expect(await prisma.employeeSalary.count({ where: { employee_id: f.employees.A, deleted_at: null } })).toBe(1);
     const stillLocked = await f.agent.get(`${P}/payslips/${f.employees.A}`);
     expect(stillLocked.body.data.gross).toBe(lockedGross);
 
@@ -100,6 +99,10 @@ describe('§20.27 Lock freezes', () => {
     await expect(prisma.payslip.updateMany({ where: { employee_id: f.employees.A }, data: { net: 1n } })).rejects.toThrow(/cannot be changed/);
 
     expect((await f.agent.post(`${P}/unlock`)).status).toBe(200);
+    const revised = await f.agent.post(`/api/v1/employees/${f.employees.A}/salary`).send(revision);
+    expect(revised.status, JSON.stringify(revised.body)).toBe(201);
+    const live = await f.agent.get(`/api/v1/employees/${f.employees.A}/payslip-preview?month=${YM}`);
+    expect(live.body.data.result.gross).toBeGreaterThan(lockedGross);
     expect((await runAndWait(f.agent, YM)).status).toBe('DONE');
     const after = await f.agent.get(`${P}/payslips/${f.employees.A}`);
     expect(after.body.data.gross).toBe(live.body.data.result.gross);

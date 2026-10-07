@@ -20,6 +20,8 @@ employeesRouter.patch('/:id', requirePerm('people.write'), employeeController.up
 employeesRouter.get('/:id/salary', requirePerm('salary.read'), employeeController.getSalaryHistory);
 employeesRouter.post('/:id/salary', requirePerm('salary.write'), employeeController.reviseSalary);
 employeesRouter.post('/:id/salary/restate', requirePerm('salary.write'), employeeController.restateSalary);
+employeesRouter.patch('/:id/salary/:salaryId', requirePerm('salary.write'), employeeController.updateSalaryRevision);
+employeesRouter.delete('/:id/salary/:salaryId', requirePerm('salary.write'), employeeController.deleteSalaryRevision);
 
 // ─── Statutory ───────────────────────────────────────────────────────────────
 employeesRouter.patch('/:id/statutory', requirePerm('salary.write'), employeeController.updateStatutory);

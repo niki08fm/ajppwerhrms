@@ -40,7 +40,7 @@ import { leaveBalances } from '../services/leave.service.js';
 import { computePayslip, loadRecoveries } from '../services/payslip.service.js';
 import { payContext } from '../services/payroll.service.js';
 import { ratesOn, regimesOn, salaryOn, structureComponents, holidaysBetween } from '../services/rules.service.js';
-import { ctcBasisOf, insertSalary, previewSalary, resolveMonthlyGross } from '../services/salary.service.js';
+import { ctcBasisOf, deleteSalary, editSalary, insertSalary, previewSalary, resolveMonthlyGross, salaryHistoryProtection } from '../services/salary.service.js';
 import { upsertSettlement } from '../services/settlement.service.js';
 
 const today = () => istDate(new Date());
@@ -161,7 +161,7 @@ const createSchema = employeeCoreSchema
   .extend({
     joined_on: isoDate,
     status: z.enum(['ONBOARDING', 'ACTIVE']).default('ONBOARDING'),
-    salary: z.object({ mode: z.enum(SALARY_MODES), amount: z.number().int().min(1), chosen_gross: z.number().int().optional() }).strict(),
+    salary: z.object({ mode: z.enum(SALARY_MODES), amount: z.number().int().min(1), structure_id: z.string().uuid(), chosen_gross: z.number().int().optional() }).strict(),
     pt_state: z.string().min(1),
     tax_regime_code: z.enum(TAX_REGIMES).default('NEW'),
     pf_enabled: z.boolean().optional(),
@@ -195,7 +195,7 @@ export const createEmployee = asyncHandler(async (req, res) => {
   const { monthly_gross, preview } = await resolveMonthlyGross(prisma, {
     mode: b.salary.mode,
     amount: b.salary.amount,
-    structure_id: group.structure_id,
+    structure_id: b.salary.structure_id,
     date: b.joined_on,
     gender: b.gender,
     pt_state: b.pt_state,
@@ -230,7 +230,7 @@ export const createEmployee = asyncHandler(async (req, res) => {
             mode: b.salary.mode,
             amount: BigInt(b.salary.amount),
             monthly_gross: BigInt(monthly_gross),
-            structure_id: group.structure_id,
+            structure_id: b.salary.structure_id,
             reason: 'Initial salary',
             created_by: actor,
           },
@@ -262,6 +262,7 @@ export const bulkAction = asyncHandler(async (req, res) => {
   const b = bulkSchema.parse(req.body);
   const where = b.ids?.length ? { id: { in: b.ids }, deleted_at: null } : employeeWhere(b.match?.q ?? null, b.match?.filter ?? {});
   const people = await prisma.employee.findMany({ where, include: { statutory: true, pay_group: true }, take: 5000 });
+  for (const person of people) assertWritable(person);
   const ym = ymOf(today());
   let changes = [];
   if (b.action === 'pay_group') {
@@ -310,7 +311,7 @@ const previewSchema = z
   .object({
     mode: z.enum(SALARY_MODES),
     amount: z.number().int().min(1),
-    structure_id: z.string().uuid().optional(),
+    structure_id: z.string().uuid(),
     pay_group_id: z.string().uuid().optional(),
     employee_id: z.string().uuid().optional(),
     date: isoDate.optional(),
@@ -325,16 +326,12 @@ const previewSchema = z
 
 export const getSalaryPreview = asyncHandler(async (req, res) => {
   const b = previewSchema.parse(req.body);
-  const e = b.employee_id ? await loadEmployee(prisma, b.employee_id) : null;
-  let structureId = b.structure_id;
-  if (!structureId && b.pay_group_id) structureId = (await prisma.payGroup.findUniqueOrThrow({ where: { id: b.pay_group_id } })).structure_id;
-  if (!structureId && e) structureId = e.pay_group.structure_id;
-  if (!structureId) throw new AppError('VALIDATION', 'Pick a pay group or salary structure.', 422, 'structure_id');
+  const e = b.employee_id ? await mustLoad(b.employee_id) : null;
   const st = e?.statutory;
   const preview = await previewSalary(prisma, {
     mode: b.mode,
     amount: b.amount,
-    structure_id: structureId,
+    structure_id: b.structure_id,
     date: b.date ?? today(),
     gender: b.gender ?? e?.gender ?? 'MALE',
     pt_state: b.pt_state ?? st?.pt_state ?? 'Andhra Pradesh',
@@ -367,7 +364,7 @@ export const getEmployee = asyncHandler(async (req, res) => {
   // Every read of the PII table is logged, not just writes.
   await auditReq(req, { action: 'pii.read', entity_type: 'employee_identity', entity_id: e.id, detail: { employee_id: e.id, masked: true } });
   const view = await employeeView(prisma, e, today(), false);
-  const rules = await rulesThatApply(prisma, e.pay_group_id, today());
+  const rules = await rulesThatApply(prisma, e.pay_group_id, today(), view.salary?.structure_id ?? null);
   res.json({ data: { ...view, rules } });
 });
 
@@ -401,6 +398,9 @@ export const updateEmployee = asyncHandler(async (req, res) => {
     if (core.pay_group_id && core.pay_group_id !== e.pay_group_id) {
       await audit(tx, { actor, ip, action: 'employee.pay_group_change', entity_type: 'employee', entity_id: e.id, detail: { from: e.pay_group_id, to: core.pay_group_id } });
     }
+    if (core.designation !== undefined && core.designation !== e.designation) {
+      await audit(tx, { actor, ip, action: 'employee.designation_change', entity_type: 'employee', entity_id: e.id, detail: { from: e.designation, to: core.designation, effective_on: today() } });
+    }
     if (identity) {
       const idData = identityData(identity);
       await tx.employeeIdentity.upsert({ where: { employee_id: e.id }, update: idData, create: { employee_id: e.id, ...idData } });
@@ -418,11 +418,13 @@ export const updateEmployee = asyncHandler(async (req, res) => {
 
 // ─── Salary ──────────────────────────────────────────────────────────────────
 export const getSalaryHistory = asyncHandler(async (req, res) => {
+  const e = await mustLoad(req.params.id);
   const rows = await prisma.employeeSalary.findMany({
     where: { employee_id: req.params.id, deleted_at: null },
     include: { structure: { select: { id: true, name: true } } },
     orderBy: { valid_from: 'desc' },
   });
+  const protection = await salaryHistoryProtection(prisma, req.params.id, rows);
   res.json({
     data: rows.map((r) => ({
       id: r.id,
@@ -432,9 +434,12 @@ export const getSalaryHistory = asyncHandler(async (req, res) => {
       amount: n(r.amount),
       monthly_gross: n(r.monthly_gross),
       structure: r.structure,
+      structure_id: r.structure_id,
       reason: r.reason,
       created_by: r.created_by,
       created_at: r.created_at,
+      ...protection.get(r.id),
+      ...(e.status === 'EXITED' ? { can_edit: false, can_delete: false, protection_reason: 'This employee has exited; their profile is read-only.', deletion_reason: 'This employee has exited; their profile is read-only.' } : {}),
     })),
   });
 });
@@ -444,7 +449,7 @@ export const reviseSalary = asyncHandler(async (req, res) => {
   const e = await mustLoad(req.params.id);
   assertWritable(e);
   if (b.valid_from < fromDbDate(e.joined_on)) throw new AppError('VALIDATION', 'A revision cannot take effect before the joining date.', 422, 'valid_from');
-  const structureId = b.structure_id ?? e.pay_group.structure_id;
+  const structureId = b.structure_id;
   const st = e.statutory;
   const { monthly_gross } = await resolveMonthlyGross(prisma, {
     mode: b.mode,
@@ -458,10 +463,12 @@ export const reviseSalary = asyncHandler(async (req, res) => {
     vpf_pct: Number(st.vpf_pct),
     esi_enabled: st.esi_enabled,
     chosen_gross: b.chosen_gross,
+    requirePreview: false,
   });
   const { actor, ip } = who(req);
   const result = await prisma.$transaction(async (tx) => {
     const r = await insertSalary(tx, e.id, b.valid_from, { mode: b.mode, amount: b.amount, monthly_gross, structure_id: structureId, reason: b.reason }, actor);
+    await markTask(tx, e.id, 'PAY', actor);
     await audit(tx, {
       actor,
       ip,
@@ -477,6 +484,52 @@ export const reviseSalary = asyncHandler(async (req, res) => {
     return r.created;
   });
   res.status(201).json({ data: { id: result.id, monthly_gross } });
+});
+
+function salarySnapshot(row) {
+  return {
+    id: row.id, mode: row.mode, amount: n(row.amount), monthly_gross: n(row.monthly_gross),
+    valid_from: fromDbDate(row.valid_from), valid_to: fromDbDate(row.valid_to),
+    structure_id: row.structure_id, reason: row.reason,
+  };
+}
+
+/** Correct an unlocked salary revision, then rebuild its effective-date neighbors. */
+export const updateSalaryRevision = asyncHandler(async (req, res) => {
+  const b = salaryRevisionSchema.parse(req.body);
+  const e = await mustLoad(req.params.id);
+  assertWritable(e);
+  if (b.valid_from < fromDbDate(e.joined_on)) throw new AppError('VALIDATION', 'A revision cannot take effect before the joining date.', 422, 'valid_from');
+  const st = e.statutory;
+  const { monthly_gross } = await resolveMonthlyGross(prisma, {
+    mode: b.mode, amount: b.amount, structure_id: b.structure_id, date: b.valid_from,
+    gender: e.gender, pt_state: st.pt_state, pf_enabled: st.pf_enabled,
+    pf_restrict_to_ceiling: st.pf_restrict_to_ceiling, vpf_pct: Number(st.vpf_pct),
+    esi_enabled: st.esi_enabled, chosen_gross: b.chosen_gross, requirePreview: false,
+  });
+  const { actor, ip } = who(req);
+  const result = await prisma.$transaction(async (tx) => {
+    const changed = await editSalary(tx, e.id, req.params.salaryId, b.valid_from, {
+      mode: b.mode, amount: b.amount, monthly_gross, structure_id: b.structure_id, reason: b.reason,
+    });
+    await audit(tx, { actor, ip, action: 'salary.edit', entity_type: 'employee', entity_id: e.id,
+      detail: { old: salarySnapshot(changed.previous), new: salarySnapshot(changed.updated), neighbors: changed.neighbors.map(salarySnapshot), reason: b.reason } });
+    return changed.updated;
+  });
+  res.json({ data: { id: result.id, monthly_gross } });
+});
+
+/** Remove an unlocked revision while keeping one agreement and continuous coverage. */
+export const deleteSalaryRevision = asyncHandler(async (req, res) => {
+  const e = await mustLoad(req.params.id);
+  assertWritable(e);
+  const { actor, ip } = who(req);
+  await prisma.$transaction(async (tx) => {
+    const changed = await deleteSalary(tx, e.id, req.params.salaryId);
+    await audit(tx, { actor, ip, action: 'salary.delete', entity_type: 'employee', entity_id: e.id,
+      detail: { old: salarySnapshot(changed.previous), neighbors: changed.neighbors.map(salarySnapshot) } });
+  });
+  res.json({ data: { id: req.params.salaryId, deleted: true } });
 });
 
 /** Switch between gross and CTC agreement. Pay stays identical; the record is restated. */
@@ -559,7 +612,16 @@ export const getPay = asyncHandler(async (req, res) => {
   const e = await mustLoad(req.params.id);
   const date = today() > fromDbDate(e.joined_on) ? today() : fromDbDate(e.joined_on);
   const cur = await salaryOn(prisma, e.id, date);
-  if (!cur) return res.json({ data: null });
+  if (!cur) {
+    let configuredRates = null;
+    try {
+      const current = await ratesOn(prisma, date);
+      configuredRates = { pf: current.pf, esi: current.esi };
+    } catch (error) {
+      if (!(error instanceof AppError) || error.code !== 'NOT_FOUND') throw error;
+    }
+    return res.json({ data: { salary: null, preview: null, rates: configuredRates } });
+  }
   const st = e.statutory;
   const preview = await previewSalary(prisma, {
     mode: cur.mode,

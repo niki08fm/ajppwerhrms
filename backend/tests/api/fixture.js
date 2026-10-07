@@ -76,7 +76,6 @@ export async function buildFixture(opts = {}) {
       calendar_method: 'FIXED_26',
       weekly_off: ['SUN'],
       shift_id: shift.id,
-      structure_id: structure.id,
       policies: { create: policies.map((p) => ({ policy_id: p.id })) },
     },
   });

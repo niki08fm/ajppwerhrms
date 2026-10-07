@@ -20,7 +20,7 @@ export function loadEmployee(db, id) {
       statutory: true,
       identity: true,
       department: { select: { id: true, name: true, colour: true } },
-      pay_group: { select: { id: true, name: true, calendar_method: true, weekly_off: true, structure_id: true } },
+      pay_group: { select: { id: true, name: true, calendar_method: true, weekly_off: true } },
       faces: { where: { deleted_at: null }, select: { enrolled_at: true, consent_at: true, model_version: true, kind: true }, orderBy: { enrolled_at: 'asc' } },
       onboarding_tasks: true,
     },
@@ -54,12 +54,14 @@ export function onboardingView(tasks) {
 }
 
 /**
- * "Rules that apply" — calendar, weekly off, shift, structure and every policy,
- * all read from the pay group. None of it is set on the person.
+ * Calendar, weekly off, shift and policies come from the pay group. The salary
+ * structure belongs to the employee's salary effective on this date.
  */
-export async function rulesThatApply(db, payGroupId, date) {
+export async function rulesThatApply(db, payGroupId, date, salaryStructureId = null) {
   const rules = await payGroupRules(db, payGroupId);
-  const structure = await db.salaryStructure.findUnique({ where: { id: rules.structure_id }, select: { id: true, name: true } });
+  const structure = salaryStructureId
+    ? await db.salaryStructure.findUnique({ where: { id: salaryStructureId }, select: { id: true, name: true } })
+    : null;
   const policies = POLICY_KINDS.map((kind) => {
     const p = pickPolicy(rules.policies, kind, date);
     return p

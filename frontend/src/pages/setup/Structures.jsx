@@ -17,7 +17,7 @@ export default function Structures() {
     <div>
       <PageHeader
         title="Salary structures"
-        description="Component templates. A structure has no date of its own: attach it to a pay group, and the month you choose there is when that group is paid on it. Structures are never edited in place; duplicate and edit makes a new one, and the people on the original stay on it until their pay group moves."
+        description="Salary component templates assigned to each employee. Select a structure when adding an employee or revising their salary. Duplicate an existing structure to change its components."
         actions={
           <Button onClick={() => nav('/setup/structures/new')}>
             <Plus /> New structure
@@ -33,7 +33,7 @@ export default function Structures() {
         <Card>
           <EmptyState
             title="No structures yet"
-            body="Build one: Basic, HRA and any allowances. Whatever is left of gross becomes the Special Allowance."
+            body="Build one with Basic, HRA, DA and any allowances. Whatever is left of gross becomes the Special Allowance."
             action={<Button onClick={() => nav('/setup/structures/new')}>Build a structure</Button>}
           />
         </Card>
@@ -44,11 +44,9 @@ export default function Structures() {
               <CardHeader
                 title={s.name}
                 description={
-                  s.pay_groups.length
-                    ? `Pay groups: ${s.pay_groups.map((g) => g.name).join(', ')} · ${s.people} ${s.people === 1 ? 'person' : 'people'} paid on it`
-                    : s.people
-                      ? `${s.people} ${s.people === 1 ? 'person' : 'people'} paid on it · not attached to a pay group`
-                      : 'Not attached to a pay group yet'
+                  s.people
+                    ? `${s.people} ${s.people === 1 ? 'employee' : 'employees'} paid on this structure`
+                    : 'Available to assign to employees'
                 }
                 actions={
                   <>

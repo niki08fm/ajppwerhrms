@@ -8,12 +8,13 @@ import { SalaryBreakup } from './SalaryBreakup';
 
 export function useSalaryPreview(args, enabled = true) {
   const d = useDebounced(args, 300);
-  return useQuery({
+  const query = useQuery({
     queryKey: ['salary-preview', d],
     queryFn: () => api.post('/employees/salary-preview', d).then((r) => r.data),
-    enabled: enabled && d.amount > 0 && !!(d.pay_group_id || d.structure_id || d.employee_id),
-    placeholderData: (prev) => prev,
+    enabled: enabled && d.amount > 0 && !!(d.structure_id || d.employee_id),
   });
+  const isInputPending = JSON.stringify(args) !== JSON.stringify(d);
+  return { ...query, data: isInputPending ? undefined : query.data, isInputPending };
 }
 
 /** As the amount is typed: earnings to gross, company contributions to CTC, deductions to net pay. */

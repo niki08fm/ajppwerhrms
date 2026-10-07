@@ -12,6 +12,28 @@ export const OT_BASE_LABELS = {
   GROSS: 'Gross',
 };
 
+/** Overtime also supports any selected combination without changing other wage-base rules. */
+export const OT_POLICY_BASES = [...OT_BASES, 'COMPONENTS'];
+export const OT_COMPONENTS = ['basic', 'hra', 'da'];
+export const OT_COMPONENT_LABELS = { basic: 'Basic', hra: 'HRA', da: 'DA' };
+
+/** Existing policy versions keep their original meaning when opened in the component picker. */
+export function overtimeComponentKeys(rules) {
+  if (rules.base === 'BASIC') return ['basic'];
+  if (rules.base === 'BASIC_HRA') return ['basic', 'hra'];
+  return rules.base === 'COMPONENTS' ? rules.components ?? [] : [];
+}
+
+export function describeOvertimeBase(rules) {
+  return rules.base === 'GROSS' ? 'Gross' : overtimeComponentKeys(rules).map((key) => OT_COMPONENT_LABELS[key]).join(' + ') || 'Select salary components';
+}
+
+/** Full monthly amounts in paise; a structure without DA contributes zero DA. */
+export function overtimeBaseMonthly(rules, salary) {
+  if (rules.base === 'GROSS') return salary.gross;
+  return [...new Set(overtimeComponentKeys(rules))].reduce((sum, key) => sum + (salary[key] ?? 0), 0);
+}
+
 /** Where overtime starts counting. */
 export const OT_COUNTS_FROM = ['STANDARD_DAY', 'SHIFT_END'];
 export const OT_COUNTS_FROM_LABELS = {
@@ -57,7 +79,8 @@ export const attendanceRulesSchema = z
 export const overtimeRulesSchema = z
   .object({
     multiplier: z.number().min(1).max(5),
-    base: z.enum(OT_BASES),
+    base: z.enum(OT_POLICY_BASES),
+    components: z.array(z.enum(OT_COMPONENTS)).max(OT_COMPONENTS.length).optional(),
     /** null = use the pay group's calendar divisor */
     divisor: z.number().int().min(1).max(31).nullable(),
     hours_per_day: z.number().min(1).max(24),
@@ -75,7 +98,18 @@ export const overtimeRulesSchema = z
      */
     counts_from: z.enum(OT_COUNTS_FROM).default('STANDARD_DAY'),
   })
-  .strict();
+  .strict()
+  .superRefine((r, ctx) => {
+    if (r.base === 'COMPONENTS' && !r.components?.length) {
+      ctx.addIssue({ code: 'custom', path: ['components'], message: 'Select at least one salary component for overtime' });
+    }
+    if (r.components && new Set(r.components).size !== r.components.length) {
+      ctx.addIssue({ code: 'custom', path: ['components'], message: 'Select each salary component only once' });
+    }
+    if (r.base !== 'COMPONENTS' && r.components !== undefined) {
+      ctx.addIssue({ code: 'custom', path: ['components'], message: 'Salary components apply only to a component-based overtime rule' });
+    }
+  });
 
 export const offDayPayRulesSchema = z
   .object({

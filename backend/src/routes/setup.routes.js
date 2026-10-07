@@ -16,7 +16,8 @@ setupRouter.post('/structures', requirePerm('setup.write'), setupController.crea
 setupRouter.get('/pay-groups', requirePerm('setup.read'), setupController.listPayGroups);
 setupRouter.get('/pay-groups/:id', requirePerm('setup.read'), setupController.getPayGroup);
 setupRouter.post('/pay-groups', requirePerm('setup.write'), setupController.createPayGroup);
-setupRouter.get('/pay-groups/:id/structure-move', requirePerm('setup.read'), setupController.previewStructureMove);
+setupRouter.get('/pay-groups/:id/employees', requirePerm('people.read'), setupController.listPayGroupEmployees);
+setupRouter.post('/pay-groups/:id/employees', requirePerm('people.write'), setupController.movePayGroupEmployees);
 setupRouter.patch('/pay-groups/:id', requirePerm('setup.write'), setupController.updatePayGroup);
 
 // ─── Statutory ───────────────────────────────────────────────────────────────

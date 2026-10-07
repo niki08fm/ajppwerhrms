@@ -436,7 +436,7 @@ export const listOvertime = asyncHandler(async (req, res) => {
     where: {
       deleted_at: null,
       status: { in: ['ACTIVE', 'NOTICE', 'EXITED'] },
-      joined_on: { lte: toDbDate(`${month}-28`) },
+      joined_on: { lte: toDbDate(lastOfMonth(month)) },
       OR: [{ last_day: null }, { last_day: { gte: toDbDate(`${month}-01`) } }],
     },
     include: { statutory: true, department: { select: { id: true, name: true } } },
@@ -454,7 +454,7 @@ export const listOvertime = asyncHandler(async (req, res) => {
     const m = months.get(e.id);
     try {
       const ps = await computePayslip(prisma, e, month, m, ctx, rec.get(e.id) ?? null);
-      const pol = pickPolicy(m.rules.policies, 'OVERTIME', `${month}-28`);
+      const pol = pickPolicy(m.rules.policies, 'OVERTIME', lastOfMonth(month));
       const r = pol?.rules;
       rows.push({
         employee: { id: e.id, code: e.code, name: e.name, department: e.department },
@@ -464,6 +464,7 @@ export const listOvertime = asyncHandler(async (req, res) => {
         hourly: ps.result.ot?.hourly ?? 0,
         multiplier: r?.multiplier ?? null,
         base: r?.base ?? null,
+        components: r?.components ?? null,
         policy: pol ? { name: pol.name, version: pol.version } : null,
         amount: ps.result.ot?.amount ?? 0,
         offday_days: m.result.offday_work.length,

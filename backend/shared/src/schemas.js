@@ -192,8 +192,8 @@ export function withSpecialAllowance(components, make) {
 }
 
 /**
- * A structure has no date of its own. It applies to the people of whichever pay
- * group it is attached to, from the month chosen when it is attached.
+ * A structure has no date of its own. Each employee salary revision or offer
+ * selects its structure; salary revision dates determine when it applies.
  */
 export const structureCreateSchema = z
   .object({
@@ -227,21 +227,11 @@ export const payGroupSchema = z
     calendar_method: z.enum(CALENDAR_METHODS),
     weekly_off: z.array(DAY_NAMES_SCHEMA).max(6),
     shift_id: uuid,
-    structure_id: uuid,
     policy_ids: z.array(uuid).default([]),
   })
   .strict();
 
-export const payGroupPatchSchema = payGroupSchema
-  .partial()
-  .extend({
-    /**
-     * When the structure changes: the first month everyone in the group is paid
-     * on it. Defaults to the earliest month not yet run.
-     */
-    structure_from: yearMonth.optional(),
-  })
-  .strict();
+export const payGroupPatchSchema = payGroupSchema.partial().strict();
 
 // ─── Statutory configuration ─────────────────────────────────────────────────
 
@@ -352,7 +342,7 @@ export const salaryRevisionSchema = z
     mode: z.enum(SALARY_MODES),
     amount: paise.min(1),
     valid_from: isoDate,
-    structure_id: uuid.nullable().optional(),
+    structure_id: uuid,
     reason: z.string().min(3).max(300),
     /** When a CTC lands in the ESI band, the caller must pick one of the two grosses */
     chosen_gross: paise.optional(),
@@ -368,6 +358,7 @@ export const offerCreateSchema = z
     department_id: uuid,
     designation: z.string().min(1).max(80),
     pay_group_id: uuid,
+    structure_id: uuid,
     mode: z.enum(SALARY_MODES),
     amount: paise.min(1),
     join_by: isoDate,

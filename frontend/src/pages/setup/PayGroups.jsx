@@ -1,6 +1,7 @@
-import { Link, useNavigate } from 'react-router-dom';
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Pencil, Plus } from 'lucide-react';
+import { AlertTriangle, Pencil, Plus, Users } from 'lucide-react';
 import { CALENDAR_METHOD_INFO, POLICY_KIND_LABELS } from '@ajpwer/shared';
 import { api } from '@/services/api';
 import { hhmm } from '@/utils';
@@ -8,15 +9,17 @@ import { PageHeader } from '@/components/bits';
 import { Chip, EmptyState, ErrorState, SkeletonBlock } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
+import ManagePayGroupDialog from '@/components/setup/ManagePayGroupDialog';
 
 export default function PayGroups() {
   const nav = useNavigate();
+  const [manage, setManage] = useState(null);
   const q = useQuery({ queryKey: ['pay-groups'], queryFn: () => api.get('/pay-groups').then((r) => r.data) });
   return (
     <div>
       <PageHeader
         title="Pay groups"
-        description="The centre of gravity. Calendar method, weekly off, shift, salary structure and every policy hang off the pay group, never off the person. Change a policy here and everyone in the group changes together."
+        description="Set the calendar, weekly off, shift and policies for each pay group. Manage employees here; choose their salary structures in their profiles."
         actions={
           <Button onClick={() => nav('/setup/pay-groups/new')}>
             <Plus /> New pay group
@@ -35,7 +38,7 @@ export default function PayGroups() {
         <Card>
           <EmptyState
             title="No pay groups yet"
-            body="Build policies and a salary structure first, then create a pay group that attaches them."
+            body="Create a pay group with a shift and calendar, then attach policies and add employees."
             action={<Button onClick={() => nav('/setup/pay-groups/new')}>Create a pay group</Button>}
           />
         </Card>
@@ -47,9 +50,10 @@ export default function PayGroups() {
                 title={g.name}
                 description={`${g.headcount} people · paid on day ${g.pay_day}`}
                 actions={
-                  <Button variant="outline" size="sm" onClick={() => nav(`/setup/pay-groups/${g.id}/edit`)}>
-                    <Pencil /> Edit
-                  </Button>
+                  <>
+                    <Button variant="outline" size="sm" onClick={() => setManage(g)}><Users /> Manage employees</Button>
+                    <Button variant="outline" size="sm" onClick={() => nav(`/setup/pay-groups/${g.id}/edit`)}><Pencil /> Edit</Button>
+                  </>
                 }
               />
 
@@ -66,16 +70,6 @@ export default function PayGroups() {
                   <div>
                     <div className="text-[13px] text-muted-foreground">Shift</div>
                     {g.shift.name} ({hhmm(g.shift.start_min)}–{hhmm(g.shift.end_min)})
-                  </div>
-                  <div>
-                    <div className="text-[13px] text-muted-foreground">Structure</div>
-                    {g.structure ? (
-                      <Link to="/setup/structures" className="hover:underline">
-                        {g.structure.name}
-                      </Link>
-                    ) : (
-                      '—'
-                    )}
                   </div>
                 </div>
                 <div>
@@ -111,6 +105,7 @@ export default function PayGroups() {
           ))}
         </div>
       )}
+      {manage && <ManagePayGroupDialog group={q.data?.find((g) => g.id === manage.id) ?? manage} groups={q.data ?? []} onClose={() => setManage(null)} />}
     </div>
   );
 }

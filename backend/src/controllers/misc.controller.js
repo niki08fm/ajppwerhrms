@@ -23,7 +23,7 @@ export const search = asyncHandler(async (req, res) => {
 export const getLookups = asyncHandler(async (_req, res) => {
   const [departments, payGroups, sites, shifts, structures, projects, ptStates] = await Promise.all([
     prisma.department.findMany({ where: { deleted_at: null }, select: { id: true, name: true, colour: true }, orderBy: { name: 'asc' } }),
-    prisma.payGroup.findMany({ where: { deleted_at: null }, select: { id: true, name: true, calendar_method: true, weekly_off: true, structure_id: true }, orderBy: { name: 'asc' } }),
+    prisma.payGroup.findMany({ where: { deleted_at: null }, select: { id: true, name: true, calendar_method: true, weekly_off: true }, orderBy: { name: 'asc' } }),
     prisma.site.findMany({ where: { deleted_at: null }, select: { id: true, code: true, name: true, state: true, is_active: true }, orderBy: { name: 'asc' } }),
     prisma.shift.findMany({ where: { deleted_at: null }, select: { id: true, name: true, start_min: true, end_min: true }, orderBy: { start_min: 'asc' } }),
     prisma.salaryStructure.findMany({ where: { deleted_at: null }, select: { id: true, name: true }, orderBy: { name: 'asc' } }),

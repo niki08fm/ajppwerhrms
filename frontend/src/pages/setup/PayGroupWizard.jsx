@@ -1,22 +1,26 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
-import { addMonths, CALENDAR_METHOD_INFO, CALENDAR_METHODS, DAY_NAMES, formatINR, formatYearMonth, monthLabelSafe, POLICY_KINDS, POLICY_KIND_LABELS, POLICY_KIND_MISSING_WARNING } from '../../components/setup/wizard-deps';
+import { CALENDAR_METHOD_INFO, CALENDAR_METHODS, DAY_NAMES, formatINR, monthLabelSafe, POLICY_KINDS, POLICY_KIND_LABELS, POLICY_KIND_MISSING_WARNING } from '../../components/setup/wizard-deps';
 import { api, errorMessage } from '@/services/api';
 import { useLookups } from '@/hooks/useLookups';
 import { cn, hhmm } from '@/utils';
-import { Money, PageHeader, ProportionBar } from '@/components/bits';
-import { Chip, Notice, SkeletonBlock } from '@/components/states';
+import { PageHeader } from '@/components/bits';
+import { Chip, ErrorState, Notice, SkeletonBlock } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody } from '@/components/ui/card';
 import { Field, Input, Select } from '@/components/ui/form';
-import { Checkbox } from '@/components/ui/overlay';
 
-const STEPS = ['Basics', 'Calendar method', 'Weekly off and shift', 'Policies', 'Salary structure', 'Review'];
+const STEPS = ['Basics', 'Calendar method', 'Weekly off and shift', 'Policies', 'Review'];
 
-/** Six steps, one decision each, so nothing is buried. */
+function selectedPolicyVersions(rows = [], ids) {
+  const keys = new Set(rows.filter((p) => ids.includes(p.id)).map((p) => p.policy_key ?? p.id));
+  return [...new Set([...ids, ...rows.filter((p) => keys.has(p.policy_key ?? p.id)).map((p) => p.id)])];
+}
+
+/** Salary structures are selected on the employee's salary, independently of group rules. */
 export default function PayGroupWizard() {
   const { id } = useParams();
   const nav = useNavigate();
@@ -24,9 +28,8 @@ export default function PayGroupWizard() {
   const { data: lk } = useLookups();
   const existing = useQuery({ queryKey: ['pay-group', id], queryFn: () => api.get(`/pay-groups/${id}`).then((r) => r.data), enabled: !!id });
   const policies = useQuery({ queryKey: ['policies'], queryFn: () => api.get('/policies').then((r) => r.data) });
-  const structures = useQuery({ queryKey: ['structures'], queryFn: () => api.get('/structures').then((r) => r.data) });
   const [step, setStep] = useState(0);
-  const [f, setF] = useState({ name: '', pay_day: 7, calendar_method: 'FIXED_26', weekly_off: ['SUN'], shift_id: '', structure_id: '', policy_ids: [] });
+  const [f, setF] = useState({ name: '', pay_day: 7, calendar_method: 'FIXED_26', weekly_off: ['SUN'], shift_id: '', policy_ids: [] });
   useEffect(() => {
     const g = existing.data;
     if (g)
@@ -36,7 +39,6 @@ export default function PayGroupWizard() {
         calendar_method: g.calendar_method,
         weekly_off: g.weekly_off,
         shift_id: g.shift.id,
-        structure_id: g.structure?.id ?? '',
         policy_ids: g.policies.map((p) => p.id),
       });
   }, [existing.data]);
@@ -48,40 +50,35 @@ export default function PayGroupWizard() {
     queryKey: ['calendar-methods', f.weekly_off.join(',')],
     queryFn: () => api.get('/calendar-methods', { weekly_off: f.weekly_off.join(','), gross: 2_600_000 }),
   });
-  // Changing the structure of a group that has people: choose the month they move, and see who moves first.
-  const structureChanged = !!id && !!existing.data && existing.data.headcount > 0 && !!f.structure_id && f.structure_id !== existing.data.structure?.id;
-  const [moveFrom, setMoveFrom] = useState(null);
-  const move = useQuery({
-    queryKey: ['structure-move', id, f.structure_id, moveFrom],
-    queryFn: () => api.get(`/pay-groups/${id}/structure-move`, { structure_id: f.structure_id, ...(moveFrom ? { from: moveFrom } : {}) }).then((r) => r.data),
-    enabled: structureChanged,
-    placeholderData: (p) => p,
-    retry: false,
-  });
   const save = useMutation({
-    mutationFn: () => (id ? api.patch(`/pay-groups/${id}`, { ...f, ...(structureChanged && move.data ? { structure_from: move.data.from } : {}) }) : api.post('/pay-groups', f)),
-    onSuccess: (r) => {
-      const moved = id ? r.data.structure_move : null;
-      toast.success(
-        moved
-          ? `Pay group updated. ${moved.moved} ${moved.moved === 1 ? 'person moves' : 'people move'} to the new structure from ${formatYearMonth(moved.from)}${moved.skipped.length ? `; ${moved.skipped.length} could not be moved` : ''}.`
-          : id
-            ? 'Pay group updated. Everyone in it now follows these rules.'
-            : 'Pay group created and usable immediately.',
-      );
-      qc.invalidateQueries({ queryKey: ['pay-groups'] });
-      qc.invalidateQueries({ queryKey: ['lookups'] });
+    mutationFn: () => {
+      const body = { ...f, policy_ids: selectedPolicyVersions(policies.data, f.policy_ids) };
+      return id ? api.patch(`/pay-groups/${id}`, body) : api.post('/pay-groups', body);
+    },
+    onSuccess: () => {
+      toast.success(id ? 'Pay group updated. Everyone in it now follows these rules.' : 'Pay group created and usable immediately.');
+      for (const key of ['pay-groups', 'pay-group', 'lookups', 'employee', 'employee-pay', 'payslip-preview', 'emp-attendance', 'timeline']) {
+        qc.invalidateQueries({ queryKey: [key] });
+      }
       nav('/setup/pay-groups');
     },
     onError: (e) => toast.error(errorMessage(e)),
   });
   if (id && existing.isLoading) return <SkeletonBlock className="h-96" />;
+  if (id && existing.isError) return <ErrorState error={existing.error} onRetry={() => existing.refetch()} />;
 
-  const attached = (policies.data ?? []).filter((p) => f.policy_ids.includes(p.id));
+  const selectedIds = selectedPolicyVersions(policies.data, f.policy_ids);
+  const attached = (policies.data ?? []).filter((p) => selectedIds.includes(p.id));
+  const conflictingKinds = new Set(POLICY_KINDS.filter((kind) => new Set(attached.filter((p) => p.kind === kind).map((p) => p.policy_key ?? p.id)).size > 1));
   const today = lk?.today ?? '';
   const missingKinds = POLICY_KINDS.filter((k) => !attached.some((p) => p.kind === k && p.valid_from <= today && (!p.valid_to || p.valid_to >= today)));
-  const structure = structures.data?.find((s) => s.id === f.structure_id);
-  const canNext = [!!f.name.trim(), true, !!f.shift_id, true, !!f.structure_id && (!structureChanged || !!move.data), true][step];
+  const canNext = [!!f.name.trim(), true, !!f.shift_id, !policies.isFetching && !policies.isError && conflictingKinds.size === 0, true][step];
+  const choosePolicy = (kind, policyKey) => {
+    const rows = policies.data ?? [];
+    const kindIds = new Set(rows.filter((p) => p.kind === kind).map((p) => p.id));
+    const chosenIds = rows.filter((p) => p.kind === kind && (p.policy_key ?? p.id) === policyKey).map((p) => p.id);
+    setF((prev) => ({ ...prev, policy_ids: [...prev.policy_ids.filter((policyId) => !kindIds.has(policyId)), ...chosenIds] }));
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -89,7 +86,7 @@ export default function PayGroupWizard() {
         crumbs={[{ label: 'Pay groups', to: '/setup/pay-groups' }, { label: id ? `Edit ${existing.data?.name ?? ''}` : 'New pay group' }]}
         title={id ? `Edit ${existing.data?.name}` : 'New pay group'}
       />
-      <ol className="grid grid-cols-3 gap-1 rounded-lg border bg-card p-1 md:grid-cols-6">
+      <ol className="grid grid-cols-3 gap-1 rounded-lg border bg-card p-1 md:grid-cols-5">
         {STEPS.map((s, i) => (
           <li key={s}>
             <button
@@ -189,80 +186,45 @@ export default function PayGroupWizard() {
           )}
           {step === 3 && (
             <div className="flex flex-col gap-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[13px] text-muted-foreground">Choose the policies this pay group follows.</p>
+                <Button variant="outline" size="sm" loading={policies.isFetching} onClick={() => policies.refetch()}><RefreshCw /> Refresh policies</Button>
+              </div>
+              {policies.isError && <ErrorState error={policies.error} onRetry={() => policies.refetch()} compact />}
               {POLICY_KINDS.map((k) => {
                 const list = (policies.data ?? []).filter((p) => p.kind === k);
+                const lineages = [...new Map(list.map((p) => [p.policy_key ?? p.id, list.filter((x) => (x.policy_key ?? x.id) === (p.policy_key ?? p.id)).sort((a, b) => b.version - a.version)[0]])).values()];
+                const selected = list.find((p) => f.policy_ids.includes(p.id));
+                const conflicted = conflictingKinds.has(k);
                 return (
-                  <div key={k}>
-                    <div className="mb-1 flex items-center justify-between">
-                      <span className="text-[14px] font-semibold">{POLICY_KIND_LABELS[k]}</span>
-                      <Link to={`/setup/policies?kind=${k}&new=1`} target="_blank" className="text-[13px] text-primary hover:underline">
-                        Create a {POLICY_KIND_LABELS[k].toLowerCase()} policy
-                      </Link>
-                    </div>
-                    {!list.length ? (
-                      <p className="text-[13px] text-muted-foreground">None exist yet.</p>
-                    ) : (
-                      <ul className="grid gap-1 md:grid-cols-2">
-                        {list.map((p) => (
-                          <li key={p.id} className="flex items-center gap-2 rounded-md border px-2 py-1.5 text-[14px]">
-                            <Checkbox
-                              label={`${p.name} v${p.version}`}
-                              checked={f.policy_ids.includes(p.id)}
-                              onCheckedChange={(v) => setF({ ...f, policy_ids: v ? [...f.policy_ids, p.id] : f.policy_ids.filter((x) => x !== p.id) })}
-                            />
-                            <span className="flex-1">
-                              {p.name} <span className="text-muted-foreground">v{p.version}</span>
-                            </span>
-                            <span className="text-[12px] text-muted-foreground num">
-                              {p.valid_from} → {p.valid_to ?? ''}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
+                  <div key={k} className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-center">
+                    <Field label={POLICY_KIND_LABELS[k]} hint={!list.length && !policies.isLoading ? 'No policies created yet.' : undefined} error={conflicted ? 'Multiple policies are attached. Choose one policy or None to continue.' : undefined}>
+                      {(fieldId, invalid) => (
+                        <Select
+                          id={fieldId}
+                          aria-invalid={invalid || undefined}
+                          value={conflicted ? '__choose_policy__' : selected ? (selected.policy_key ?? selected.id) : ''}
+                          onChange={(e) => choosePolicy(k, e.target.value)}
+                          disabled={policies.isLoading || policies.isError}
+                        >
+                          {conflicted && <option value="__choose_policy__" disabled>Choose a policy or None</option>}
+                          <option value="">None</option>
+                          {lineages.map((p) => (
+                            <option key={p.policy_key ?? p.id} value={p.policy_key ?? p.id}>{p.name} · v{p.version}</option>
+                          ))}
+                        </Select>
+                      )}
+                    </Field>
+                    <Link to={`/setup/policies?kind=${k}&new=1`} target="_blank" rel="noreferrer" className="text-[13px] text-primary hover:underline">
+                      Create a {POLICY_KIND_LABELS[k].toLowerCase()} policy
+                    </Link>
                   </div>
                 );
               })}
-              <p className="text-[13px] text-muted-foreground">Two versions of one policy can both be attached; the engine picks by date. Attach every version you want history to use.</p>
+              <p className="text-[13px] text-muted-foreground">Select one policy for each kind, or None. Earlier versions of the selected policy stay available for their effective dates.</p>
             </div>
           )}
           {step === 4 && (
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="flex flex-col gap-2">
-                {structures.data?.map((s) => (
-                  <button
-                    key={s.id}
-                    onClick={() => setF({ ...f, structure_id: s.id })}
-                    className={cn('rounded-md border p-3 text-left text-[14px]', f.structure_id === s.id ? 'border-primary ring-2 ring-primary' : 'hover:bg-accent')}
-                  >
-                    <span className="font-medium">{s.name}</span>
-                  </button>
-                ))}
-              </div>
-              {structure && (
-                <div className="flex flex-col gap-3">
-                  {structureChanged && <MovePanel plan={move.data} loading={move.isFetching} error={move.error} onMonth={setMoveFrom} structureName={structure.name} />}
-                  <div className="rounded-md border p-3">
-                    <div className="mb-2 text-[14px] font-semibold">At ₹24,000 a month</div>
-                    <ProportionBar parts={structure.sample.monthly.map((c) => ({ label: c.name, value: c.amount }))} />
-                    <table className="mt-2 w-full text-[14px]">
-                      <tbody>
-                        {structure.sample.monthly.map((c) => (
-                          <tr key={c.name} className="border-t">
-                            <td className="py-1">{c.name}</td>
-                            <td className="text-right">
-                              <Money value={c.amount} />
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-          {step === 5 && (
             <div className="flex flex-col gap-4 text-[14px]">
               <div className="grid gap-3 sm:grid-cols-3">
                 <div>
@@ -282,22 +244,17 @@ export default function PayGroupWizard() {
                   {lk?.shifts.find((s) => s.id === f.shift_id)?.name}
                 </div>
                 <div>
-                  <div className="text-[13px] text-muted-foreground">Structure</div>
-                  {structure?.name}
-                </div>
-                <div>
                   <div className="text-[13px] text-muted-foreground">Pay day</div>
                   {f.pay_day}
                 </div>
               </div>
               <div>
                 <div className="mb-1 text-[13px] text-muted-foreground">Policies</div>
-                <ul>
-                  {attached.map((p) => (
-                    <li key={p.id}>
-                      {POLICY_KIND_LABELS[p.kind]}: {p.name} v{p.version}
-                    </li>
-                  ))}
+                <ul className="space-y-1">
+                  {POLICY_KINDS.map((kind) => {
+                    const selected = attached.filter((p) => p.kind === kind).sort((a, b) => b.version - a.version)[0];
+                    return <li key={kind}>{POLICY_KIND_LABELS[kind]}: {selected ? `${selected.name} · v${selected.version}` : 'None'}</li>;
+                  })}
                 </ul>
               </div>
               {missingKinds.length > 0 && (
@@ -312,17 +269,9 @@ export default function PayGroupWizard() {
                   </ul>
                 </Notice>
               )}
-              {structureChanged && move.data && (
-                <Notice tone={move.data.skipped.length ? 'warning' : 'info'}>
-                  {move.data.move.length} {move.data.move.length === 1 ? 'person moves' : 'people move'} to <strong>{move.data.structure.name}</strong> from{' '}
-                  <strong>{formatYearMonth(move.data.from)}</strong>, each as a dated change in their salary history.
-                  {move.data.skipped.length > 0 && ` ${move.data.skipped.length} cannot be moved (see the structure step).`}
-                </Notice>
-              )}
               {id && existing.data && existing.data.headcount > 0 && (
                 <Notice>
-                  {existing.data.headcount} people are in this group. Their calendar, weekly off, shift and every policy change with it, from today
-                  {structureChanged ? '; the structure from the month above' : ''}. Months already run keep their payslips.
+                  {existing.data.headcount} people are in this group. Their calendar, weekly off, shift and policies follow the group. Salary structures are chosen in each employee's Salary section.
                 </Notice>
               )}
             </div>
@@ -332,78 +281,17 @@ export default function PayGroupWizard() {
           <Button variant="outline" onClick={() => (step === 0 ? nav('/setup/pay-groups') : setStep(step - 1))}>
             <ArrowLeft /> {step === 0 ? 'Cancel' : 'Back'}
           </Button>
-          {step < 5 ? (
+          {step < STEPS.length - 1 ? (
             <Button disabled={!canNext} onClick={() => setStep(step + 1)}>
               Next <ArrowRight />
             </Button>
           ) : (
-            <Button loading={save.isPending} onClick={() => save.mutate()}>
+            <Button loading={save.isPending} disabled={conflictingKinds.size > 0 || policies.isFetching || policies.isError} onClick={() => save.mutate()}>
               <Check /> {id ? 'Save changes' : 'Create pay group'}
             </Button>
           )}
         </div>
       </Card>
-    </div>
-  );
-}
-
-function MovePanel({ plan, loading, error, onMonth, structureName }) {
-  const months = plan ? Array.from({ length: 12 }, (_, i) => addMonths(plan.first_open_month, i)) : [];
-  return (
-    <div className="rounded-md border border-primary/40 bg-primary/5 p-3 text-[14px]">
-      <div className="font-semibold">Move this group to {structureName}</div>
-      <p className="mt-0.5 text-[13px] text-muted-foreground">
-        Everyone in the group is paid on it from the month you pick, as a dated change in their salary history. Agreed pay stays the same: a gross stays the gross, a CTC stays the CTC. Months already
-        run keep their payslips.
-      </p>
-      {error ? (
-        <Notice tone="destructive">{errorMessage(error)}</Notice>
-      ) : !plan ? (
-        <p className="mt-2 text-muted-foreground">Working out who moves…</p>
-      ) : (
-        <div className="mt-2 flex flex-col gap-2">
-          <Field label="Paid on it from">
-            {(i) => (
-              <Select id={i} value={plan.from} onChange={(e) => onMonth(e.target.value)} className="max-w-48">
-                {months.map((m) => (
-                  <option key={m} value={m}>
-                    {formatYearMonth(m)}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
-          <div className={cn('flex flex-wrap gap-1.5', loading && 'opacity-60')}>
-            <Chip tone="success">{plan.move.length} move</Chip>
-            {plan.unchanged > 0 && <Chip tone="muted">{plan.unchanged} already on it</Chip>}
-            {plan.skipped.length > 0 && <Chip tone="warning">{plan.skipped.length} cannot move</Chip>}
-          </div>
-          {plan.move.some((m) => m.from_gross !== m.to_gross) && (
-            <ul className="text-[13px] text-muted-foreground">
-              {plan.move
-                .filter((m) => m.from_gross !== m.to_gross)
-                .map((m) => (
-                  <li key={m.employee.id}>
-                    {m.employee.name} ({m.employee.code}) — CTC kept, gross {formatINR(m.from_gross)} → {formatINR(m.to_gross)}
-                    {m.esi_band ? ' (ESI band: kept on their current side)' : ''}
-                  </li>
-                ))}
-            </ul>
-          )}
-          {plan.skipped.length > 0 && (
-            <ul className="list-disc pl-5 text-[13px]">
-              {plan.skipped.map((x) => (
-                <li key={x.employee.id}>
-                  <Link to={`/people/${x.employee.id}?tab=salary`} className="font-medium hover:underline">
-                    {x.employee.name} ({x.employee.code})
-                  </Link>{' '}
-                  — {x.reason}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
     </div>
   );
 }
