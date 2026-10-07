@@ -14,6 +14,7 @@
  *  - two people in the same crew in different PT states
  *
  * Run: npm run db:seed   (on a freshly migrated database)
+ * Setup only, without example people or attendance: npm run db:seed:setup
  */
 import {
   generateSitePassword,
@@ -64,10 +65,13 @@ const M3 = addMonths(M0, -3);
 const START = firstOfMonth(M3);
 
 async function main() {
+  const setupOnly = process.argv.includes('--setup-only');
   const existing = await prisma.appUser.count();
   if (existing > 0 && !process.argv.includes('--force')) {
     console.log(
-      'Database already has data, so the sample data is not loaded again. To start over with fresh sample data: `npm run db:reset`, then `npm run db:seed`. Pass --force to add to it anyway.',
+      setupOnly
+        ? 'Database already has data, so setup is not loaded again. Use a freshly migrated preview database for employee imports.'
+        : 'Database already has data, so the sample data is not loaded again. To start over with fresh sample data: `npm run db:reset`, then `npm run db:seed`. Pass --force to add to it anyway.',
     );
     return;
   }
@@ -104,18 +108,20 @@ async function main() {
   });
 
   // ── Calendar ──────────────────────────────────────────────────────────────
-  const depts = Object.fromEntries(
-    await Promise.all(
-      [
-        ['Electrical', 'chart-1'],
-        ['Civil', 'chart-2'],
-        ['Mechanical', 'chart-3'],
-        ['Planning', 'chart-4'],
-        ['Safety', 'chart-5'],
-        ['Administration', 'chart-2'],
-      ].map(async ([name, colour]) => [name, await prisma.department.create({ data: { name, colour } })]),
-    ),
-  );
+  const depts = setupOnly
+    ? {}
+    : Object.fromEntries(
+        await Promise.all(
+          [
+            ['Electrical', 'chart-1'],
+            ['Civil', 'chart-2'],
+            ['Mechanical', 'chart-3'],
+            ['Planning', 'chart-4'],
+            ['Safety', 'chart-5'],
+            ['Administration', 'chart-2'],
+          ].map(async ([name, colour]) => [name, await prisma.department.create({ data: { name, colour } })]),
+        ),
+      );
   // Nine-hour shifts with an hour's break inside them.
   const general = await prisma.shift.create({ data: { name: 'General 09:00–18:00', start_min: 540, end_min: 1080, break_min: 60 } });
   await prisma.shift.create({ data: { name: 'Early 07:00–16:00', start_min: 420, end_min: 960, break_min: 60 } });
@@ -299,6 +305,13 @@ async function main() {
       policies: { create: [att, woffOffice, hpay, leave, gratuity].map((p) => ({ policy_id: p.id })) },
     },
   });
+
+  if (setupOnly) {
+    console.log(
+      'Setup ready: admin, company, calendar, statutory rules, policies, salary structures and pay groups. No example departments, projects, sites, employees, attendance or payroll were created.',
+    );
+    return;
+  }
 
   // ── Projects and sites ────────────────────────────────────────────────────
   const alphaP = await prisma.project.create({
