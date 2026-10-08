@@ -289,7 +289,7 @@ async function mockProfile(page, { noSalary = false, protectedRevision = false, 
 }
 const tab = (page) => page.getByRole('tabpanel', { name: 'Salary and statutory' });
 
-test('first salary needs an explicit structure and date, including an empty pay object', async ({ page }) => {
+test('first salary needs an explicit structure and month, including an empty pay object', async ({ page }) => {
   const state = await mockProfile(page, {
     noSalary: true,
     emptyPayObject: true,
@@ -299,7 +299,7 @@ test('first salary needs an explicit structure and date, including an empty pay 
   await tab(page).getByRole('button', { name: 'Add salary', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Add salary', exact: true });
   await dialog.getByLabel('Annual gross').fill('360000');
-  await dialog.getByLabel('Effective from').fill('2026-10-01');
+  await dialog.getByLabel('Effective month').fill('2026-10');
   await dialog.getByLabel('Reason').fill('Initial agreement');
   await expect(dialog.getByRole('button', { name: 'Add salary', exact: true })).toBeDisabled();
   await dialog.getByLabel('Salary structure').selectOption('structure-b');
@@ -319,20 +319,32 @@ test('first salary needs an explicit structure and date, including an empty pay 
   ).toBeVisible();
 });
 
-test('statutory settings and component-based overtime rules remain usable without salary', async ({ page }) => {
+test('statutory settings remain usable without salary and show only the selected tax regime', async ({ page }) => {
   const state = await mockProfile(page, {
     noSalary: true,
     emptyPayObject: true,
   });
   await page.goto('/people/employee-test?tab=salary');
   await tab(page).getByRole('radio', { name: 'Statutory', exact: true }).click();
-  await expect(tab(page).getByRole('heading', { name: 'Applicable statutory rates' })).toBeVisible();
-  await expect(tab(page)).toContainText('Basic + HRA + DA');
+  await expect(tab(page).getByRole('heading', { name: 'Applicable statutory rates' })).toHaveCount(0);
+  await expect(tab(page)).not.toContainText('Basic + HRA + DA');
+  await expect(tab(page).getByLabel('Tax regime', { exact: true })).toHaveValue('NEW');
+  await expect(tab(page).getByRole('heading', { name: 'Declarations', exact: true })).toBeVisible();
   await expect(tab(page)).not.toContainText('undefined');
   await page.screenshot({ path: '/tmp/payroll-profile-statutory.png', fullPage: true });
   await tab(page).getByRole('switch', { name: 'PF', exact: true }).click();
   await expect.poll(() => state.requests.filter((r) => r.path.endsWith('/statutory')).length).toBe(1);
   expect(state.requests.at(-1).body).toEqual({ pf_enabled: false });
+  await tab(page).getByLabel('Tax regime', { exact: true }).selectOption('OLD');
+  await expect(tab(page).getByLabel('Tax regime', { exact: true })).toHaveValue('OLD');
+  await tab(page).getByLabel('80C (annual)', { exact: true }).fill('120000');
+  await tab(page).getByLabel('80D (annual)', { exact: true }).fill('20000');
+  await tab(page).getByLabel('Rent paid (monthly)', { exact: true }).fill('15000');
+  await tab(page).getByRole('button', { name: 'Save declarations', exact: true }).click();
+  await expect.poll(() => state.requests.some((request) => request.body?.decl_80c === 12_000_000)).toBe(true);
+  expect(state.requests.find((request) => request.body?.decl_80c === 12_000_000).body).toEqual({ decl_80c: 12_000_000, decl_80d: 2_000_000, decl_rent_monthly: 1_500_000, decl_metro: false });
+  await expect(tab(page).getByRole('heading', { name: 'New regime', exact: true })).toHaveCount(0);
+  await expect(tab(page).getByRole('heading', { name: 'Old regime', exact: true })).toHaveCount(0);
   await tab(page).getByRole('radio', { name: 'Salary', exact: true }).click();
   await expect(tab(page).getByRole('button', { name: 'Add salary', exact: true })).toBeVisible();
 });
@@ -397,7 +409,7 @@ test('editing a historical salary compares the original agreement using its effe
   await tab(page).getByRole('button', { name: 'Edit salary from 2024-01-01' }).click();
   const dialog = page.getByRole('dialog', { name: 'Edit salary revision' });
   await expect.poll(() => state.previews.some((body) => body.chosen_gross === initial.monthly_gross && body.date === '2024-01-01')).toBe(true);
-  await dialog.getByLabel('Effective from').fill('2024-02-01');
+  await dialog.getByLabel('Effective month').fill('2024-02');
   await expect.poll(() => state.previews.some((body) => body.date === '2024-02-01')).toBe(true);
   expect(state.previews.find((body) => body.chosen_gross === initial.monthly_gross)).toMatchObject({ date: '2024-01-01', structure_id: 'structure-a' });
 });
@@ -432,7 +444,7 @@ test('CTC salary waits for the latest preview and requires an explicit ambiguous
   const dialog = page.getByRole('dialog', { name: 'Add salary', exact: true });
   await dialog.getByRole('radio', { name: 'CTC', exact: true }).click();
   await dialog.getByLabel('Annual CTC').fill('360000');
-  await dialog.getByLabel('Effective from').fill('2026-10-01');
+  await dialog.getByLabel('Effective month').fill('2026-10');
   await dialog.getByLabel('Salary structure').selectOption('structure-a');
   await dialog.getByLabel('Reason').fill('CTC agreement');
   const add = dialog.getByRole('button', { name: 'Add salary', exact: true });
@@ -481,7 +493,74 @@ test('legacy tax links open the statutory subsection', async ({ page }) => {
   await page.goto('/people/employee-test?tab=tax');
   const salary = page.getByRole('tabpanel', { name: 'Salary and statutory' });
   await expect(salary.getByRole('radio', { name: 'Statutory', exact: true })).toHaveAttribute('aria-checked', 'true');
-  await expect(salary.getByRole('heading', { name: 'Applicable statutory rates' })).toBeVisible();
+  await expect(salary.getByLabel('Tax regime', { exact: true })).toBeVisible();
   await salary.getByRole('radio', { name: 'Salary', exact: true }).click();
   await expect(salary.getByRole('button', { name: 'Add salary', exact: true })).toBeVisible();
+});
+
+test('a sole unlocked salary remains editable and cannot be deleted', async ({ page }) => {
+  const state = await mockProfile(page);
+  state.rows = [state.rows[0]];
+  await page.goto('/people/employee-test?tab=salary');
+  await expect(tab(page).getByRole('button', { name: 'Edit salary from 2026-05-01' })).toBeEnabled();
+  await expect(tab(page).getByRole('button', { name: 'Delete salary from 2026-05-01' })).toBeDisabled();
+  await tab(page).getByRole('button', { name: 'Edit salary from 2026-05-01' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Edit salary revision' });
+  await expect(dialog.getByLabel('Effective month')).toHaveValue('2026-05');
+  await dialog.getByLabel('Annual gross').fill('420000');
+  await dialog.getByRole('button', { name: 'Save changes' }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(state.requests.find((request) => request.path.endsWith('/salary/salary-current'))).toMatchObject({ method: 'PATCH', body: { valid_from: '2026-05-01', amount: 3_500_000 } });
+  expect(state.rows).toHaveLength(1);
+});
+
+test('a protected sole salary can be updated from the next safe month without rewriting history', async ({ page }) => {
+  const state = await mockProfile(page);
+  state.rows = [{ ...state.rows[0], can_edit: false, can_delete: false, next_revision_month: '2026-11', protection_reason: 'October payroll is paid.' }];
+  const original = { ...state.rows[0] };
+  await page.goto('/people/employee-test?tab=salary');
+  await expect(tab(page).getByRole('button', { name: 'Delete salary from 2026-05-01' })).toBeDisabled();
+  await tab(page).getByRole('button', { name: 'Edit salary from 2026-05-01' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Update salary', exact: true });
+  await expect(dialog).toContainText('Starts a new revision; previous payroll stays unchanged.');
+  await expect(dialog.getByLabel('Effective month')).toHaveValue('2026-11');
+  await dialog.getByLabel('Effective month').fill('2026-10');
+  await dialog.getByLabel('Annual gross').fill('420000');
+  await dialog.getByLabel('Reason').fill('Annual review');
+  await expect(dialog.getByRole('button', { name: 'Save revision' })).toBeDisabled();
+  await dialog.getByLabel('Effective month').fill('2026-11');
+  await dialog.getByRole('button', { name: 'Save revision' }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(state.requests.filter((request) => request.method === 'PATCH' && request.path.includes('/salary/'))).toHaveLength(0);
+  expect(state.requests.find((request) => request.method === 'POST' && request.path.endsWith('/salary')).body).toMatchObject({ valid_from: '2026-11-01', amount: 3_500_000 });
+  expect(state.rows.find((row) => row.id === original.id)).toEqual(original);
+});
+
+test('editing a legacy salary keeps its exact day when its original month is restored', async ({ page }) => {
+  const state = await mockProfile(page);
+  state.rows[1].valid_from = '2024-01-17';
+  await page.goto('/people/employee-test?tab=salary');
+  await tab(page).getByRole('button', { name: 'Edit salary from 2024-01-17' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Edit salary revision' });
+  await dialog.getByLabel('Effective month').fill('2024-02');
+  await dialog.getByLabel('Effective month').fill('2024-01');
+  await dialog.getByLabel('Reason').fill('Corrected structure');
+  await dialog.getByRole('button', { name: 'Save changes' }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(state.requests.find((request) => request.path.endsWith('/salary/salary-old')).body.valid_from).toBe('2024-01-17');
+});
+
+test('a first salary selected in the joining month starts on the joining day', async ({ page }) => {
+  const state = await mockProfile(page, { noSalary: true, emptyPayObject: true });
+  state.e.joined_on = '2024-01-17';
+  await page.goto('/people/employee-test?tab=salary');
+  await tab(page).getByRole('button', { name: 'Add salary', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Add salary', exact: true });
+  await dialog.getByLabel('Annual gross').fill('360000');
+  await dialog.getByLabel('Effective month').fill('2024-01');
+  await dialog.getByLabel('Salary structure').selectOption('structure-a');
+  await dialog.getByLabel('Reason').fill('Joining agreement');
+  await dialog.getByRole('button', { name: 'Add salary', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(state.requests.find((request) => request.method === 'POST' && request.path.endsWith('/salary')).body.valid_from).toBe('2024-01-17');
 });

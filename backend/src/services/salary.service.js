@@ -1,4 +1,4 @@
-import { addDays, firstOfMonth, formatINR, formatYearMonth, lastOfMonth } from '@ajpwer/shared';
+import { addDays, addMonths, firstOfMonth, formatINR, formatYearMonth, lastOfMonth } from '@ajpwer/shared';
 import { ctcForGross, salaryPreview } from '../calculations/index.js';
 import { AppError } from '../utils/errors.js';
 import { fromDbDate, toDbDate } from '../utils/dbDates.js';
@@ -156,16 +156,23 @@ const protectedReason = (slip) => `Used by ${slip.period.state.toLowerCase()} pa
 /** Permission hints; changes that move a date also receive a fresh server check. */
 export async function salaryHistoryProtection(db, employeeId, rows) {
   const slips = await protectedPayslips(db, employeeId);
+  const latestStart = rows.reduce((latest, row) => salaryFrom(row) > latest ? salaryFrom(row) : latest, '');
   return new Map(rows.map((row) => {
-    const slip = slips.find((item) => item.meta?.salary?.salary_id === row.id || overlaps(
+    const affected = slips.filter((item) => item.meta?.salary?.salary_id === row.id || overlaps(
       { from: salaryFrom(row), to: salaryTo(row) },
       { from: firstOfMonth(payMonth(item)), to: lastOfMonth(payMonth(item)) },
     ));
+    const slip = affected[0];
+    // A protected latest agreement can still be revised for later pay without
+    // changing its frozen snapshot. Older rows must not suggest a new revision
+    // before a later agreement already in the employee's history.
+    const lastProtectedMonth = affected.reduce((latest, item) => payMonth(item) > latest ? payMonth(item) : latest, salaryFrom(row).slice(0, 7));
     return [row.id, {
       can_edit: !slip,
       can_delete: !slip && rows.length > 1,
       protection_reason: slip ? protectedReason(slip) : null,
       deletion_reason: slip ? protectedReason(slip) : rows.length === 1 ? 'Keep at least one salary revision.' : null,
+      next_revision_month: slip && salaryFrom(row) === latestStart ? addMonths(lastProtectedMonth, 1) : null,
     }];
   }));
 }

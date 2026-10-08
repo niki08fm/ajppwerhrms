@@ -11,14 +11,14 @@ import { Card, CardHeader } from '@/components/ui/card';
 import { Input, Select, Segmented } from '@/components/ui/form';
 import { Dialog, Switch } from '@/components/ui/overlay';
 import { TaxTab } from './Tax';
-import { PayGroupControl, ReviseDialog, SalaryHistoryTab, refreshEmployeePay } from './SalaryHistory';
-import { PayGroupRulesCard } from './Overview';
+import { ReviseDialog, SalaryHistoryTab, refreshEmployeePay } from './SalaryHistory';
+import { SalaryAssignment } from './SalaryAssignment';
 import { SalaryHoldCard } from './SalaryHold';
 import { SalaryBreakup } from '../SalaryBreakup';
 
 /**
  * Salary shows the monthly/yearly breakup with revisions beside it. Statutory
- * holds deductions, current rates, applicable group rules and tax declarations.
+ * holds personal deductions, the selected tax regime and declarations.
  */
 export function SalaryTab({ e }) {
   const qc = useQueryClient();
@@ -74,12 +74,6 @@ export function SalaryTab({ e }) {
         <>
           <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
             <div className="min-w-0 flex flex-col gap-4">
-              <Card>
-                <CardHeader title="Pay group" description="Choose the policies that apply to this employee." />
-                <div className="p-5">
-                  <PayGroupControl e={e} />
-                </div>
-              </Card>
               {pay.isLoading ? (
                 <SkeletonBlock className="h-96" />
               ) : pay.isError ? (
@@ -100,11 +94,6 @@ export function SalaryTab({ e }) {
                 <Card className="overflow-hidden">
                   <CardHeader
                     title={`Salary breakup · ${structureName}`}
-                    description={
-                      salary.mode === 'CTC'
-                        ? `Agreed as annual CTC ${formatINR(salary.amount)}. Gross is worked out from it.`
-                        : `Entered as gross ${formatINR(p.gross)} a month. PF and ESI are on top.`
-                    }
                     actions={
                       !ro && (
                         <Button variant="outline" size="sm" onClick={() => setRevising(true)}>
@@ -124,7 +113,10 @@ export function SalaryTab({ e }) {
               )}
             </div>
 
-            <SalaryHistoryTab e={e} compact />
+            <div className="min-w-0 flex flex-col gap-4">
+              <SalaryAssignment e={e} salary={salary} />
+              <SalaryHistoryTab e={e} compact />
+            </div>
           </div>
         </>
       )}
@@ -134,12 +126,12 @@ export function SalaryTab({ e }) {
             <div className="flex flex-col gap-4">
               {!p && (
                 <Notice>
-                  Statutory settings and pay group rules can be reviewed now.{' '}
+                  Statutory settings can be changed here.{' '}
                   {salary ? 'Deduction amounts need the applicable statutory rates.' : 'Add a salary to calculate deduction amounts.'}
                 </Notice>
               )}
               <Card>
-                <CardHeader title="Statutory" description="Changed here, for this person. Every change is in the audit log." />
+                <CardHeader title="Statutory deductions" />
                 <div className="flex flex-col px-5 pb-4 text-[14px]">
                   <div className={line}>
                     <div>
@@ -246,69 +238,13 @@ export function SalaryTab({ e }) {
                       ))}
                     </Select>
                   </div>
-                  <div className={line}>
-                    <span>Tax regime</span>
-                    <span>
-                      {st.tax_regime_code === 'OLD' ? 'Old' : 'New (default)'}
-                      {!ro && (
-                        <>
-                          {' · '}
-                          <button
-                            type="button"
-                            className="text-primary hover:underline"
-                            disabled={patch.isPending}
-                            onClick={() =>
-                              patch.mutate({
-                                tax_regime_code: st.tax_regime_code === 'OLD' ? 'NEW' : 'OLD',
-                              })
-                            }
-                          >
-                            switch to {st.tax_regime_code === 'OLD' ? 'new' : 'old'}
-                          </button>
-                        </>
-                      )}
-                    </span>
-                  </div>
-                  <div className="flex justify-between py-2.5">
-                    <span>Monthly TDS</span>
-                    <span className="num">
-                      {p ? `${formatINR(p.tds_monthly)} · estimated ${formatINR(p.annual_tax)} for the year` : 'Calculated after salary is added'}
-                    </span>
-                  </div>
                 </div>
               </Card>
             </div>
             <div className="flex flex-col gap-4">
-              <PayGroupRulesCard e={e} />
-              {pay.data?.rates && (
-                <Card>
-                  <CardHeader title="Applicable statutory rates" description="Current configured rates used in the salary calculation." />
-                  <dl className="p-5 text-[13px]">
-                    {[
-                      ['Employee PF', `${pay.data.rates.pf.employee_pct}%`],
-                      ['Employer PF', `${pay.data.rates.pf.employer_pct}%`],
-                      ['PF wage ceiling', formatINR(pay.data.rates.pf.ceiling)],
-                      ['EPS share', `${pay.data.rates.pf.eps_pct}% up to ${formatINR(pay.data.rates.pf.eps_wage_ceiling)}`],
-                      ['EDLI / administration', `${pay.data.rates.pf.edli_pct}% / ${pay.data.rates.pf.admin_pct}%`],
-                      ['Employee / employer ESI', `${pay.data.rates.esi.employee_pct}% / ${pay.data.rates.esi.employer_pct}%`],
-                      ['ESI ceiling', formatINR(pay.data.rates.esi.ceiling)],
-                      ...(p ? [['Professional tax / February', `${formatINR(p.pt.amount)} / ${formatINR(p.pt_february.amount)}`]] : []),
-                    ].map(([label, value]) => (
-                      <div key={label} className="flex flex-wrap justify-between gap-2 border-b border-dashed py-2 last:border-0">
-                        <dt className="text-muted-foreground">{label}</dt>
-                        <dd className="num">{value}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                </Card>
-              )}
+              <TaxTab e={e} selectedOnly />
             </div>
           </div>
-          {p && (
-            <div id="section-tax">
-              <TaxTab e={e} />
-            </div>
-          )}
         </>
       )}
 

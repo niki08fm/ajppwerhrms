@@ -4,7 +4,7 @@ import { ArrowRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, errorMessage } from '@/services/api';
 import { useLookups } from '@/hooks/useLookups';
-import { cn, longDate } from '@/utils';
+import { cn, monthLabel } from '@/utils';
 import { Money } from '@/components/bits';
 import { Chip, EmptyState, ErrorState, Notice, SkeletonRows } from '@/components/states';
 import { Button } from '@/components/ui/button';
@@ -13,6 +13,20 @@ import { Field, Input, Select } from '@/components/ui/form';
 import { Dialog } from '@/components/ui/overlay';
 import { useSalaryPreview } from '../SalaryPreview';
 import { agreement, annualText, SalaryAmountFields } from '../SalaryEntry';
+
+const salaryMonth = (date) => date?.slice(0, 7) ?? '';
+const validMonth = (month) => /^\d{4}-(0[1-9]|1[0-2])$/.test(month);
+const nextMonth = (month) => {
+  if (!validMonth(month)) return '';
+  const [year, value] = month.split('-').map(Number);
+  return value === 12 ? `${year + 1}-01` : `${year}-${String(value + 1).padStart(2, '0')}`;
+};
+const effectiveDate = (month, joinedOn, revision) => {
+  if (!validMonth(month)) return '';
+  if (revision && month === salaryMonth(revision.valid_from)) return revision.valid_from;
+  const start = `${month}-01`;
+  return month === salaryMonth(joinedOn) && start < joinedOn ? joinedOn : start;
+};
 
 export function refreshEmployeePay(qc, employeeId) {
   for (const key of ['employee', 'salary-history', 'employee-pay', 'employee-tax', 'payslip-preview', 'timeline', 'emp-attendance', 'emp-leave'])
@@ -73,7 +87,7 @@ export function PayGroupControl({ e }) {
         )}
       </div>
       <p className="text-[13px] text-muted-foreground">
-        Saved separately. The group's shift, attendance, overtime and leave rules apply. Salary amount and salary structure stay unchanged.
+        Group rules apply separately. Salary stays unchanged.
       </p>
     </div>
   );
@@ -98,8 +112,9 @@ export function SalaryHistoryTab({ e, compact = false }) {
   });
   const rows = (q.data ?? []).slice().sort((a, b) => b.valid_from.localeCompare(a.valid_from));
   const controls = (r) => {
+    const updateProtected = r.can_edit === false && (r.id === rows[0]?.id || r.id === e.salary?.id);
     const canDelete = !e.read_only && rows.length > 1 && r.can_delete !== false;
-    const deletionReason = rows.length < 2 ? 'At least one salary agreement must remain.' : r.deletion_reason;
+    const deletionReason = rows.length < 2 ? 'Keep one salary revision.' : r.deletion_reason;
     return (
       <div className="mt-2 flex flex-wrap items-center gap-2">
         {!e.read_only && (
@@ -107,10 +122,10 @@ export function SalaryHistoryTab({ e, compact = false }) {
             <Button
               size="sm"
               variant="outline"
-              disabled={r.can_edit === false}
-              title={r.protection_reason ?? undefined}
+              disabled={r.can_edit === false && !updateProtected}
+              title={updateProtected ? 'Update from a new month' : r.protection_reason ?? undefined}
               aria-label={`Edit salary from ${r.valid_from}`}
-              onClick={() => setEditing(r)}
+              onClick={() => setEditing(updateProtected ? { initialSalary: rows[0], protectedUpdate: true } : { revision: r })}
             >
               Edit
             </Button>
@@ -127,7 +142,9 @@ export function SalaryHistoryTab({ e, compact = false }) {
             </Button>
           </>
         )}
-        {(r.protection_reason || deletionReason) && <span className="text-[12px] text-muted-foreground">{r.protection_reason || deletionReason}</span>}
+        {!updateProtected && (r.protection_reason || deletionReason) && (
+          <span className="text-[12px] text-muted-foreground">{r.protection_reason || deletionReason}</span>
+        )}
       </div>
     );
   };
@@ -135,21 +152,21 @@ export function SalaryHistoryTab({ e, compact = false }) {
     <Card className="min-w-0 overflow-hidden">
       <CardHeader
         title="Salary revisions"
-        description="Effective dates, amounts and selected structures. At least one salary agreement is retained; locked or paid payroll protects related revisions."
+        description="Monthly changes and previous salaries."
       />
       {q.isLoading ? (
         <SkeletonRows rows={3} />
       ) : q.isError ? (
         <ErrorState error={q.error} onRetry={() => q.refetch()} />
       ) : !rows.length ? (
-        <EmptyState title="No salary yet" body="Add an agreement with its effective date and salary structure." />
+        <EmptyState title="No salary yet" body="Add a salary to begin." />
       ) : compact ? (
         <div className="max-h-[620px] overflow-y-auto px-5">
           {rows.map((r) => (
             <div key={r.id} className="border-b py-4 last:border-0">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="font-medium text-[14px]">
-                  {longDate(r.valid_from)} {!r.valid_to && <Chip tone="success">Latest</Chip>}
+                  {monthLabel(salaryMonth(r.valid_from))} {!r.valid_to && <Chip tone="success">Latest</Chip>}
                 </div>
                 <b className="num">
                   <Money value={r.monthly_gross} />
@@ -157,7 +174,7 @@ export function SalaryHistoryTab({ e, compact = false }) {
                 </b>
               </div>
               <div className="mt-1 text-[13px] text-muted-foreground">
-                {r.valid_to ? `Through ${longDate(r.valid_to)} · ` : ''}
+                {r.valid_to ? `Through ${monthLabel(salaryMonth(r.valid_to))} · ` : ''}
                 {r.structure?.name ?? 'No structure'} · {r.mode === 'CTC' ? 'Annual CTC' : 'Annual gross'}{' '}
                 <Money value={r.mode === 'CTC' ? r.amount : r.monthly_gross * 12} />
               </div>
@@ -171,7 +188,7 @@ export function SalaryHistoryTab({ e, compact = false }) {
           <table className="data-table w-full">
             <thead>
               <tr>
-                <th>From / through</th>
+                <th>Month / through</th>
                 <th>Agreed as</th>
                 <th className="text-right">Annual amount</th>
                 <th className="text-right">Monthly gross</th>
@@ -183,8 +200,8 @@ export function SalaryHistoryTab({ e, compact = false }) {
               {rows.map((r) => (
                 <tr key={r.id}>
                   <td className="num">
-                    {r.valid_from}
-                    <div className="text-[12px] text-muted-foreground">{r.valid_to ?? 'Latest agreement'}</div>
+                    {monthLabel(salaryMonth(r.valid_from))}
+                    <div className="text-[12px] text-muted-foreground">{r.valid_to ? monthLabel(salaryMonth(r.valid_to)) : 'Latest'}</div>
                   </td>
                   <td>{r.mode === 'CTC' ? 'CTC' : 'Gross'}</td>
                   <td className="text-right">
@@ -204,12 +221,12 @@ export function SalaryHistoryTab({ e, compact = false }) {
           </table>
         </div>
       )}
-      {editing && <ReviseDialog e={e} revision={editing} onClose={() => setEditing(null)} />}
+      {editing && <ReviseDialog e={e} {...editing} onClose={() => setEditing(null)} />}
       <Dialog
         open={!!removing}
         onOpenChange={(open) => !open && !remove.isPending && setRemoving(null)}
         title="Delete salary revision"
-        description="Removing this agreement adjusts adjacent salary periods. At least one agreement must remain."
+        description="Previous salary periods adjust. One revision must remain."
         footer={
           <>
             <Button variant="outline" disabled={remove.isPending} onClick={() => setRemoving(null)}>
@@ -223,7 +240,7 @@ export function SalaryHistoryTab({ e, compact = false }) {
       >
         {removing && (
           <p>
-            Salary from <strong>{longDate(removing.valid_from)}</strong>: <Money value={removing.monthly_gross} /> monthly gross.
+            Salary from <strong>{monthLabel(salaryMonth(removing.valid_from))}</strong>: <Money value={removing.monthly_gross} /> monthly gross.
           </p>
         )}
       </Dialog>
@@ -232,18 +249,48 @@ export function SalaryHistoryTab({ e, compact = false }) {
 }
 
 /** Add an explicitly structured first agreement, revise it, or correct an unlocked history row. */
-export function ReviseDialog({ e, initialSalary = e.salary, revision = null, onClose }) {
+export function ReviseDialog({
+  e,
+  initialSalary = e.salary,
+  revision = null,
+  defaultStructureId,
+  initialMonth,
+  protectedUpdate = false,
+  minimumMonth,
+  onClose,
+}) {
   const qc = useQueryClient();
   const { data: lk } = useLookups();
   const cur = revision ?? initialSalary;
+  const todayMonth = salaryMonth(lk?.today ?? new Date().toISOString());
+  const earliestMonth = [
+    salaryMonth(e.joined_on),
+    minimumMonth,
+    !revision && cur ? nextMonth(salaryMonth(cur.valid_from)) : '',
+    protectedUpdate ? cur?.next_revision_month : '',
+  ]
+    .filter(Boolean)
+    .sort()
+    .at(-1);
+  const defaultMonth = revision
+    ? salaryMonth(revision.valid_from)
+    : initialMonth || cur
+      ? [initialMonth ?? todayMonth, earliestMonth, protectedUpdate && !cur?.next_revision_month ? nextMonth(todayMonth) : '']
+          .filter(Boolean)
+          .sort()
+          .at(-1) ?? ''
+      : '';
   const [f, setF] = useState({
     mode: cur?.mode ?? 'GROSS',
     amount: cur ? annualText(cur.mode, cur.amount, cur.monthly_gross) : '',
-    valid_from: revision?.valid_from ?? '',
-    structure_id: cur?.structure_id ?? cur?.structure?.id ?? '',
+    month: defaultMonth,
+    structure_id: defaultStructureId ?? cur?.structure_id ?? cur?.structure?.id ?? '',
     reason: revision?.reason ?? '',
   });
-  const [chosen, setChosen] = useState(cur?.mode === 'CTC' ? cur.monthly_gross : undefined);
+  const validFrom = effectiveDate(f.month, e.joined_on, revision);
+  const [chosen, setChosen] = useState(
+    revision?.mode === 'CTC' && (!defaultStructureId || defaultStructureId === (cur.structure_id ?? cur.structure?.id)) ? cur.monthly_gross : undefined,
+  );
   const before = useSalaryPreview(
     {
       mode: cur?.mode ?? 'GROSS',
@@ -261,9 +308,9 @@ export function ReviseDialog({ e, initialSalary = e.salary, revision = null, onC
       employee_id: e.id,
       structure_id: f.structure_id || undefined,
       chosen_gross: chosen,
-      date: f.valid_from || undefined,
+      date: validFrom || undefined,
     },
-    !!f.structure_id && !!f.valid_from,
+    !!f.structure_id && !!validFrom,
   );
   const change = (field, value) => {
     setF((old) => ({ ...old, [field]: value }));
@@ -273,7 +320,7 @@ export function ReviseDialog({ e, initialSalary = e.salary, revision = null, onC
     mutationFn: () => {
       const body = {
         ...agreement(f.mode, f.amount),
-        valid_from: f.valid_from,
+        valid_from: validFrom,
         structure_id: f.structure_id,
         reason: f.reason.trim(),
         ...(chosen !== undefined ? { chosen_gross: chosen } : {}),
@@ -281,7 +328,7 @@ export function ReviseDialog({ e, initialSalary = e.salary, revision = null, onC
       return revision ? api.patch(`/employees/${e.id}/salary/${revision.id}`, body) : api.post(`/employees/${e.id}/salary`, body);
     },
     onSuccess: () => {
-      toast.success(revision ? 'Salary revision updated.' : cur ? `Salary revised from ${f.valid_from}.` : `Salary added from ${f.valid_from}.`);
+      toast.success(revision ? 'Salary revision updated.' : cur ? `Salary revised from ${monthLabel(f.month)}.` : `Salary added from ${monthLabel(f.month)}.`);
       refreshEmployeePay(qc, e.id);
       onClose();
     },
@@ -298,8 +345,9 @@ export function ReviseDialog({ e, initialSalary = e.salary, revision = null, onC
   ];
   const disabled =
     !f.structure_id ||
-    !f.valid_from ||
-    f.valid_from < e.joined_on ||
+    !validFrom ||
+    validFrom < e.joined_on ||
+    f.month < earliestMonth ||
     f.reason.trim().length < 3 ||
     f.reason.trim().length > 300 ||
     agreement(f.mode, f.amount).amount <= 0 ||
@@ -311,8 +359,8 @@ export function ReviseDialog({ e, initialSalary = e.salary, revision = null, onC
       open
       onOpenChange={(open) => !open && !save.isPending && onClose()}
       wide
-      title={revision ? 'Edit salary revision' : cur ? 'Revise salary' : 'Add salary'}
-      description="Choose the employee's salary structure explicitly. The pay valid on the last day of a month applies to that month."
+      title={protectedUpdate ? 'Update salary' : revision ? 'Edit salary revision' : cur ? 'Revise salary' : 'Add salary'}
+      description={protectedUpdate ? 'Starts a new revision; previous payroll stays unchanged.' : 'Choose the amount, structure and month.'}
       footer={
         <>
           <Button variant="outline" disabled={save.isPending} onClick={onClose}>
@@ -328,8 +376,8 @@ export function ReviseDialog({ e, initialSalary = e.salary, revision = null, onC
         <div className="flex flex-col gap-4">
           <div className="grid grid-cols-2 gap-3">
             <SalaryAmountFields mode={f.mode} annual={f.amount} onMode={(mode) => change('mode', mode)} onAnnual={(amount) => change('amount', amount)} />
-            <Field label="Effective from" required hint={`On or after ${longDate(e.joined_on)}`}>
-              {(id) => <Input id={id} type="date" min={e.joined_on} value={f.valid_from} onChange={(ev) => change('valid_from', ev.target.value)} />}
+            <Field label="Effective month" required>
+              {(id) => <Input id={id} type="month" min={earliestMonth} value={f.month} onChange={(ev) => change('month', ev.target.value)} />}
             </Field>
             <Field label="Salary structure" required>
               {(id) => (
@@ -355,9 +403,6 @@ export function ReviseDialog({ e, initialSalary = e.salary, revision = null, onC
               )}
             </Field>
           </div>
-          <div className="rounded-md border bg-muted/30 p-3">
-            <PayGroupControl e={e} />
-          </div>
           {a?.solution?.ambiguous && (
             <Notice tone="warning">
               This CTC has two valid monthly grosses. Choose one.
@@ -375,8 +420,8 @@ export function ReviseDialog({ e, initialSalary = e.salary, revision = null, onC
         </div>
         <div className="min-w-0">
           <h4 className="mb-2 font-medium">Salary preview</h4>
-          {!f.amount || !f.valid_from || !f.structure_id ? (
-            <p className="text-sm text-muted-foreground">Enter the amount, effective date and salary structure to see the calculation.</p>
+          {!f.amount || !validFrom || !f.structure_id ? (
+            <p className="text-sm text-muted-foreground">Choose the amount, month and structure to preview.</p>
           ) : after.isError ? (
             <>
               <ErrorState error={after.error} compact onRetry={() => after.refetch()} />

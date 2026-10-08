@@ -177,7 +177,7 @@ describe('Editing and deleting salary history', () => {
     const initial = (await rows())[0];
     expect(initial.valid_to).toBeNull();
     const history = await f.agent.get(salaryPath());
-    expect(history.body.data[0]).toMatchObject({ can_edit: true, can_delete: false, deletion_reason: 'Keep at least one salary revision.' });
+    expect(history.body.data[0]).toMatchObject({ can_edit: true, can_delete: false, deletion_reason: 'Keep at least one salary revision.', next_revision_month: null });
     const blocked = await f.agent.delete(`${salaryPath()}/${initial.id}`);
     expect(blocked.status).toBe(409);
     expect(blocked.body.error.code).toBe('LAST_SALARY');
@@ -192,6 +192,29 @@ describe('Editing and deleting salary history', () => {
 });
 
 describe('Frozen payroll protects salary history', () => {
+  it('offers a safe new month for a sole protected salary and preserves all paid or locked snapshots', async () => {
+    const initial = (await rows())[0];
+    await freeze({ ym: '2026-08', state: 'PAID', salaryId: initial.id });
+    await freeze({ ym: '2026-10', state: 'LOCKED', salaryId: initial.id });
+    const snapshots = await prisma.payslip.findMany({ where: { employee_id: f.employees.A }, orderBy: { period_id: 'asc' } });
+    const history = await f.agent.get(salaryPath());
+    expect(history.body.data).toHaveLength(1);
+    expect(history.body.data[0]).toMatchObject({ id: initial.id, can_edit: false, can_delete: false, next_revision_month: '2026-11' });
+    const changed = await f.agent.post(salaryPath()).send(body(`${history.body.data[0].next_revision_month}-01`, 31000));
+    expect(changed.status, JSON.stringify(changed.body)).toBe(201);
+    const agreements = await rows();
+    expect(agreements).toHaveLength(2);
+    expect(agreements[0].id).toBe(initial.id);
+    expect(agreements[0].amount).toBe(initial.amount);
+    expect(dateOf(agreements[0].valid_to)).toBe('2026-10-31');
+    expect(dateOf(agreements[1].valid_from)).toBe('2026-11-01');
+    expect(agreements[1].amount).toBe(BigInt(R(31000)));
+    expect(await prisma.payslip.findMany({ where: { employee_id: f.employees.A }, orderBy: { period_id: 'asc' } })).toEqual(snapshots);
+    const updatedHistory = await f.agent.get(salaryPath());
+    expect(updatedHistory.body.data.find((row) => row.id === initial.id).next_revision_month).toBeNull();
+    expect(updatedHistory.body.data[0]).toMatchObject({ id: changed.body.data.id, can_edit: true, next_revision_month: null });
+  });
+
   it('serializes a salary edit behind settlement payment without deadlocking and rechecks exited status', async () => {
     const initial = (await rows())[0];
     const period = await freeze({ salaryId: initial.id });
@@ -266,6 +289,7 @@ describe('Frozen payroll protects salary history', () => {
   it('uses the final work month for frozen settlements even without a snapshot salary ID', async () => {
     const initial = (await rows())[0];
     await freeze({ ym: '2026-11', state: 'PAID', finalMonth: '2026-08' });
+    expect((await f.agent.get(salaryPath())).body.data[0].next_revision_month).toBe('2026-09');
     const later = await add('2026-10-01');
     expect((await f.agent.patch(`${salaryPath()}/${initial.id}`).send(body('2025-01-01', 35000))).status).toBe(409);
     const initialBody = { ...body('2025-01-01', 20000), reason: 'Changed description only' };
