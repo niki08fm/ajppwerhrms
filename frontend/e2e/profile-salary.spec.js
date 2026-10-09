@@ -296,6 +296,7 @@ test('first salary needs an explicit structure and month, including an empty pay
   });
   await page.goto('/people/employee-test?tab=salary');
   await expect(tab(page).getByRole('heading', { name: 'No salary yet' }).first()).toBeVisible();
+  await expect(tab(page).getByRole('region', { name: 'Salary overview', exact: true })).toHaveCount(0);
   await tab(page).getByRole('button', { name: 'Add salary', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Add salary', exact: true });
   await dialog.getByLabel('Annual gross').fill('360000');
@@ -512,6 +513,79 @@ test('a sole unlocked salary remains editable and cannot be deleted', async ({ p
   await expect(dialog).toHaveCount(0);
   expect(state.requests.find((request) => request.path.endsWith('/salary/salary-current'))).toMatchObject({ method: 'PATCH', body: { valid_from: '2026-05-01', amount: 3_500_000 } });
   expect(state.rows).toHaveLength(1);
+});
+
+test('salary overview shows calculated monthly earnings and net pay alongside editable history', async ({ page }) => {
+  const state = await mockProfile(page);
+  state.rows = [state.rows[0]];
+  await page.goto('/people/employee-test?tab=salary');
+  const overview = tab(page).getByRole('region', { name: 'Salary overview', exact: true });
+  await expect(overview).toBeVisible();
+  await expect(overview.getByRole('img', { name: 'Monthly salary earnings', exact: true })).toBeVisible();
+  await expect(overview).toContainText('Gross salary');
+  await expect(overview).toContainText('₹30,000');
+  await expect(overview).toContainText('Net pay');
+  await expect(overview).toContainText('₹28,000');
+  await expect(overview).toContainText('Deductions');
+  await expect(overview).toContainText('₹2,000');
+  await expect(overview).toContainText('Basic');
+  await expect(overview).toContainText('₹15,000');
+  await expect(overview).toContainText('HRA');
+  await expect(overview).toContainText('₹6,000');
+  await expect(overview).toContainText('DA');
+  await expect(overview).toContainText('₹0');
+  await expect(overview).toContainText('Special Allowance');
+  await expect(overview).toContainText('₹9,000');
+  const basic = overview.getByRole('button', { name: 'Basic: ₹15,000', exact: true });
+  await basic.hover();
+  await expect(basic).toHaveAttribute('aria-pressed', 'false');
+  await basic.click();
+  await expect(basic).toHaveAttribute('aria-pressed', 'true');
+  await page.mouse.move(10, 10);
+  await expect(basic).toHaveAttribute('aria-pressed', 'true');
+  await basic.click();
+  await expect(basic).toHaveAttribute('aria-pressed', 'false');
+  await expect(tab(page).getByRole('button', { name: 'Edit salary from 2026-05-01', exact: true })).toBeEnabled();
+  await expect(tab(page).getByRole('button', { name: 'Delete salary from 2026-05-01', exact: true })).toBeDisabled();
+});
+
+test('a long salary history scrolls inside its card on desktop and mobile', async ({ page }) => {
+  const state = await mockProfile(page);
+  state.e.joined_on = '2014-01-01';
+  state.rows = [
+    { ...initial },
+    ...Array.from({ length: 12 }, (_, index) => {
+      const year = 2025 - index;
+      return {
+        ...initial,
+        id: `salary-${year}`,
+        monthly_gross: 1_500_000 + index * 10_000,
+        valid_from: `${year}-01-01`,
+        valid_to: `${year}-12-31`,
+        reason: `Review ${year}`,
+      };
+    }),
+  ];
+  await page.goto('/people/employee-test?tab=salary');
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    const card = tab(page).getByRole('region', { name: 'Salary revisions', exact: true });
+    const history = card.getByRole('region', { name: 'Salary revision history', exact: true });
+    await expect(history).toBeVisible();
+    await expect(history).toHaveAttribute('tabindex', '0');
+    expect(await history.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+    await history.evaluate((element) => { element.scrollLeft = 0; });
+    await history.focus();
+    await page.keyboard.press('ArrowRight');
+    await expect.poll(() => history.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+    await history.getByRole('button', { name: 'Edit salary from 2014-01-01', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Edit salary revision', exact: true });
+    await expect(dialog.getByLabel('Effective month')).toHaveValue('2014-01');
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+  }
 });
 
 test('a protected sole salary can be updated from the next safe month without rewriting history', async ({ page }) => {

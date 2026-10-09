@@ -13,6 +13,7 @@ import { Dialog, Switch } from '@/components/ui/overlay';
 import { TaxTab } from './Tax';
 import { ReviseDialog, SalaryHistoryTab, refreshEmployeePay } from './SalaryHistory';
 import { SalaryAssignment } from './SalaryAssignment';
+import { SalaryOverview } from './SalaryOverview';
 import { SalaryHoldCard } from './SalaryHold';
 import { SalaryBreakup } from '../SalaryBreakup';
 
@@ -115,6 +116,7 @@ export function SalaryTab({ e }) {
 
             <div className="min-w-0 flex flex-col gap-4">
               <SalaryAssignment e={e} salary={salary} />
+              {!pay.isLoading && !pay.isError && salary && p && <SalaryOverview p={p} />}
               <SalaryHistoryTab e={e} compact />
             </div>
           </div>

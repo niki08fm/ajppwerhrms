@@ -82,7 +82,7 @@ export function createPayrollPreviewState() {
       department_id,
       pay_group_id,
       status: 'ACTIVE',
-      joined_on: '2025-01-01',
+      joined_on: index === 1 ? '2017-01-01' : '2025-01-01',
       updated_at: `${PREVIEW_TODAY}T08:00:00.000Z`,
       gender: index === 0 || index === 2 ? 'FEMALE' : 'MALE',
       dob: null,
@@ -119,7 +119,7 @@ export function createPayrollPreviewState() {
       {
         id: newId(state),
         action: 'employee.create',
-        at: '2025-01-01T04:00:00.000Z',
+        at: `${employee.joined_on}T04:00:00.000Z`,
         actor: 'Preview HR',
         detail: { joined_on: employee.joined_on, designation },
       },
@@ -140,55 +140,67 @@ export function createPayrollPreviewState() {
       mode,
       amount,
       structure_id,
-      valid_from: '2025-01-01',
+      valid_from: employee.joined_on,
       valid_to: null,
       reason: 'Initial sample salary',
       created_by: 'Preview HR',
-      created_at: '2025-01-01T08:00:00.000Z',
+      created_at: `${employee.joined_on}T08:00:00.000Z`,
     };
     initial.monthly_gross = calculateSalary(state, employee, initial).gross;
     state.salaries[id].push(initial);
-    if (index === 1) {
-      // A paid snapshot demonstrates that history stays fixed while a new revision can start later.
-      const calculation = calculateSalary(state, employee, { ...initial, date: '2026-07-01' });
-      state.paidPayroll.push({
-        id: newId(state), employee_id: id, period_ym: '2026-07', state: 'PAID',
-        salary_id: initial.id, salary_snapshot: clone(initial), divisor: 26, paid_days: 26,
-        lop_days: 0, net: calculation.take_home, gross: calculation.gross,
-        lines: [
-          ...calculation.structure.monthly.map((component) => ({ seq: component.seq, code: component.name.toUpperCase().replaceAll(' ', '_'), name: component.name, kind: 'COMPONENT', amount: component.amount })),
-          ...[['PF', 'Provident fund', calculation.pf.employee], ['ESI', 'ESI', calculation.esi.employee], ['PT', 'Professional tax', calculation.pt.amount], ['TDS', 'Income tax', calculation.tds_monthly]]
-            .filter(([, , amount]) => amount > 0)
-            .map(([code, name, amount], deductionIndex) => ({ seq: 10 + deductionIndex, code, name, kind: 'DEDUCTION', amount })),
-        ],
-      });
-    }
     if (index === 0) {
-      initial.amount = 2_500_000;
-      initial.monthly_gross = 2_500_000;
-      initial.valid_to = '2026-03-31';
-      const revision = {
-        ...initial,
-        id: newId(state),
-        amount: 3_000_000,
-        monthly_gross: 3_000_000,
-        valid_from: '2026-04-01',
-        valid_to: null,
-        reason: 'Annual sample review',
-        created_at: '2026-04-01T08:00:00.000Z',
-      };
-      state.salaries[id].push(revision);
-      state.timeline[id].unshift({
-        id: newId(state),
-        action: 'salary.revise',
-        at: '2026-04-01T08:00:00.000Z',
-        actor: 'Preview HR',
-        detail: { old: { monthly_gross: 2_500_000 }, new: { monthly_gross: 3_000_000, valid_from: revision.valid_from }, reason: revision.reason },
+      // Several revisions make the card's local horizontal history useful without growing the page.
+      const changes = [
+        ['2025-01-01', 2_000_000, 'Initial sample salary'],
+        ['2025-04-01', 2_200_000, 'Role review'],
+        ['2025-07-01', 2_400_000, 'Project responsibility'],
+        ['2025-10-01', 2_500_000, 'Performance review'],
+        ['2026-04-01', 3_000_000, 'Annual sample review'],
+      ];
+      state.salaries[id] = changes.map(([valid_from, amount, reason], changeIndex) => ({
+        ...initial, id: changeIndex ? newId(state) : initial.id,
+        amount, monthly_gross: amount, valid_from, reason,
+        created_at: `${valid_from}T08:00:00.000Z`,
+      }));
+      normalizeSalaryPeriods(state.salaries[id]);
+      state.salaries[id].slice(1).forEach((revision, revisionIndex) => {
+        state.timeline[id].unshift({
+          id: newId(state), action: 'salary.revise', at: revision.created_at, actor: 'Preview HR',
+          detail: {
+            old: { monthly_gross: state.salaries[id][revisionIndex].monthly_gross },
+            new: { monthly_gross: revision.monthly_gross, valid_from: revision.valid_from },
+            reason: revision.reason,
+          },
+        });
       });
     }
   });
+  // Synthetic paid months use the same calculator and effective salary as the sample profile.
+  // Anita's current April revision stays editable; Ravi demonstrates ten years of frozen slips.
+  for (const [employeeIndex, firstMonth, lastMonth] of [[0, '2025-01', '2026-03'], [1, '2017-01', '2026-07']]) {
+    for (let month = firstMonth; month <= lastMonth; month = addMonths(month, 1)) {
+      appendPaidPreviewMonth(state, state.employees[employeeIndex], month);
+    }
+  }
+  state.paidPayroll.sort((a, b) => b.period_ym.localeCompare(a.period_ym));
   state.todayStaff = previewTodayPeople(state, state.today);
   return state;
+}
+
+function appendPaidPreviewMonth(state, employee, period_ym) {
+  const salary = salaryOn(state, employee.id, `${period_ym}-01`);
+  const calculation = calculateSalary(state, employee, { ...salary, date: `${period_ym}-01`, chosen_gross: salary.monthly_gross });
+  state.paidPayroll.push({
+    id: newId(state), employee_id: employee.id, period_ym, state: 'PAID',
+    salary_id: salary.id, salary_snapshot: clone(salary), divisor: 26, paid_days: 26,
+    lop_days: 0, net: calculation.take_home, gross: calculation.gross,
+    lines: [
+      ...calculation.structure.monthly.map((component) => ({ seq: component.seq, code: component.name.toUpperCase().replaceAll(' ', '_'), name: component.name, kind: 'COMPONENT', amount: component.amount })),
+      ...[['PF', 'Provident fund', calculation.pf.employee], ['ESI', 'ESI', calculation.esi.employee], ['PT', 'Professional tax', calculation.pt.amount], ['TDS', 'Income tax', calculation.tds_monthly]]
+        .filter(([, , amount]) => amount > 0)
+        .map(([code, name, amount], deductionIndex) => ({ seq: 10 + deductionIndex, code, name, kind: 'DEDUCTION', amount })),
+    ],
+  });
 }
 
 function salaryOn(state, employeeId, date = state.today) {

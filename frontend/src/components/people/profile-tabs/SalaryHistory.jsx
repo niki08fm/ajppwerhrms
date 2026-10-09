@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, ChevronLeft, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, errorMessage } from '@/services/api';
 import { useLookups } from '@/hooks/useLookups';
@@ -95,6 +95,7 @@ export function PayGroupControl({ e }) {
 
 export function SalaryHistoryTab({ e, compact = false }) {
   const qc = useQueryClient();
+  const historyRef = useRef(null);
   const q = useQuery({
     queryKey: ['salary-history', e.id],
     queryFn: () => api.get(`/employees/${e.id}/salary`).then((r) => r.data),
@@ -149,10 +150,16 @@ export function SalaryHistoryTab({ e, compact = false }) {
     );
   };
   return (
-    <Card className="min-w-0 overflow-hidden">
+    <Card className="min-w-0 overflow-hidden" role="region" aria-label="Salary revisions">
       <CardHeader
         title="Salary revisions"
-        description="Monthly changes and previous salaries."
+        description={rows.length > 1 ? `${rows.length} revisions · latest first` : 'Monthly changes and previous salaries.'}
+        actions={compact && rows.length > 1 && (
+          <>
+            <Button size="icon" variant="outline" aria-label="Previous salary revisions" onClick={() => historyRef.current?.scrollBy({ left: -280, behavior: 'smooth' })}><ChevronLeft className="size-4" /></Button>
+            <Button size="icon" variant="outline" aria-label="Older salary revisions" onClick={() => historyRef.current?.scrollBy({ left: 280, behavior: 'smooth' })}><ChevronRight className="size-4" /></Button>
+          </>
+        )}
       />
       {q.isLoading ? (
         <SkeletonRows rows={3} />
@@ -161,9 +168,9 @@ export function SalaryHistoryTab({ e, compact = false }) {
       ) : !rows.length ? (
         <EmptyState title="No salary yet" body="Add a salary to begin." />
       ) : compact ? (
-        <div className="max-h-[620px] overflow-y-auto px-5">
+        <div ref={historyRef} role="region" aria-label="Salary revision history" tabIndex={0} className="flex min-w-0 snap-x snap-proximity gap-3 overflow-x-auto overscroll-x-contain p-4 focus-visible:outline-2 focus-visible:outline-ring">
           {rows.map((r) => (
-            <div key={r.id} className="border-b py-4 last:border-0">
+            <div key={r.id} className={cn('min-w-0 shrink-0 snap-start rounded-md border p-4', rows.length > 1 ? 'w-[min(280px,100%)]' : 'w-full')}>
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="font-medium text-[14px]">
                   {monthLabel(salaryMonth(r.valid_from))} {!r.valid_to && <Chip tone="success">Latest</Chip>}

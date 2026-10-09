@@ -32,7 +32,7 @@ window.fetch = async (input, init = {}) => {
   } catch (error) {
     result = { status: 422, json: { error: { code: 'VALIDATION', message: error.message } } };
   }
-  if (!result) result = { status: 400, json: { error: { code: 'PREVIEW_ONLY', message: 'This preview covers salary, statutory settings, pay groups, employee journey and policies. Choose one of the preview tabs above.' } } };
+  if (!result) result = { status: 400, json: { error: { code: 'PREVIEW_ONLY', message: 'This preview covers Today, salary, statutory settings, payslips, pay groups, employee journey and policies. Choose one of the preview tabs above.' } } };
   requests.push({ method, path, status: result.status ?? 200 });
   return new Response(JSON.stringify(result.json), { status: result.status ?? 200, headers: { 'Content-Type': 'application/json' } });
 };
@@ -51,6 +51,7 @@ function PreviewToolbar() {
     ['/', 'Today'],
     [`/people/${employee}?tab=salary`, 'Salary'],
     [`/people/${employee}?tab=salary&section=statutory`, 'Statutory'],
+    [`/people/${employee}?tab=payslips`, 'Payslips'],
     ['/setup/pay-groups', 'Pay groups'],
     ['/setup/structures', 'Salary structures'],
     ['/setup/policies?kind=OVERTIME&new=1', 'Overtime policy'],
@@ -79,10 +80,10 @@ function SampleEmployees() {
   const q = useQuery({ queryKey: ['people'], queryFn: () => api.get('/employees').then(r => r.data) });
   return <div>
     <h1 className="font-display text-2xl font-semibold">Sample employees</h1>
-    <p className="mt-2 text-muted-foreground">Choose a sample employee. Try changing their salary structure or pay group, adding a revision, and reviewing their statutory rules.</p>
+    <p className="mt-2 text-muted-foreground">Choose a sample employee. Try salary changes, statutory settings and payslips across years.</p>
     <div className="preview-employee-grid">{(q.data ?? []).map(e => <Link key={e.id} className="preview-employee" to={`/people/${e.id}?tab=salary`}>
       <span className="preview-initials">{e.name.split(' ').map(n => n[0]).slice(0, 2).join('')}</span>
-      <div><strong>{e.name}</strong><span>{e.designation} · {e.pay_group.name}</span><small>{e.salary ? 'Salary and revision history' : 'Try adding their first salary'}</small></div><span aria-hidden>→</span>
+      <div><strong>{e.name}</strong><span>{e.designation} · {e.pay_group.name}</span><small>{!e.salary ? 'Try adding their first salary' : e.id === state.employees[1].id ? 'Ten years of sample payslips' : 'Salary and revision history'}</small></div><span aria-hidden>→</span>
     </Link>)}</div>
     <div className="preview-tip">All changes stay in this preview. Reload the page or use Reset preview to restore the samples.</div>
   </div>;
