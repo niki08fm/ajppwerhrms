@@ -24,9 +24,9 @@ function builderPreview(components, sample = {}) {
     return { ...base, breakup: {
       ...base.breakup, gross, take_home: gross - pf - employeeEsi,
       esi_within_ceiling: withEsi, esi_eligible_gross: 2_100_000,
-      solution: { ambiguous: true, gross: 2_100_000, breakdown: { esi_applies: true }, alternative: { gross: 2_164_400, breakdown: { esi_applies: false } }, approximate: false },
+      solution: { ambiguous: true, gross: 2_100_000, breakdown: { esi_applies: true, agreed_annual_ctc: sample.amount, calculated_annual_ctc: sample.amount, rounding_difference: 0 }, alternative: { gross: 2_164_400, breakdown: { esi_applies: false, agreed_annual_ctc: sample.amount, calculated_annual_ctc: sample.amount, rounding_difference: 0 } }, approximate: false },
       structure: { monthly: [...fixed, ...components.filter((c) => c.calc_type === 'BALANCE').map((c) => ({ ...c, amount: gross - fixedTotal }))], yearly: [], over_budget: false },
-      ctc: { annual_ctc: (gross + pf + employerEsi) * 12, monthly_cost: gross + pf + employerEsi, employer_pf: pf, employer_esi: employerEsi },
+      ctc: { annual_ctc: (gross + pf + employerEsi) * 12, monthly_cost: gross + pf + employerEsi, employer_pf: pf, employer_esi: employerEsi, agreed_annual_ctc: sample.amount, calculated_annual_ctc: (gross + pf + employerEsi) * 12, rounding_difference: sample.amount - (gross + pf + employerEsi) * 12 },
       pf: { employee: pf, employer_total: pf, employer_epf: pf, eps: 0, pf_wage: gross / 2, vpf: 0 },
       esi: { applicable: withEsi, employee: employeeEsi, employer: employerEsi },
       employee_statutory: pf + employeeEsi,
@@ -39,7 +39,7 @@ function builderPreview(components, sample = {}) {
     breakup: {
       gross: 2_400_000, take_home: 2_256_000, esi_within_ceiling: false, solution: null,
       structure: { monthly, yearly: [], over_budget: false },
-      ctc: { annual_ctc: 30_528_000, monthly_cost: 2_544_000, employer_pf: 144_000, employer_esi: 0 },
+      ctc: { annual_ctc: 30_528_000, monthly_cost: 2_544_000, employer_pf: 144_000, employer_esi: 0, agreed_annual_ctc: null, calculated_annual_ctc: 30_528_000, rounding_difference: 0 },
       pf: { employee: 144_000, employer_total: 144_000, employer_epf: 144_000, eps: 0, pf_wage: 1_200_000, vpf: 0 },
       esi: { applicable: false, employee: 0, employer: 0 }, pt: { amount: 0 }, pt_february: { amount: 0 },
       employee_statutory: 144_000, annual_tax: 0, tds_monthly: 0,

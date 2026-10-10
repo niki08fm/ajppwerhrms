@@ -14,6 +14,7 @@ import { Field, Input, Select } from '@/components/ui/form';
 import { Dialog, TabsContent, TabsList, TabsRoot } from '@/components/ui/overlay';
 import { SalaryPreviewPanel, useSalaryPreview } from '../../components/people/SalaryPreview';
 import { agreement, SalaryAmountFields, StatutoryChoice } from '../../components/people/SalaryEntry';
+import { hasPaise } from '../../components/people/SalaryDisplay';
 import { refreshEmployeePay } from '../../components/people/profile-tabs/SalaryHistory';
 
 export default function Offers() {
@@ -94,7 +95,7 @@ export default function Offers() {
                         <td className="text-right">
                           {p.offer && (
                             <>
-                              <Money value={p.offer.mode === 'CTC' ? p.offer.amount : p.offer.amount * 12} /> <span className="text-muted-foreground">{p.offer.mode === 'CTC' ? 'CTC a year' : 'gross a year'}</span>
+                              <Money value={p.offer.mode === 'CTC' ? p.offer.amount : p.offer.amount * 12} paise={p.offer.mode === 'CTC' && hasPaise(p.offer.amount)} /> <span className="text-muted-foreground">{p.offer.mode === 'CTC' ? 'CTC a year' : 'gross a year'}</span>
                             </>
                           )}
                         </td>
@@ -199,7 +200,7 @@ function IssueOfferDialog({ onClose }) {
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button loading={save.isPending} disabled={!f.name.trim() || !f.phone || !f.department_id || !f.designation.trim() || !f.pay_group_id || !f.structure_id || agreement(f.mode, f.amount).amount <= 0 || !pv.data || pv.isFetching || pv.isInputPending || (pv.data?.solution?.ambiguous && !chosen)} onClick={() => save.mutate()}>
+          <Button loading={save.isPending} disabled={!f.name.trim() || !f.phone || !f.department_id || !f.designation.trim() || !f.pay_group_id || !f.structure_id || agreement(f.mode, f.amount).amount <= 0 || !pv.data || pv.isFetching || pv.isInputPending || pv.data?.solution?.approximate || (pv.data?.solution?.ambiguous && !chosen)} onClick={() => save.mutate()}>
             <FileSignature /> Issue offer and print letter
           </Button>
         </>

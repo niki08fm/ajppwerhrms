@@ -6,6 +6,7 @@ import { longDate } from '@/utils';
 import { Money } from '@/components/bits';
 import { ErrorState, SkeletonBlock } from '@/components/states';
 import { Button } from '@/components/ui/button';
+import { hasPaise } from '@/components/people/SalaryDisplay';
 
 /** Printed from the letter's frozen snapshot — what was actually stated, not today's figures. */
 export default function LetterPrint() {
@@ -16,6 +17,7 @@ export default function LetterPrint() {
   const { kind, ref, issued_on, snapshot: s } = q.data;
   const first = s.employee.name.split(' ')[0];
   const date = longDate(issued_on ?? s.generated_on);
+  const annualCost = s.salary?.annual_ctc;
   const salaryTable = s.salary && (
     <table className="my-4 w-full border text-[13px]">
       <thead>
@@ -79,7 +81,7 @@ export default function LetterPrint() {
           <td className="px-3 py-1">Cost to company</td>
           <td />
           <td className="px-3 py-1 text-right">
-            <Money value={s.salary.annual_ctc} />
+            <Money value={annualCost} paise={hasPaise(annualCost)} />
           </td>
         </tr>
       </tbody>
@@ -121,7 +123,7 @@ export default function LetterPrint() {
             <p className="mt-3">
               Your remuneration is {s.salary?.mode === 'CTC' ? 'an annual cost to company' : 'a monthly gross salary'} of{' '}
               <strong>
-                <Money value={s.offer?.amount ?? s.salary?.amount} />
+                <Money value={s.offer?.amount ?? s.salary?.amount} paise={s.salary?.mode === 'CTC' && hasPaise(s.offer?.amount ?? s.salary?.amount)} />
               </strong>
               , made up as follows:
             </p>

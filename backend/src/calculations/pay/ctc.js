@@ -51,21 +51,21 @@ export function ctcForGross(gross, ctx, forceEsi, agreedCtc) {
   return costAt(gross, ctx, esiApplies, basis);
 }
 
-/** ₹2 a month, annualised */
-const TOLERANCE = 2 * 100 * 12;
+// Monthly salary is rounded to whole rupees. Component/statutory rounding can
+// add neighboring steps. New agreements use the resulting calculated CTC.
+export const CTC_ROUNDING_LIMIT = 24 * 100;
 const RUPEE = 100;
 
 /**
  * Largest whole-rupee gross g in [lo, hi] with ctc(g) ≤ target, then the closer of g and g+1.
  * CTC is monotonic on each side of the ESI ceiling, so bisection is valid within a side.
  */
-function bisect(target, loR, hiR, ctc) {
-  if (hiR < loR) return null;
-  let lo = loR;
-  let hi = hiR;
+function bisect(target, minGross, maxGross, ctc) {
+  if (maxGross < minGross) return null;
+  let lo = minGross;
+  let hi = maxGross;
   if (ctc(lo * RUPEE).annual_ctc > target) {
-    const b = ctc(lo * RUPEE);
-    return { gross: lo * RUPEE, breakdown: b };
+    return { gross: lo * RUPEE, breakdown: ctc(lo * RUPEE) };
   }
   while (lo < hi) {
     const mid = Math.floor((lo + hi + 1) / 2);
@@ -73,40 +73,83 @@ function bisect(target, loR, hiR, ctc) {
     else hi = mid - 1;
   }
   const a = ctc(lo * RUPEE);
-  if (lo + 1 <= hiR) {
+  if (lo + 1 <= maxGross) {
     const b = ctc((lo + 1) * RUPEE);
-    if (Math.abs(b.annual_ctc - target) < Math.abs(a.annual_ctc - target)) return { gross: (lo + 1) * RUPEE, breakdown: b };
+    if (Math.abs(b.annual_ctc - target) <= Math.abs(a.annual_ctc - target)) return { gross: (lo + 1) * RUPEE, breakdown: b };
   }
   return { gross: lo * RUPEE, breakdown: a };
+}
+
+/**
+ * A PF-counted remainder includes independently rounded components. Inspect
+ * neighboring whole-rupee candidates around the bisection bracket as well.
+ */
+function solveSide(target, minGross, maxGross, ctc, componentCount) {
+  const minRupees = Math.ceil(minGross / RUPEE);
+  const maxRupees = Math.floor(maxGross / RUPEE);
+  if (maxRupees < minRupees) return null;
+  const cache = new Map();
+  const at = (gross) => {
+    if (!cache.has(gross)) cache.set(gross, ctc(gross));
+    return cache.get(gross);
+  };
+  const candidate = bisect(target, minRupees, maxRupees, at);
+  const difference = (s) => Math.abs(s.breakdown.annual_ctc - target);
+  const validGross = (s) => s.gross === s.breakdown.gross;
+  // A target beyond this branch's endpoints cannot acquire eligibility merely
+  // because its nearest total differs by only a few paise.
+  const inRange = target >= at(minGross).annual_ctc && target <= at(maxGross).annual_ctc;
+  if (validGross(candidate) && difference(candidate) === 0) return { ...candidate, in_range: inRange };
+
+  const radius = 2 + Math.ceil(componentCount / 50);
+  let best = candidate;
+  // A fixed structure can make cost flat over a range. Its actual expanded
+  // gross is the only acceptable candidate, rather than the end of that range.
+  const expandedGross = candidate.breakdown.gross;
+  if (expandedGross % RUPEE === 0 && expandedGross >= minGross && expandedGross <= maxGross) {
+    const expandedCandidate = { gross: expandedGross, breakdown: at(expandedGross) };
+    if (validGross(expandedCandidate) && (!validGross(best) || difference(expandedCandidate) < difference(best))) best = expandedCandidate;
+  }
+  for (let rupees = Math.max(minRupees, candidate.gross / RUPEE - radius); rupees <= Math.min(maxRupees, candidate.gross / RUPEE + radius); rupees++) {
+    const gross = rupees * RUPEE;
+    const s = { gross, breakdown: at(gross) };
+    if (!validGross(s)) continue;
+    if (!validGross(best) || difference(s) < difference(best)) best = s;
+    if (difference(s) === 0) break;
+  }
+  return { ...best, in_range: inRange };
 }
 
 /**
  * Solve monthly gross from annual CTC.
  *
  * CTC is NOT monotonic in gross: at the ESI ceiling employer ESI switches off, so
- * a rupee more of gross gives a lower CTC. Every CTC in that band has two valid
+ * a paise more of gross gives a lower CTC. A CTC in that band can have two valid
  * grosses. A single bisection over the whole range silently returns a wrong answer
  * there, so each side of the ceiling is solved separately. "% of CTC" components
  * are worked out on the CTC being solved for, so they stay put while gross moves
  * and the Special Allowance absorbs the difference.
  */
 export function solveGrossFromCtc(annualCtc, ctx) {
-  const ceilingR = Math.floor(ctx.rates.esi.ceiling / RUPEE);
-  const maxR = Math.max(1, Math.floor(annualCtc / 12 / RUPEE));
-  const ok = (s) => !!s && Math.abs(s.breakdown.annual_ctc - annualCtc) <= TOLERANCE;
+  const ceiling = Math.floor(ctx.rates.esi.ceiling);
+  const maxGross = Math.max(RUPEE, Math.ceil(annualCtc / 12 / RUPEE) * RUPEE);
+  // Test the entered target against branch endpoints before salary rounding;
+  // a small annual difference must never manufacture ESI eligibility.
+  const ok = (s) => !!s && s.in_range && s.gross === s.breakdown.gross && Math.abs(s.breakdown.annual_ctc - annualCtc) <= CTC_ROUNDING_LIMIT;
+  const side = (min, max, esi) => solveSide(annualCtc, min, max, (g) => ctcForGross(g, ctx, esi, annualCtc), ctx.components.length);
 
   if (!ctx.esi_enabled) {
-    const s = bisect(annualCtc, 0, maxR, (g) => ctcForGross(g, ctx, false, annualCtc));
+    const s = side(0, maxGross, false);
     return { gross: s.gross, breakdown: s.breakdown, ambiguous: false, alternative: null, approximate: !ok(s) };
   }
 
   // 1. [0, ceiling] with ESI applied
-  const withEsi = bisect(annualCtc, 0, Math.min(ceilingR, maxR), (g) => ctcForGross(g, ctx, true, annualCtc));
-  const esiSide = withEsi && withEsi.gross <= ctx.rates.esi.ceiling && ok(withEsi) ? withEsi : null;
+  const withEsi = side(0, Math.min(ceiling, maxGross), true);
+  const esiSide = withEsi && withEsi.gross <= ctx.rates.esi.ceiling && ok(withEsi) ? { gross: withEsi.gross, breakdown: withEsi.breakdown } : null;
 
   // 2. (ceiling, ctc/12] with ESI off
-  const withoutEsi = maxR > ceilingR ? bisect(annualCtc, ceilingR + 1, maxR, (g) => ctcForGross(g, ctx, false, annualCtc)) : null;
-  const plainSide = withoutEsi && withoutEsi.gross > ctx.rates.esi.ceiling && ok(withoutEsi) ? withoutEsi : null;
+  const withoutEsi = maxGross > ceiling ? side(ceiling + 1, maxGross, false) : null;
+  const plainSide = withoutEsi && withoutEsi.gross > ctx.rates.esi.ceiling && ok(withoutEsi) ? { gross: withoutEsi.gross, breakdown: withoutEsi.breakdown } : null;
 
   if (esiSide && plainSide) {
     // Preview the eligible ESI option first. Both remain explicit choices when
@@ -116,7 +159,8 @@ export function solveGrossFromCtc(annualCtc, ctx) {
   const found = plainSide ?? esiSide;
   if (found) return { gross: found.gross, breakdown: found.breakdown, ambiguous: false, alternative: null, approximate: false };
 
-  // Nothing reproduced within tolerance: return the nearest candidate, flagged.
+  // No genuine result within the annual rounding limit: return the nearest
+  // candidate, flagged so saving can reject a material CTC difference.
   const candidates = [withEsi, withoutEsi].filter(Boolean);
   candidates.sort((a, b) => Math.abs(a.breakdown.annual_ctc - annualCtc) - Math.abs(b.breakdown.annual_ctc - annualCtc));
   const best = candidates[0] ?? { gross: 0, breakdown: ctcForGross(0, ctx, undefined, annualCtc) };

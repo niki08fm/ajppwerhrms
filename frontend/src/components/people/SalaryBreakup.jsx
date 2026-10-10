@@ -1,6 +1,7 @@
 import { Money } from '@/components/bits';
 import { Chip } from '@/components/states';
 import { cn } from '@/utils';
+import { hasPaise } from './SalaryDisplay';
 
 const NA = <span className="text-muted-foreground">—</span>;
 
@@ -35,7 +36,7 @@ function Total({ label, monthly, yearly, tone }) {
         <Money value={monthly} />
       </td>
       <td className={cn('py-1.5 pl-2 text-right whitespace-nowrap', tone && 'pr-2')}>
-        <Money value={yearly} />
+        <Money value={yearly} paise={tone === 'ctc' && hasPaise(yearly)} />
       </td>
     </tr>
   );

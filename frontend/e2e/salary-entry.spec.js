@@ -12,6 +12,27 @@ const LOW_GROSS = 2_050_000;
 const THRESHOLD_CTC = 27_531_600;
 const THRESHOLD_GROSS = 2_100_000;
 const THRESHOLD_PLAIN_GROSS = 2_164_400;
+const ROUNDED_CTC = 27_532_500;
+const ROUNDED_GROSS = 2_164_500;
+const MISMATCH_CTC = ROUNDED_CTC + 5_000;
+
+function roundedCtcPreview(body) {
+  const pf = 129_900;
+  const gross = body.amount === THRESHOLD_CTC + 1 ? THRESHOLD_PLAIN_GROSS : ROUNDED_GROSS;
+  const monthlyCost = gross + pf;
+  return {
+    ...previewFor({ ...body, mode: 'GROSS', amount: gross }),
+    gross, take_home: gross - pf, employee_statutory: pf,
+    esi_within_ceiling: false, esi_eligible_gross: null,
+    solution: {
+      gross, breakdown: { esi_applies: false, annual_ctc: monthlyCost * 12, monthly_cost: monthlyCost, agreed_annual_ctc: body.amount, calculated_annual_ctc: monthlyCost * 12, rounding_difference: body.amount - monthlyCost * 12 },
+      ambiguous: false, alternative: null, approximate: body.amount === MISMATCH_CTC,
+    },
+    ctc: { annual_ctc: monthlyCost * 12, monthly_cost: monthlyCost, employer_pf: pf, employer_esi: 0, agreed_annual_ctc: body.amount, calculated_annual_ctc: monthlyCost * 12, rounding_difference: body.amount - monthlyCost * 12 },
+    pf: { employee: pf, employer_total: pf, eps: 0, employer_epf: pf, pf_wage: Math.round(gross / 2), vpf: 0 },
+    esi: { applicable: false, employee: 0, employer: 0 },
+  };
+}
 
 /** Fixed API figures exercise the form contract; engine tests cover the CTC calculation. */
 function previewFor(body) {
@@ -26,9 +47,9 @@ function previewFor(body) {
   const esi = esiOn ? 15_000 : 0;
   return {
     gross, esi_within_ceiling: within, esi_eligible_gross: body.mode === 'CTC' ? lower : within ? gross : null, take_home: gross - pf - esi,
-    solution: ambiguous ? { ambiguous: true, gross: lower, breakdown: { esi_applies: true }, alternative: { gross: upper, breakdown: { esi_applies: false } }, approximate: false } : null,
+    solution: ambiguous ? { ambiguous: true, gross: lower, breakdown: { esi_applies: true, agreed_annual_ctc: body.amount, calculated_annual_ctc: body.amount, rounding_difference: 0 }, alternative: { gross: upper, breakdown: { esi_applies: false, agreed_annual_ctc: body.amount, calculated_annual_ctc: body.amount, rounding_difference: 0 } }, approximate: false } : null,
     structure: { monthly: [{ name: 'Basic', amount: Math.round(gross / 2), colour: 'chart-1' }, { name: 'DA', amount: 0, colour: 'chart-2' }, { name: 'Special Allowance', amount: gross - Math.round(gross / 2), colour: 'chart-3' }], yearly: [], over_budget: false },
-    ctc: { annual_ctc: ambiguous ? body.amount : gross * 12, monthly_cost: gross + pf + esi, employer_pf: pf, employer_esi: esi },
+    ctc: { annual_ctc: body.mode === 'CTC' ? body.amount : gross * 12, monthly_cost: gross + pf + esi, employer_pf: pf, employer_esi: esi, agreed_annual_ctc: body.mode === 'CTC' ? body.amount : null, calculated_annual_ctc: body.mode === 'CTC' ? body.amount : gross * 12, rounding_difference: 0 },
     pf: { employee: pf, employer_total: pf, eps: 0, employer_epf: pf, pf_wage: gross / 2, vpf: 0 },
     esi: { applicable: esiOn, employee: esi, employer: esi },
     pt: { amount: 0, state: 'Andhra Pradesh' }, pt_february: { amount: 0 },
@@ -39,6 +60,7 @@ function previewFor(body) {
 // This actual ceiling example uses Basic50%, PF12%, employerESI3.25% and
 // employeeESI0.75%, with statutory contributions rounded to whole rupees.
 function thresholdPreview(body) {
+  if (body.mode === 'CTC' && [ROUNDED_CTC, THRESHOLD_CTC + 1, MISMATCH_CTC].includes(body.amount)) return roundedCtcPreview(body);
   const ctc = body.mode === 'CTC';
   const ambiguous = ctc && body.esi_enabled;
   const gross = ctc ? body.chosen_gross ?? (body.esi_enabled ? THRESHOLD_GROSS : THRESHOLD_PLAIN_GROSS) : body.amount;
@@ -54,11 +76,11 @@ function thresholdPreview(body) {
     esi_within_ceiling: within, esi_eligible_gross: ctc ? THRESHOLD_GROSS : within ? gross : null,
     solution: ctc ? {
       gross: body.esi_enabled ? THRESHOLD_GROSS : THRESHOLD_PLAIN_GROSS,
-      breakdown: { esi_applies: !!body.esi_enabled }, ambiguous,
-      alternative: ambiguous ? { gross: THRESHOLD_PLAIN_GROSS, breakdown: { esi_applies: false } } : null,
+      breakdown: { esi_applies: !!body.esi_enabled, agreed_annual_ctc: body.amount, calculated_annual_ctc: body.amount, rounding_difference: 0 }, ambiguous,
+      alternative: ambiguous ? { gross: THRESHOLD_PLAIN_GROSS, breakdown: { esi_applies: false, agreed_annual_ctc: body.amount, calculated_annual_ctc: body.amount, rounding_difference: 0 } } : null,
       approximate: false,
     } : null,
-    ctc: { annual_ctc: monthlyCost * 12, monthly_cost: monthlyCost, employer_pf: pf, employer_esi: employerEsi },
+    ctc: { annual_ctc: monthlyCost * 12, monthly_cost: monthlyCost, employer_pf: pf, employer_esi: employerEsi, agreed_annual_ctc: ctc ? body.amount : null, calculated_annual_ctc: monthlyCost * 12, rounding_difference: ctc ? body.amount - monthlyCost * 12 : 0 },
     pf: { employee: pf, employer_total: pf, eps: 0, employer_epf: pf, pf_wage: gross / 2, vpf: 0 },
     esi: { applicable: esiOn, employee: employeeEsi, employer: employerEsi },
   };
@@ -69,7 +91,7 @@ async function mockSalaryEntry(page, { threshold = false } = {}) {
   const writes = [];
   const waiting = [];
   const controls = {
-    previews, writes, waiting, holdAmount: null,
+    previews, writes, waiting, holdAmount: null, componentCycleAmount: null,
     release() { this.holdAmount = null; waiting.splice(0).forEach((resolve) => resolve()); },
   };
   await page.route('**/api/v1/**', async (route) => {
@@ -81,6 +103,14 @@ async function mockSalaryEntry(page, { threshold = false } = {}) {
       previews.push(body);
       if (body.amount === controls.holdAmount) await new Promise((resolve) => waiting.push(resolve));
       result = { data: threshold ? thresholdPreview(body) : previewFor(body) };
+      if (body.mode === 'CTC' && body.amount === controls.componentCycleAmount) {
+        // A cyclic component calculation is invalid even when its final iteration
+        // happens to equal the requested annual amount.
+        result.data.solution = {
+          gross: result.data.gross, breakdown: { esi_applies: result.data.esi.applicable },
+          ambiguous: false, alternative: null, approximate: true, reason: 'CTC_COMPONENT_CYCLE',
+        };
+      }
     } else if ((path === '/employees' || path === '/offers') && request.method() === 'POST') {
       writes.push({ path, body: request.postDataJSON() });
       result = { data: { id: CREATED_EMPLOYEE, employee_id: CREATED_EMPLOYEE, code: 'TEST001', ref: 'TEST/OFFER/001' } };
@@ -101,6 +131,31 @@ async function mockSalaryEntry(page, { threshold = false } = {}) {
   });
   return controls;
 }
+
+test('cyclic CTC components block save with an explanation even when the calculated annual amount matches', async ({ page }) => {
+  const fixture = await mockSalaryEntry(page);
+  fixture.componentCycleAmount = CTC;
+  const dialog = await openForm(page, 'existing');
+  await fillIdentity(dialog, 'existing');
+  await dialog.getByRole('radio', { name: 'CTC', exact: true }).click();
+  const annual = dialog.getByRole('textbox', { name: /^Annual CTC/ });
+  await annual.fill('264000');
+  await expect(dialog.getByText('These salary components do not settle on a consistent CTC. Adjust the components before saving.', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('Annual CTC', { exact: true }).locator('..')).toContainText('₹2,64,000');
+  await expect(annual).toHaveValue('264000');
+  await expect(saveButton(dialog, 'existing')).toBeDisabled();
+  await expect(dialog.getByText(/Entered annual CTC.*difference|difference ₹0/i)).toHaveCount(0);
+  expect(fixture.writes).toHaveLength(0);
+
+  // A different structure with a valid calculation can recover without changing the budget.
+  fixture.componentCycleAmount = null;
+  await dialog.getByRole('combobox', { name: /^Salary structure/ }).selectOption(STRUCTURE_A);
+  await expect(dialog.getByText(/These salary components do not settle/)).toHaveCount(0);
+  await dialog.getByRole('radio', { name: /a month with ESI$/ }).check();
+  await expect(saveButton(dialog, 'existing')).toBeEnabled();
+  await expect(annual).toHaveValue('264000');
+  expect(fixture.writes).toHaveLength(0);
+});
 
 async function openForm(page, kind) {
   await page.goto(kind === 'existing' ? '/people' : '/offers');
@@ -317,3 +372,88 @@ test('changing mode or structure clears a previous CTC choice and requires a fre
   await expect(dialog.getByRole('radio', { name: 'CTC', exact: true })).toHaveAttribute('aria-checked', 'true');
   expect(fixture.writes).toHaveLength(0);
 });
+
+for (const kind of ['existing', 'offer']) {
+  test(`${kind} CTC entry rounds monthly salary and shows the resulting CTC without changing the typed budget`, async ({ page }) => {
+    const fixture = await mockSalaryEntry(page, { threshold: true });
+    const dialog = await openForm(page, kind);
+    await fillIdentity(dialog, kind);
+    await dialog.getByRole('radio', { name: 'CTC', exact: true }).click();
+    const annual = dialog.getByRole('textbox', { name: /^Annual CTC/ });
+    await annual.fill('275325');
+    const save = saveButton(dialog, kind);
+    await expect(save).toBeEnabled();
+    await expect(annual).toHaveValue('275325');
+    await expect(dialog.getByText('Monthly gross', { exact: true }).locator('..')).toContainText('₹21,645');
+    await expect(dialog.getByText('Annual CTC', { exact: true }).locator('..')).toContainText('₹2,75,328');
+    const cost = dialog.getByRole('row').filter({ has: page.getByRole('cell', { name: 'Cost to company (CTC)', exact: true }) });
+    await expect(cost.getByRole('cell').nth(1)).toHaveText('₹22,944');
+    await expect(cost.getByRole('cell').nth(2)).toHaveText('₹2,75,328');
+    const employerEsi = dialog.getByRole('row').filter({ has: page.getByRole('cell', { name: /^ESI — company share/ }) });
+    await expect(employerEsi.getByRole('cell').nth(1)).toHaveText('—');
+    await expect(dialog.getByRole('switch', { name: 'ESI', exact: true })).toBeDisabled();
+    await expect(dialog.getByRole('switch', { name: 'ESI', exact: true })).not.toBeChecked();
+    await expect(dialog.getByRole('radio', { name: /a month (with|without) ESI$/ })).toHaveCount(0);
+    await expect(dialog.getByText(/Salary figures rounded|rounding difference|Entered annual CTC.*difference/i)).toHaveCount(0);
+    if (kind === 'offer') await dialog.screenshot({ path: '/tmp/ctc-rounding-offer.png' });
+    const latest = fixture.previews.at(-1);
+    expect(latest).toMatchObject({ mode: 'CTC', amount: ROUNDED_CTC, structure_id: STRUCTURE_B });
+    expect(latest).not.toHaveProperty('chosen_gross');
+    await save.click();
+    await expect.poll(() => fixture.writes.length).toBe(1);
+    const body = fixture.writes[0].body;
+    expect(body).toMatchObject({ pf_enabled: true, esi_enabled: false });
+    const salary = kind === 'existing' ? body.salary : body;
+    expect(salary).toMatchObject({ mode: 'CTC', amount: ROUNDED_CTC, structure_id: STRUCTURE_B });
+    expect(salary).not.toHaveProperty('chosen_gross');
+  });
+
+  test(`${kind} CTC entry just above the ESI boundary cannot regain ESI after CTC normalizes`, async ({ page }) => {
+    const fixture = await mockSalaryEntry(page, { threshold: true });
+    const dialog = await openForm(page, kind);
+    await fillIdentity(dialog, kind);
+    await dialog.getByRole('radio', { name: 'CTC', exact: true }).click();
+    const annual = dialog.getByRole('textbox', { name: /^Annual CTC/ });
+    await annual.fill('275316.01');
+    const save = saveButton(dialog, kind);
+    await expect(save).toBeEnabled();
+    await expect(annual).toHaveValue('275316.01');
+    await expect(dialog.getByText('Monthly gross', { exact: true }).locator('..')).toContainText('₹21,644');
+    await expect(dialog.getByText('Annual CTC', { exact: true }).locator('..')).toContainText('₹2,75,316');
+    const cost = dialog.getByRole('row').filter({ has: page.getByRole('cell', { name: 'Cost to company (CTC)', exact: true }) });
+    await expect(cost.getByRole('cell').nth(2)).toHaveText('₹2,75,316');
+    await expect(dialog.getByRole('switch', { name: 'ESI', exact: true })).toBeDisabled();
+    await expect(dialog.getByRole('switch', { name: 'ESI', exact: true })).not.toBeChecked();
+    await expect(dialog.getByRole('radio', { name: /a month (with|without) ESI$/ })).toHaveCount(0);
+    await expect(dialog.getByText(/Salary figures rounded|rounding difference/i)).toHaveCount(0);
+    await expect(dialog.getByText(/Adjust the amount or structure before saving/)).toHaveCount(0);
+    await save.click();
+    await expect.poll(() => fixture.writes.length).toBe(1);
+    const body = fixture.writes[0].body;
+    expect(body).toMatchObject({ esi_enabled: false, pf_enabled: true });
+    expect(kind === 'existing' ? body.salary : body).toMatchObject({ mode: 'CTC', amount: THRESHOLD_CTC + 1, structure_id: STRUCTURE_B });
+  });
+
+  test(`${kind} CTC entry blocks a preview with a larger statutory rounding gap`, async ({ page }) => {
+    const fixture = await mockSalaryEntry(page, { threshold: true });
+    const dialog = await openForm(page, kind);
+    await fillIdentity(dialog, kind);
+    await dialog.getByRole('radio', { name: 'CTC', exact: true }).click();
+    const annual = dialog.getByRole('textbox', { name: /^Annual CTC/ });
+    await annual.fill('275375');
+    await expect.poll(() => fixture.previews.at(-1)?.amount).toBe(MISMATCH_CTC);
+    const mismatch = dialog.getByText(/Entered annual CTC.*calculated.*difference/i);
+    await expect(mismatch).toBeVisible();
+    await expect(mismatch).toContainText('₹2,75,375');
+    await expect(mismatch).toContainText('₹2,75,328');
+    await expect(mismatch).toContainText('₹47');
+    await expect(saveButton(dialog, kind)).toBeDisabled();
+    await expect(annual).toHaveValue('275375');
+    expect(fixture.writes).toHaveLength(0);
+    // Returning to an accepted rupee-rounded salary clears the warning and restores save.
+    await annual.fill('275325');
+    await expect(saveButton(dialog, kind)).toBeEnabled();
+    await expect(annual).toHaveValue('275325');
+    expect(fixture.writes).toHaveLength(0);
+  });
+}

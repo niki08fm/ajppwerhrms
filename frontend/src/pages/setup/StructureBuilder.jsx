@@ -16,6 +16,7 @@ import { Field, Input, MoneyInput, Select } from '@/components/ui/form';
 import { Switch } from '@/components/ui/overlay';
 import { SalaryBreakup } from '../../components/people/SalaryBreakup';
 import { grossChoiceOptions } from '../../components/people/SalaryPreview';
+import { CtcMismatchNotice, exactInr } from '../../components/people/SalaryDisplay';
 
 const colourFor = (i) => `chart-${(i % 5) + 1}`;
 const blank = (i, over = {}) => ({
@@ -383,7 +384,7 @@ export default function StructureBuilder() {
             </div>
             {usesCtc && p && (
               <p className="text-[13px] text-muted-foreground">
-                “% of CTC” is a share of this annual CTC, <span className="num font-medium text-foreground">{formatINR(p.breakup.ctc.ctc_basis)}</span>, spread over twelve months.
+                “% of CTC” is a share of this annual CTC, <span className="num font-medium text-foreground">{exactInr(p.breakup.ctc.ctc_basis)}</span>, spread over twelve months.
               </p>
             )}
             {p?.breakup.solution?.ambiguous && <Notice tone="warning">
@@ -392,7 +393,7 @@ export default function StructureBuilder() {
                 {grossChoiceOptions(p.breakup.solution).map((o) => <label key={o.gross} className="flex items-center gap-2"><input type="radio" name="sample-gross" checked={(sampleChosen ?? p.breakup.gross) === o.gross} onChange={() => setSampleChosen(o.gross)} className="accent-primary" /><span className="num">{formatINR(o.gross)}</span> a month {o.label}</label>)}
               </div>
             </Notice>}
-            {p?.breakup.solution?.approximate && <Notice tone="warning">No monthly gross reproduces this CTC exactly on this structure; the nearest is shown.</Notice>}
+            <CtcMismatchNotice amount={toPaise(sample)} preview={p?.breakup} sample />
             {blankNames && <Notice tone="warning">Every component needs a name.</Notice>}
             {reservedName && <Notice tone="destructive">{SPECIAL_ALLOWANCE} is added automatically. Give this component another name.</Notice>}
             {preview.isError && <Notice tone="destructive">{errorMessage(preview.error)}</Notice>}

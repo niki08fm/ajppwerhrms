@@ -15,6 +15,7 @@ import { Input, Select } from '@/components/ui/form';
 import { Dialog, Switch } from '@/components/ui/overlay';
 import { SalaryBreakup } from '../SalaryBreakup';
 import { grossChoiceOptions } from '../SalaryPreview';
+import { hasPaise } from '../SalaryDisplay';
 import { PayslipPreview } from './PayslipPreview';
 
 function ruleText(c) {
@@ -90,7 +91,7 @@ export function PayTab({ e }) {
                   {salary.mode === m && <Chip tone="info">Current</Chip>}
                 </div>
                 <div className="mt-1 text-xl font-semibold num">
-                  <Money value={m === 'GROSS' ? p.gross : p.ctc.annual_ctc} />
+                  <Money value={m === 'GROSS' ? p.gross : p.ctc.annual_ctc} paise={m === 'CTC' && hasPaise(p.ctc.annual_ctc)} />
                 </div>
                 <p className="mt-1 text-[13px] text-muted-foreground">
                   {m === 'GROSS'
@@ -245,7 +246,7 @@ export function PayTab({ e }) {
                 ['Employee statutory (PF, ESI, PT, TDS)', <Money value={p.employee_statutory} />],
                 ['Company contributions (PF 12%, ESI)', <Money value={p.employer_statutory} />],
                 ['Cost to company per month', <Money value={p.ctc.monthly_cost} />],
-                ['Annual CTC', <Money value={p.ctc.annual_ctc} />],
+                ['Annual CTC', <Money value={p.ctc.annual_ctc} paise={hasPaise(p.ctc.annual_ctc)} />],
               ]}
             />
           </CardBody>
@@ -296,7 +297,7 @@ export function PayTab({ e }) {
         <p className="text-[14px]">
           {restate === 'CTC' ? (
             <>
-              Annual CTC will be recorded as <Money value={p.ctc.annual_ctc} />. If statutory rates change later, gross will be re-solved from this figure.
+              Annual CTC will be recorded as <Money value={p.ctc.annual_ctc} paise={hasPaise(p.ctc.annual_ctc)} />. If statutory rates change later, gross will be re-solved from this figure.
             </>
           ) : (
             <>

@@ -13,6 +13,7 @@ import { Field, Input, Select } from '@/components/ui/form';
 import { Dialog } from '@/components/ui/overlay';
 import { grossChoiceOptions, useSalaryPreview } from '../SalaryPreview';
 import { agreement, annualText, SalaryAmountFields } from '../SalaryEntry';
+import { CtcMismatchNotice, hasPaise } from '../SalaryDisplay';
 
 const salaryMonth = (date) => date?.slice(0, 7) ?? '';
 const validMonth = (month) => /^\d{4}-(0[1-9]|1[0-2])$/.test(month);
@@ -183,7 +184,7 @@ export function SalaryHistoryTab({ e, compact = false }) {
               <div className="mt-1 text-[13px] text-muted-foreground">
                 {r.valid_to ? `Through ${monthLabel(salaryMonth(r.valid_to))} · ` : ''}
                 {r.structure?.name ?? 'No structure'} · {r.mode === 'CTC' ? 'Annual CTC' : 'Annual gross'}{' '}
-                <Money value={r.mode === 'CTC' ? r.amount : r.monthly_gross * 12} />
+                <Money value={r.mode === 'CTC' ? r.amount : r.monthly_gross * 12} paise={r.mode === 'CTC' && hasPaise(r.amount)} />
               </div>
               <p className="mt-1 text-[13px] break-words">{r.reason || '—'}</p>
               {controls(r)}
@@ -212,7 +213,7 @@ export function SalaryHistoryTab({ e, compact = false }) {
                   </td>
                   <td>{r.mode === 'CTC' ? 'CTC' : 'Gross'}</td>
                   <td className="text-right">
-                    <Money value={r.mode === 'CTC' ? r.amount : r.monthly_gross * 12} />
+                    <Money value={r.mode === 'CTC' ? r.amount : r.monthly_gross * 12} paise={r.mode === 'CTC' && hasPaise(r.amount)} />
                   </td>
                   <td className="text-right">
                     <Money value={r.monthly_gross} />
@@ -359,6 +360,7 @@ export function ReviseDialog({
     f.reason.trim().length < 3 ||
     f.reason.trim().length > 300 ||
     agreement(f.mode, f.amount).amount <= 0 ||
+    a?.solution?.approximate ||
     (a?.solution?.ambiguous && chosen === undefined) ||
     (f.mode === 'CTC' && (!a || after.isInputPending || after.isFetching || after.isError)) ||
     e.read_only;
@@ -422,6 +424,7 @@ export function ReviseDialog({
               ))}
             </Notice>
           )}
+          <CtcMismatchNotice amount={agreement(f.mode, f.amount).amount} preview={a} />
         </div>
         <div className="min-w-0">
           <h4 className="mb-2 font-medium">Salary preview</h4>
@@ -453,7 +456,7 @@ export function ReviseDialog({
                       <td className="py-2">{label}</td>
                       {cur && (
                         <td className="text-right">
-                          <Money value={x} />
+                          <Money value={x} paise={label === 'Annual CTC' && hasPaise(x)} />
                         </td>
                       )}
                       {cur && (
@@ -462,7 +465,7 @@ export function ReviseDialog({
                         </td>
                       )}
                       <td className="text-right">
-                        <Money value={y} />
+                        <Money value={y} paise={label === 'Annual CTC' && hasPaise(y)} />
                       </td>
                     </tr>
                   ))}

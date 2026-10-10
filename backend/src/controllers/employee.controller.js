@@ -189,7 +189,7 @@ export const createEmployee = asyncHandler(async (req, res) => {
   const b = createSchema.parse(req.body);
   const group = await prisma.payGroup.findFirst({ where: { id: b.pay_group_id, deleted_at: null } });
   if (!group) throw notFound('Pay group');
-  const { monthly_gross, preview } = await resolveMonthlyGross(prisma, {
+  const { monthly_gross, amount: normalizedAmount, preview } = await resolveMonthlyGross(prisma, {
     mode: b.salary.mode,
     amount: b.salary.amount,
     structure_id: b.salary.structure_id,
@@ -225,7 +225,7 @@ export const createEmployee = asyncHandler(async (req, res) => {
           create: {
             valid_from: toDbDate(b.joined_on),
             mode: b.salary.mode,
-            amount: BigInt(b.salary.amount),
+            amount: BigInt(normalizedAmount),
             monthly_gross: BigInt(monthly_gross),
             structure_id: b.salary.structure_id,
             reason: 'Initial salary',
@@ -459,7 +459,7 @@ export const reviseSalary = asyncHandler(async (req, res) => {
   if (b.valid_from < fromDbDate(e.joined_on)) throw new AppError('VALIDATION', 'A revision cannot take effect before the joining date.', 422, 'valid_from');
   const structureId = b.structure_id;
   const st = e.statutory;
-  const { monthly_gross } = await resolveMonthlyGross(prisma, {
+  const { monthly_gross, amount: normalizedAmount } = await resolveMonthlyGross(prisma, {
     mode: b.mode,
     amount: b.amount,
     structure_id: structureId,
@@ -475,7 +475,7 @@ export const reviseSalary = asyncHandler(async (req, res) => {
   });
   const { actor, ip } = who(req);
   const result = await prisma.$transaction(async (tx) => {
-    const r = await insertSalary(tx, e.id, b.valid_from, { mode: b.mode, amount: b.amount, monthly_gross, structure_id: structureId, reason: b.reason }, actor);
+    const r = await insertSalary(tx, e.id, b.valid_from, { mode: b.mode, amount: normalizedAmount, monthly_gross, structure_id: structureId, reason: b.reason }, actor);
     await markTask(tx, e.id, 'PAY', actor);
     await audit(tx, {
       actor,
@@ -485,13 +485,14 @@ export const reviseSalary = asyncHandler(async (req, res) => {
       entity_id: e.id,
       detail: {
         old: r.current ? { mode: r.current.mode, amount: n(r.current.amount), monthly_gross: n(r.current.monthly_gross), valid_from: fromDbDate(r.current.valid_from) } : null,
-        new: { mode: b.mode, amount: b.amount, monthly_gross, valid_from: b.valid_from, structure_id: structureId },
+        new: { mode: b.mode, amount: normalizedAmount, monthly_gross, valid_from: b.valid_from, structure_id: structureId },
+        entered_amount: b.amount,
         reason: b.reason,
       },
     });
     return r.created;
   });
-  res.status(201).json({ data: { id: result.id, monthly_gross } });
+  res.status(201).json({ data: { id: result.id, monthly_gross, amount: normalizedAmount } });
 });
 
 function salarySnapshot(row) {
@@ -509,7 +510,7 @@ export const updateSalaryRevision = asyncHandler(async (req, res) => {
   assertWritable(e);
   if (b.valid_from < fromDbDate(e.joined_on)) throw new AppError('VALIDATION', 'A revision cannot take effect before the joining date.', 422, 'valid_from');
   const st = e.statutory;
-  const { monthly_gross } = await resolveMonthlyGross(prisma, {
+  const { monthly_gross, amount: normalizedAmount } = await resolveMonthlyGross(prisma, {
     mode: b.mode, amount: b.amount, structure_id: b.structure_id, date: b.valid_from,
     gender: e.gender, pt_state: st.pt_state, pf_enabled: st.pf_enabled,
     pf_restrict_to_ceiling: st.pf_restrict_to_ceiling, vpf_pct: Number(st.vpf_pct),
@@ -518,13 +519,13 @@ export const updateSalaryRevision = asyncHandler(async (req, res) => {
   const { actor, ip } = who(req);
   const result = await prisma.$transaction(async (tx) => {
     const changed = await editSalary(tx, e.id, req.params.salaryId, b.valid_from, {
-      mode: b.mode, amount: b.amount, monthly_gross, structure_id: b.structure_id, reason: b.reason,
+      mode: b.mode, amount: normalizedAmount, monthly_gross, structure_id: b.structure_id, reason: b.reason,
     });
     await audit(tx, { actor, ip, action: 'salary.edit', entity_type: 'employee', entity_id: e.id,
-      detail: { old: salarySnapshot(changed.previous), new: salarySnapshot(changed.updated), neighbors: changed.neighbors.map(salarySnapshot), reason: b.reason } });
+      detail: { old: salarySnapshot(changed.previous), new: salarySnapshot(changed.updated), neighbors: changed.neighbors.map(salarySnapshot), entered_amount: b.amount, reason: b.reason } });
     return changed.updated;
   });
-  res.json({ data: { id: result.id, monthly_gross } });
+  res.json({ data: { id: result.id, monthly_gross, amount: normalizedAmount } });
 });
 
 /** Remove an unlocked revision while keeping one agreement and continuous coverage. */

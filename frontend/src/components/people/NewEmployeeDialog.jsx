@@ -83,7 +83,7 @@ export function NewEmployeeDialog({ open, onOpenChange }) {
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button loading={create.isPending} onClick={() => create.mutate()} disabled={!f.name.trim() || !f.phone || !f.designation.trim() || !f.department_id || !f.pay_group_id || !f.structure_id || !f.joined_on || amount <= 0 || !pv.data || pv.isFetching || pv.isInputPending || (pv.data?.solution?.ambiguous && !chosen)}>
+          <Button loading={create.isPending} onClick={() => create.mutate()} disabled={!f.name.trim() || !f.phone || !f.designation.trim() || !f.department_id || !f.pay_group_id || !f.structure_id || !f.joined_on || amount <= 0 || !pv.data || pv.isFetching || pv.isInputPending || pv.data?.solution?.approximate || (pv.data?.solution?.ambiguous && !chosen)}>
             Add employee
           </Button>
         </>

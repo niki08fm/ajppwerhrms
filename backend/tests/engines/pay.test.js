@@ -119,7 +119,7 @@ describe('Components: a percentage of gross, CTC or basic, with an optional maxi
   it('agreed on CTC: % of CTC runs on the agreed figure and the solved gross reproduces it', () => {
     const sol = solveGrossFromCtc(R(600000), ctx);
     expect(sol.approximate).toBe(false);
-    expect(Math.abs(sol.breakdown.annual_ctc - R(600000))).toBeLessThanOrEqual(R(24));
+    expect(sol.breakdown.annual_ctc).toBe(R(600000));
     expect(sol.breakdown.ctc_basis).toBe(R(600000));
     const s = expandStructure(CTC_STRUCTURE, sol.gross, R(600000));
     expect(s.basic).toBe(R(20000));

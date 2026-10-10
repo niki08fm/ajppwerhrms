@@ -62,7 +62,7 @@ export const createOffer = asyncHandler(async (req, res) => {
   const b = offerCreateSchema.parse(req.body);
   const group = await prisma.payGroup.findFirst({ where: { id: b.pay_group_id, deleted_at: null } });
   if (!group) throw notFound('Pay group');
-  const { monthly_gross, preview } = await resolveMonthlyGross(prisma, {
+  const { monthly_gross, amount: normalizedAmount, preview } = await resolveMonthlyGross(prisma, {
     mode: b.mode,
     amount: b.amount,
     structure_id: b.structure_id,
@@ -100,7 +100,7 @@ export const createOffer = asyncHandler(async (req, res) => {
         employee_id: e.id,
         ref,
         mode: b.mode,
-        amount: BigInt(b.amount),
+        amount: BigInt(normalizedAmount),
         monthly_gross: BigInt(monthly_gross),
         structure_id: b.structure_id,
         issued_on: toDbDate(today()),
@@ -119,11 +119,11 @@ export const createOffer = asyncHandler(async (req, res) => {
           JSON.stringify({
             company: company ? { name: company.name, address: company.address } : null,
             employee: { code, name: b.name, designation: b.designation, department: dept?.name, joined_on: b.join_by },
-            offer: { ref, mode: b.mode, amount: b.amount, join_by: b.join_by, valid_till: b.valid_till },
+            offer: { ref, mode: b.mode, amount: normalizedAmount, join_by: b.join_by, valid_till: b.valid_till },
             pay_group: group.name,
             salary: {
               mode: b.mode,
-              amount: b.amount,
+              amount: normalizedAmount,
               monthly_gross,
               annual_ctc: preview.ctc.annual_ctc,
               components: preview.structure.monthly.map((c) => ({ name: c.name, amount: c.amount })),
@@ -137,8 +137,8 @@ export const createOffer = asyncHandler(async (req, res) => {
         ),
       },
     });
-    await audit(tx, { actor, ip, action: 'offer.issue', entity_type: 'employee', entity_id: e.id, detail: { ref, mode: b.mode, amount: b.amount, monthly_gross } });
-    return { employee_id: e.id, code, offer_id: offer.id, ref };
+    await audit(tx, { actor, ip, action: 'offer.issue', entity_type: 'employee', entity_id: e.id, detail: { ref, mode: b.mode, amount: normalizedAmount, entered_amount: b.amount, monthly_gross } });
+    return { employee_id: e.id, code, offer_id: offer.id, ref, amount: normalizedAmount };
   });
   res.status(201).json({ data: out });
 });

@@ -35,7 +35,7 @@ export async function resolveMonthlyGross(db, r) {
   if (r.mode === 'GROSS' && r.requirePreview === false) {
     await requireSalaryStructure(db, r.structure_id);
     if (!(await structureComponents(db, r.structure_id)).length) throw new AppError('VALIDATION', 'That salary structure has no components.', 422, 'structure_id');
-    return { monthly_gross: r.amount };
+    return { monthly_gross: r.amount, amount: r.amount };
   }
   const preview = await previewSalary(db, r);
   if (r.mode === 'CTC') {
@@ -45,7 +45,7 @@ export async function resolveMonthlyGross(db, r) {
       if (r.chosen_gross === undefined || !options.some((option) => option.gross === r.chosen_gross)) {
         throw new AppError(
           'CTC_AMBIGUOUS',
-          `This CTC has two valid monthly grosses: ${options.map((option) => `${formatINR(option.gross)} ${option.esi ? 'with' : 'without'} ESI`).join(' and ')}. Pick one, or move the CTC out of the band.`,
+          `This CTC has two valid monthly grosses: ${options.map((option) => `${formatINR(option.gross, { paise: option.gross % 100 !== 0 })} ${option.esi ? 'with' : 'without'} ESI`).join(' and ')}. Pick one, or move the CTC out of the band.`,
           409,
           'amount',
           { options },
@@ -53,10 +53,18 @@ export async function resolveMonthlyGross(db, r) {
       }
     }
     if (sol.approximate) {
-      throw new AppError('VALIDATION', 'No monthly gross reproduces this CTC within ₹2 a month on this structure. Adjust the amount.', 422, 'amount');
+      const messages = {
+        CTC_COMPONENT_CYCLE: 'This structure cannot produce a stable CTC for this rounded salary. Adjust the amount or salary structure.',
+        CTC_STRUCTURE_GROSS: 'The rounded salary is below this structure’s components. Adjust the CTC or salary structure.',
+        CTC_ROUNDING_RANGE: 'This structure changes the calculated CTC beyond the permitted ₹24 annual salary-rounding difference. Adjust the amount or salary structure.',
+      };
+      throw new AppError('VALIDATION', messages[sol.reason] ?? 'No rounded monthly salary matches this annual CTC with this structure and statutory rules within the permitted ₹24 annual rounding difference. Choose a different annual CTC.', 422, 'amount');
+    }
+    if (preview.structure.gross !== preview.gross) {
+      throw new AppError('VALIDATION', 'The rounded salary is below this structure’s components. Adjust the CTC or the salary structure.', 422, 'amount');
     }
   }
-  return { monthly_gross: preview.gross, preview };
+  return { monthly_gross: preview.gross, amount: r.mode === 'CTC' ? preview.ctc.annual_ctc : r.amount, preview };
 }
 
 async function requireSalaryStructure(db, id) {

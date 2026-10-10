@@ -2,8 +2,8 @@ import { computeEsi } from '../statutory/esi.js';
 import { computePf } from '../statutory/pf.js';
 import { computePt } from '../statutory/pt.js';
 import { computeAnnualTax } from '../statutory/incomeTax.js';
-import { ctcForGross, solveGrossFromCtc } from './ctc.js';
-import { expandStructure } from './structure.js';
+import { CTC_ROUNDING_LIMIT, ctcForGross, solveGrossFromCtc } from './ctc.js';
+import { expandStructure, usesCtc } from './structure.js';
 
 /** Everything the offer, profile and revision screens show about a salary, at full pay. */
 export function salaryPreview(input) {
@@ -32,9 +32,17 @@ export function salaryPreview(input) {
     const candidates = [eligibleSolution, eligibleSolution.alternative].filter(Boolean);
     esi_eligible_gross = eligibleSolution.approximate ? null : candidates.find((candidate) => candidate.breakdown.esi_applies && candidate.gross <= input.rates.esi.ceiling)?.gross ?? null;
   }
-  // On a CTC agreement, "% of CTC" components run on the agreed figure; on gross, on the CTC it works out to.
-  const ctc = ctcForGross(gross, ctx, undefined, input.mode === 'CTC' ? input.amount : undefined);
+  // Existing agreements keep their recorded CTC basis. New CTC calculations
+  // run on the actual CTC of the rounded gross, including "% of CTC" items.
+  const ctc = ctcForGross(gross, ctx, undefined, input.mode === 'CTC' && input.saved_gross !== undefined ? input.amount : undefined);
   const structure = expandStructure(input.components, gross, ctc.ctc_basis);
+  if (input.mode === 'CTC' && input.saved_gross === undefined) {
+    let reason;
+    if (usesCtc(input.components) && ctc.ctc_basis !== ctc.annual_ctc) reason = 'CTC_COMPONENT_CYCLE';
+    else if (structure.gross !== gross) reason = 'CTC_STRUCTURE_GROSS';
+    else if (Math.abs(ctc.annual_ctc - input.amount) > CTC_ROUNDING_LIMIT) reason = 'CTC_ROUNDING_RANGE';
+    if (reason) solution = { ...solution, approximate: true, reason };
+  }
   const pf = computePf(structure.pf_base, input.pf, input.rates.pf);
   const esi_within_ceiling = gross <= input.rates.esi.ceiling;
   const esi = computeEsi(input.esi_enabled && esi_within_ceiling, gross, input.rates.esi);

@@ -82,6 +82,9 @@ function preview(gross = 3_000_000) {
       employer_esi: 0,
       monthly_cost: gross + 180_000,
       annual_ctc: (gross + 180_000) * 12 + 120_000,
+      agreed_annual_ctc: null,
+      calculated_annual_ctc: (gross + 180_000) * 12 + 120_000,
+      rounding_difference: 0,
     },
     solution: { ambiguous: false, gross },
   };
@@ -215,6 +218,7 @@ async function mockProfile(page, { noSalary = false, protectedRevision = false, 
       const body = req.postDataJSON();
       state.previews.push(body);
       data = preview(body.mode === 'GROSS' ? body.amount : Math.round(body.amount / 12));
+      if (body.mode === 'CTC') data.ctc = { ...data.ctc, annual_ctc: body.amount, agreed_annual_ctc: body.amount, calculated_annual_ctc: body.amount, rounding_difference: 0 };
       if (body.mode === 'CTC' && body.amount === 27_531_600) {
         const gross = body.chosen_gross ?? 2_100_000;
         const esiOn = gross <= 2_100_000;
@@ -230,8 +234,8 @@ async function mockProfile(page, { noSalary = false, protectedRevision = false, 
           pf: { pf_wage: gross / 2, employee: pf, employer_total: pf, employer_epf: pf, eps: 0, vpf: 0 },
           esi: { applicable: esiOn, employee: employeeEsi, employer: employerEsi },
           pt: { state: 'Telangana', amount: 0 }, pt_february: { amount: 0 },
-          ctc: { employer_pf: pf, employer_esi: employerEsi, monthly_cost: gross + pf + employerEsi, annual_ctc: (gross + pf + employerEsi) * 12 },
-          solution: { ambiguous: true, gross: 2_100_000, breakdown: { esi_applies: true }, alternative: { gross: 2_164_400, breakdown: { esi_applies: false } } },
+          ctc: { employer_pf: pf, employer_esi: employerEsi, monthly_cost: gross + pf + employerEsi, annual_ctc: (gross + pf + employerEsi) * 12, agreed_annual_ctc: body.amount, calculated_annual_ctc: (gross + pf + employerEsi) * 12, rounding_difference: body.amount - (gross + pf + employerEsi) * 12 },
+          solution: { ambiguous: true, gross: 2_100_000, breakdown: { esi_applies: true, agreed_annual_ctc: body.amount, calculated_annual_ctc: body.amount, rounding_difference: 0 }, alternative: { gross: 2_164_400, breakdown: { esi_applies: false, agreed_annual_ctc: body.amount, calculated_annual_ctc: body.amount, rounding_difference: 0 } } },
         };
       }
     } else if (path.endsWith('/pay'))

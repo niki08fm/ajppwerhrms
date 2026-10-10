@@ -5,6 +5,7 @@ import { useDebounced } from '@/hooks';
 import { Money, ProportionBar } from '@/components/bits';
 import { ErrorState, Notice, SkeletonBlock } from '@/components/states';
 import { SalaryBreakup } from './SalaryBreakup';
+import { CtcMismatchNotice, exactInr, hasPaise } from './SalaryDisplay';
 
 export function useSalaryPreview(args, enabled = true) {
   const d = useDebounced(args, 300);
@@ -34,6 +35,7 @@ export function SalaryPreviewPanel({ args, chosen, onChoose, compact }) {
   if (!q.data) return <SkeletonBlock className="h-48" />;
   const p = q.data;
   const sol = p.solution;
+  const annualCost = p.ctc.annual_ctc;
   return (
     <div className={`flex flex-col gap-3 ${q.isFetching ? 'opacity-70' : ''}`}>
       {sol?.ambiguous && (
@@ -50,6 +52,7 @@ export function SalaryPreviewPanel({ args, chosen, onChoose, compact }) {
           </div>
         </Notice>
       )}
+      <CtcMismatchNotice amount={args.amount} preview={p} />
       {p.structure.over_budget && <Notice tone="warning">The components add up to more than this gross, so the Special Allowance is zero.</Notice>}
       <div className="grid grid-cols-2 gap-3 text-[14px] sm:grid-cols-4">
         <div>
@@ -67,7 +70,7 @@ export function SalaryPreviewPanel({ args, chosen, onChoose, compact }) {
         <div>
           <div className="text-[13px] text-muted-foreground">Annual CTC</div>
           <div className="text-lg font-semibold num">
-            <Money value={p.ctc.annual_ctc} />
+            <Money value={annualCost} paise={hasPaise(annualCost)} />
           </div>
         </div>
         <div>
@@ -79,8 +82,8 @@ export function SalaryPreviewPanel({ args, chosen, onChoose, compact }) {
       </div>
       <p className="m-0 rounded-md bg-card px-3 py-2 text-[13px] text-muted-foreground">
         {args.mode === 'CTC'
-          ? `A CTC of ${inr(p.ctc.annual_ctc)} a year is ${inr(p.ctc.monthly_cost)} a month. Less the employer's PF ${inr(p.ctc.employer_pf ?? 0)} and ESI ${inr(p.ctc.employer_esi ?? 0)}, the gross is ${inr(p.gross)} a month.`
-          : `A gross of ${inr(p.gross * 12)} a year is ${inr(p.gross)} a month. With the employer's PF ${inr(p.ctc.employer_pf ?? 0)} and ESI ${inr(p.ctc.employer_esi ?? 0)} on top, the CTC is ${inr(p.ctc.annual_ctc)} a year.`}
+          ? `A CTC of ${exactInr(annualCost)} a year is ${inr(p.ctc.monthly_cost)} a month. Less the employer's PF ${inr(p.ctc.employer_pf ?? 0)} and ESI ${inr(p.ctc.employer_esi ?? 0)}, the gross is ${inr(p.gross)} a month.`
+          : `A gross of ${inr(p.gross * 12)} a year is ${inr(p.gross)} a month. With the employer's PF ${inr(p.ctc.employer_pf ?? 0)} and ESI ${inr(p.ctc.employer_esi ?? 0)} on top, the CTC is ${exactInr(annualCost)} a year.`}
         {p.esi_within_ceiling === false ? p.esi?.applicable ? ' ESI coverage continues for the current contribution period.' : ' Not eligible for ESI: the gross is above the ceiling.' : ''}
       </p>
       {!compact && (
