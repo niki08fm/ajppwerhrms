@@ -34,6 +34,12 @@ async function registerTemplate(employeeId) {
     model_version: MODEL_VERSION, kind: 'REGISTERED', consent_at: new Date() } });
   invalidateFaceCache();
 }
+async function attachOvertime() {
+  const policy = await prisma.policy.create({ data: { policy_key: crypto.randomUUID(), kind: 'OVERTIME', name: 'Recorded site OT',
+    version: 1, valid_from: toDbDate('2025-04-01'), rules: { multiplier: 2, base: 'BASIC', divisor: null, hours_per_day: 8,
+      after_min: 30, rounding_min: 30, monthly_cap_min: null, counts_from: 'STANDARD_DAY' } } });
+  await prisma.payGroupPolicy.create({ data: { pay_group_id: f.payGroupId, policy_id: policy.id } });
+}
 async function start(agent, extra = {}) {
   return agent.post('/api/v1/punches/sessions').send({ ...POS, ...extra });
 }
@@ -66,6 +72,7 @@ beforeEach(async () => {
   await prisma.punchAttempt.deleteMany({});
   await prisma.punchSession.deleteMany({});
   await prisma.employeeFace.deleteMany({});
+  await prisma.payGroupPolicy.deleteMany({ where: { pay_group_id: f.payGroupId, policy: { kind: 'OVERTIME' } } });
   await prisma.loginAttempt.deleteMany({});
   await prisma.employee.updateMany({ where: { id: { in: [f.employees.A, f.employees.B, f.employees.C] } }, data: { status: 'ACTIVE' } });
   invalidateFaceCache();
@@ -81,6 +88,48 @@ afterEach(() => vi.useRealTimers());
 afterAll(async () => { setFaceClient(null); await prisma.$disconnect(); });
 
 describe('A site login reads only its own recorded attendance', () => {
+  it('attributes daily and monthly OT only to the site where the eligible closed interval occurred', async () => {
+    await attachOvertime();
+    await recorded(f.employees.A, 'IN', 540);
+    await recorded(f.employees.A, 'OUT', 1020);
+    await recorded(f.employees.A, 'IN', 1020, beta.id);
+    await recorded(f.employees.A, 'OUT', 1080, beta.id);
+    const alphaDay = await alphaTablet.get(`/api/v1/tablet/attendance/day?date=${DATE}`);
+    const betaDay = await betaTablet.get(`/api/v1/tablet/attendance/day?date=${DATE}`);
+    expect(alphaDay.status).toBe(200);
+    expect(betaDay.status).toBe(200);
+    expect(alphaDay.body.data.rows[0]).toMatchObject({ id: f.employees.A, worked_min: 480, ot_min: 0 });
+    expect(betaDay.body.data.rows[0]).toMatchObject({ id: f.employees.A, worked_min: 60, ot_min: 60 });
+    expect(betaDay.body.data.rows[0].first_in).toBe(new Date('2026-10-10T17:00:00+05:30').toISOString());
+    const alphaMonth = await alphaTablet.get('/api/v1/tablet/attendance/month?ym=2026-10');
+    const betaMonth = await betaTablet.get('/api/v1/tablet/attendance/month?ym=2026-10');
+    expect(alphaMonth.body.data.rows[0].ot_min).toBe(0);
+    expect(betaMonth.body.data.rows[0].ot_min).toBe(60);
+    expect(betaMonth.body.data.rows[0].days.find((d) => d.date === DATE).ot_min).toBe(60);
+    expect(betaMonth.body.data.rows[0].days.filter((d) => d.date !== DATE).every((d) => d.ot_min === 0)).toBe(true);
+    expect(JSON.stringify(betaDay.body)).not.toMatch(/salary|pay_group|policy|embedding/);
+  });
+  it('applies the daily rounding once when OT intervals are split between sites', async () => {
+    await attachOvertime();
+    await recorded(f.employees.A, 'IN', 540);
+    await recorded(f.employees.A, 'OUT', 1045);
+    await recorded(f.employees.A, 'IN', 1045, beta.id);
+    await recorded(f.employees.A, 'OUT', 1070, beta.id);
+    const alpha = await alphaTablet.get(`/api/v1/tablet/attendance/day?date=${DATE}`);
+    const destination = await betaTablet.get(`/api/v1/tablet/attendance/day?date=${DATE}`);
+    expect(alpha.body.data.rows[0].ot_min).toBe(25);
+    expect(destination.body.data.rows[0].ot_min).toBe(5);
+    expect(alpha.body.data.rows[0].ot_min + destination.body.data.rows[0].ot_min).toBe(30);
+  });
+  it('returns zero recorded site OT when no overtime policy is attached', async () => {
+    await recorded(f.employees.A, 'IN', 540);
+    await recorded(f.employees.A, 'OUT', 1080);
+    const day = await alphaTablet.get(`/api/v1/tablet/attendance/day?date=${DATE}`);
+    expect(day.body.data.rows[0]).toMatchObject({ worked_min: 540, ot_min: 0 });
+    const month = await alphaTablet.get('/api/v1/tablet/attendance/month?ym=2026-10');
+    expect(month.body.data.rows[0].ot_min).toBe(0);
+    expect(month.body.data.rows[0].days.every((d) => d.ot_min === 0)).toBe(true);
+  });
   it('counts unique INs, current presence, late starts and signed-out people; department mix uses the latest punch', async () => {
     await recorded(f.employees.A, 'IN', 570);
     await recorded(f.employees.B, 'IN', 540);

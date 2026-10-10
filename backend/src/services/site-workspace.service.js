@@ -1,5 +1,5 @@
 import { addDays, dayName, firstOfMonth, istDate, lastOfMonth, monthDates } from '@ajpwer/shared';
-import { computeDay, OVERNIGHT_MAX_GAP_MIN, pairPunches, resolvePolicies, shiftEndOnWorkDate } from '../calculations/index.js';
+import { computeDay, OVERNIGHT_MAX_GAP_MIN, pairPunches, resolvePolicies, shiftEndOnWorkDate, siteOvertimeMinutes } from '../calculations/index.js';
 import { fromDbDate, toDbDate } from '../utils/dbDates.js';
 import { toEnginePunch } from './attendance.service.js';
 import { holidaysBetween, payGroupRulesCache } from './rules.service.js';
@@ -71,10 +71,12 @@ async function periodRows(db, siteId, from, to, now) {
       const wholeDay = allBy.get(key) ?? punches;
       const policies = resolvePolicies(rules.policies, date);
       const engine = wholeDay.map(toEnginePunch);
-      const day = computeDay({ date, joined_on: fromDbDate(e.joined_on), last_day: fromDbDate(e.last_day),
+      const input = { date, joined_on: fromDbDate(e.joined_on), last_day: fromDbDate(e.last_day),
         is_holiday: holidays.has(date), is_weekly_off: rules.weekly_off.includes(dayName(date)),
         punches: engine, policies, shift_start_min: rules.shift.start_min,
-        shift_end_min: shiftEndOnWorkDate(rules.shift), shift_break_min: rules.shift.break_min });
+        shift_end_min: shiftEndOnWorkDate(rules.shift), shift_break_min: rules.shift.break_min };
+      const day = computeDay(input);
+      const ot = siteOvertimeMinutes(day, input);
       const paired = pairPunches(engine);
       const herePairs = paired.pairs.filter((p) => p.site_id === siteId);
       const ins = punches.filter((p) => p.direction === 'IN');
@@ -89,6 +91,7 @@ async function periodRows(db, siteId, from, to, now) {
         department_id: e.department.id, date,
         first_in: time(ins[0]), last_out: time(outs.at(-1)), punches_in: ins.length, punches_out: outs.length,
         on_site_now: onSite, worked_min: herePairs.reduce((sum, p) => sum + p.minutes, 0),
+        ot_min: ot.get(siteId) ?? 0,
         // Moving to another site mid-shift is neither a late start nor an early departure from work.
         late_min: firstDayIn?.site_id === siteId ? day.late_min : 0,
         early_min: !onSite && lastDayPunch?.direction === 'OUT' && lastDayPunch.site_id === siteId ? day.early_min : 0,
@@ -111,13 +114,14 @@ export async function siteMonthRegister(db, siteId, ym, now = new Date()) {
     let row = rowsBy.get(r.id);
     if (!row) {
       row = { id: r.id, code: r.code, name: r.name, department: r.department, designation: r.designation,
-        punched_days: 0, worked_min: 0, days: dates.map((date) => ({ date, punched_in: false, signed_out: false, in: null, out: null, worked_min: 0 })) };
+        punched_days: 0, worked_min: 0, ot_min: 0, days: dates.map((date) => ({ date, punched_in: false, signed_out: false, in: null, out: null, worked_min: 0, ot_min: 0 })) };
       rowsBy.set(r.id, row);
     }
     const d = row.days.find((x) => x.date === r.date);
-    Object.assign(d, { punched_in: r.punches_in > 0, signed_out: r.punches_out > 0, in: r.first_in, out: r.last_out, worked_min: r.worked_min });
+    Object.assign(d, { punched_in: r.punches_in > 0, signed_out: r.punches_out > 0, in: r.first_in, out: r.last_out, worked_min: r.worked_min, ot_min: r.ot_min });
     row.punched_days += r.punches_in > 0 ? 1 : 0;
     row.worked_min += r.worked_min;
+    row.ot_min += r.ot_min;
   }
   return { rows: [...rowsBy.values()], days: dates.map((date) => {
     const day = attendance.filter((r) => r.date === date);

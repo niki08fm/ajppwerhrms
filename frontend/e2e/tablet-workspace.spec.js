@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test';
 const SITE = { id: '00000000-0000-4000-8000-000000000071', code: 'SITE-TEST', name: 'Example site' };
 const OTHER_SITE = { id: '00000000-0000-4000-8000-000000000072', code: 'DEST-TEST', name: 'Destination site' };
 const EMPLOYEE = { id: '00000000-0000-4000-8000-000000000073', code: 'AJTEST73', name: 'Example Active Employee', department: 'Mechanical', designation: 'Engineer' };
+const ZERO_OT_EMPLOYEE = { id: '00000000-0000-4000-8000-000000000077', code: 'AJTEST77', name: 'Example Zero Overtime Employee', department: 'Safety', designation: 'Safety officer' };
 const TODAY = '2026-10-10';
 const POSITION = { lat: 17.4, lng: 78.4, accuracy_m: 5 };
 const people = [
@@ -14,10 +15,10 @@ const people = [
 
 /** All records and camera frames are fictional. These tests check the site UI,
  * cancellation and request boundaries, never biometric recognition accuracy. */
-async function mockTablet(page, { loggedIn = true, guidedRegistration = false, delayedCamera = false, deniedLocation = false } = {}) {
+async function mockTablet(page, { loggedIn = true, guidedRegistration = false, delayedCamera = false, deniedLocation = false, withOT = false } = {}) {
   const state = { loggedIn, site: SITE, reads: [], writes: [], unexpected: [], errors: [], transfers: [] };
   // Keep date and month navigation stable when this fixture runs on another day.
-  await page.clock.setFixedTime(new Date(`${TODAY}T06:00:00.000Z`));
+  await page.clock.setFixedTime(new Date(`${TODAY}T${withOT ? '14' : '06'}:00:00.000Z`));
   page.on('pageerror', (error) => state.errors.push(error.message));
   await page.addInitScript(({ position, deniedLocation }) => {
     window.__tabletLocationCalls = 0;
@@ -97,10 +98,25 @@ async function mockTablet(page, { loggedIn = true, guidedRegistration = false, d
     else if (path === '/tablet/attendance/day') {
       const date = url.searchParams.get('date');
       data = { site: state.site, date, rows: state.site.id === OTHER_SITE.id ? [] : [{ ...EMPLOYEE, first_in: `${date}T03:30:00.000Z`, last_out: null, punches_in: 1, punches_out: 0, on_site_now: date === TODAY, worked_min: 240, late_min: date === TODAY ? 15 : 0, early_min: 0, status: date === TODAY ? 'ON_SITE' : 'PRESENT' }] };
+      if (withOT && state.site.id === SITE.id) data.rows = [
+        { ...EMPLOYEE, first_in: `${date}T03:30:00.000Z`, last_out: `${date}T13:00:00.000Z`, punches_in: 1, punches_out: 1, on_site_now: false, worked_min: 570, ot_min: 90, late_min: 0, early_min: 0, status: 'SIGNED_OUT' },
+        { ...ZERO_OT_EMPLOYEE, first_in: `${date}T03:30:00.000Z`, last_out: `${date}T11:30:00.000Z`, punches_in: 1, punches_out: 1, on_site_now: false, worked_min: 480, ot_min: 0, late_min: 0, early_min: 0, status: 'SIGNED_OUT' },
+      ];
     } else if (path === '/tablet/attendance/month') {
       const ym = url.searchParams.get('ym');
       const date = `${ym}-10`;
       data = { site: state.site, ym, days: [{ date, punched_in: state.site.id === OTHER_SITE.id ? 0 : ym === '2026-10' ? 6 : 3, signed_out: 2 }], rows: state.site.id === OTHER_SITE.id ? [] : [{ ...EMPLOYEE, days: [{ date, punched_in: true, signed_out: false, in: `${date}T03:30:00.000Z`, out: null, worked_min: 240 }], punched_days: 1, worked_min: 240 }] };
+      if (withOT && state.site.id === SITE.id) {
+        const outOnlyDate = `${ym}-09`;
+        data.days = [{ date: outOnlyDate, punched_in: 0, signed_out: 1 }, { date, punched_in: 2, signed_out: 2 }];
+        data.rows = [
+          { ...EMPLOYEE, days: [{ date, punched_in: true, signed_out: true, in: `${date}T03:30:00.000Z`, out: `${date}T13:00:00.000Z`, worked_min: 570, ot_min: 90 }], punched_days: 1, worked_min: 570, ot_min: 90 },
+          { ...ZERO_OT_EMPLOYEE, days: [
+            { date: outOnlyDate, punched_in: false, signed_out: true, in: null, out: `${outOnlyDate}T11:30:00.000Z`, worked_min: 0, ot_min: 0 },
+            { date, punched_in: true, signed_out: true, in: `${date}T03:30:00.000Z`, out: `${date}T11:30:00.000Z`, worked_min: 480, ot_min: 0 },
+          ], punched_days: 1, worked_min: 480, ot_min: 0 },
+        ];
+      }
     } else if (path === '/tablet/sites') data = [OTHER_SITE];
     else if (path === '/tablet/employees') data = state.registered && url.searchParams.get('for') === 'register' ? [] : [EMPLOYEE];
     else if (path === '/tablet/transfers' && method === 'GET') data = state.transfers;
@@ -221,6 +237,77 @@ test('daily and monthly registers navigate dates with read-only site-scoped endp
   await expect.poll(() => state.reads.some(({ path, query }) => path === '/tablet/attendance/month' && query.ym === '2026-09')).toBe(true);
   await expect(page.getByRole('button', { name: /Edit|Save attendance|Approve|Run payroll/ })).toHaveCount(0);
   expect(state.writes).toEqual([]);
+  expect(state.reads.filter(({ path }) => path.startsWith('/tablet/attendance')).every(({ query }) => !('site_id' in query))).toBe(true);
+  expect(state.unexpected).toEqual([]);
+  expect(state.errors).toEqual([]);
+});
+
+test('daily register shows site overtime after worked hours and retains department/date filtering', async ({ page }) => {
+  const state = await mockTablet(page, { withOT: true });
+  await page.goto('/tablet');
+  await page.getByRole('tab', { name: 'Daily register', exact: true }).click();
+  const table = page.getByRole('region', { name: 'Daily register table', exact: true }).getByRole('table');
+  await expect(table.getByRole('columnheader', { name: 'OT', exact: true })).toBeVisible();
+  const headings = await table.getByRole('columnheader').allTextContents();
+  const overtimeIndex = headings.indexOf('OT');
+  expect(overtimeIndex).toBeGreaterThan(0);
+  expect(headings[overtimeIndex - 1]).toBe('Worked');
+  expect(headings[overtimeIndex + 1]).toBe('Late');
+  const overtimeRow = table.locator('tbody tr').filter({ hasText: EMPLOYEE.code });
+  const zeroRow = table.locator('tbody tr').filter({ hasText: ZERO_OT_EMPLOYEE.code });
+  await expect(overtimeRow.getByRole('cell').nth(overtimeIndex)).toHaveText('1h 30m');
+  await expect(zeroRow.getByRole('cell').nth(overtimeIndex)).toHaveText('—');
+  await page.getByLabel('Register department', { exact: true }).selectOption('Mechanical');
+  await expect(table.locator('tbody tr')).toHaveCount(1);
+  await expect(overtimeRow.getByRole('cell').nth(overtimeIndex)).toHaveText('1h 30m');
+  await page.getByRole('button', { name: 'Previous day', exact: true }).click();
+  await expect(page.getByLabel('Register date', { exact: true })).toHaveValue('2026-10-09');
+  await expect.poll(() => state.reads.some(({ path, query }) => path === '/tablet/attendance/day' && query.date === '2026-10-09')).toBe(true);
+  await expect(overtimeRow.getByRole('cell').nth(overtimeIndex)).toHaveText('1h 30m');
+  expect(state.writes).toEqual([]);
+  expect(state.reads.filter(({ path }) => path.startsWith('/tablet/attendance')).every(({ query }) => !('site_id' in query))).toBe(true);
+  expect(state.unexpected).toEqual([]);
+  expect(state.errors).toEqual([]);
+});
+
+test('monthly register shows site OT totals and daily tooltip without changing punch markers or leaking another site', async ({ page }) => {
+  const state = await mockTablet(page, { withOT: true });
+  await page.goto('/tablet');
+  await page.getByRole('tab', { name: 'Monthly register', exact: true }).click();
+  const table = page.getByRole('region', { name: 'Monthly register table', exact: true }).getByRole('table');
+  await expect(table.getByRole('columnheader', { name: 'OT', exact: true })).toBeVisible();
+  const headings = await table.getByRole('columnheader').allTextContents();
+  const overtimeIndex = headings.indexOf('OT');
+  expect(overtimeIndex).toBeGreaterThan(0);
+  expect(headings[overtimeIndex - 1]).toBe('Worked');
+  const overtimeRow = table.locator('tbody tr').filter({ hasText: EMPLOYEE.code });
+  const zeroRow = table.locator('tbody tr').filter({ hasText: ZERO_OT_EMPLOYEE.code });
+  await expect(overtimeRow.getByRole('cell').nth(overtimeIndex)).toHaveText('1h 30m');
+  await expect(zeroRow.getByRole('cell').nth(overtimeIndex)).toHaveText('—');
+  const overtimeDay = overtimeRow.getByLabel(/Punched in.*Site OT 1h 30m/);
+  await expect(overtimeDay).toHaveText('P');
+  await expect(overtimeDay).toHaveAttribute('title', /Site OT 1h 30m/);
+  await expect(zeroRow.getByLabel(/Punch-out only/)).toHaveText('O');
+  await expect(zeroRow.getByLabel(/Punched in/)).toHaveText('P');
+  await expect(zeroRow.locator('[aria-label*="Site OT"]')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Previous month', exact: true }).click();
+  await expect(page.getByLabel('Attendance month', { exact: true })).toHaveValue('2026-09');
+  await expect.poll(() => state.reads.some(({ path, query }) => path === '/tablet/attendance/month' && query.ym === '2026-09')).toBe(true);
+  await expect(overtimeRow.getByRole('cell').nth(overtimeIndex)).toHaveText('1h 30m');
+  await expect(overtimeRow.getByLabel(/Punched in.*Site OT 1h 30m/)).toHaveText('P');
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Login ID', exact: true }).fill('destination-site');
+  await page.getByLabel('Password', { exact: true }).fill('test-password');
+  await page.getByRole('button', { name: 'Sign in here', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Destination site', exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: 'Monthly register', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'No punches at this site', exact: true })).toBeVisible();
+  await expect(page.getByText(EMPLOYEE.name, { exact: true })).toHaveCount(0);
+  await expect(page.getByText('1h 30m', { exact: true })).toHaveCount(0);
+  expect(state.writes).toEqual([
+    { path: '/auth/site-logout', body: {} },
+    { path: '/auth/site-login', body: { login: 'destination-site', password: 'test-password' } },
+  ]);
   expect(state.reads.filter(({ path }) => path.startsWith('/tablet/attendance')).every(({ query }) => !('site_id' in query))).toBe(true);
   expect(state.unexpected).toEqual([]);
   expect(state.errors).toEqual([]);
