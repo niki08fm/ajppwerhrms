@@ -46,7 +46,7 @@ const MOVED = {
   records: ['letters'],
   documents: ['letters'],
   onboarding: ['overview', 'onboarding'],
-  face: ['overview', 'onboarding'],
+  face: ['overview', 'face'],
   edit: ['overview'],
 };
 

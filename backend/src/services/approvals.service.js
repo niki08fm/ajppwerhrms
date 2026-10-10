@@ -11,6 +11,7 @@ import { dayRegister } from './register.service.js';
  *   face   a punch the camera could not confirm (pending face exception)
  *   miss   a day closed by the 2 AM auto punch-out that HR has not settled
  *   short  a closed day under the standard hours that HR has not settled
+ *   transfer a planned site transfer waiting for HR approval
  *   move   a site change whose travel time HR has not reviewed
  *   leave  a pending leave request
  *
@@ -18,7 +19,7 @@ import { dayRegister } from './register.service.js';
  * never in a month whose attendance payroll has already frozen (nothing can change there).
  * A day is settled once HR saves a correction for it.
  */
-export const KINDS = ['face', 'miss', 'short', 'move', 'leave'];
+export const KINDS = ['face', 'miss', 'short', 'transfer', 'move', 'leave'];
 export const WINDOW_DAYS = 7;
 
 const TTL_MS = 10_000;
@@ -44,7 +45,7 @@ async function build(db, now, register) {
   for (const ym of new Set(dates.map(ymOf))) frozen.set(ym, (await attendanceFrozen(db, ym)).frozen);
   const open = dates.filter((d) => !frozen.get(ymOf(d)));
 
-  const [registers, sites, faces, changes, leaves, types] = await Promise.all([
+  const [registers, sites, faces, changes, leaves, types, transfers] = await Promise.all([
     Promise.all(open.map((d) => register(db, d, undefined, now).then((rows) => [d, rows]))),
     db.site.findMany({ select: { id: true, name: true } }),
     db.faceException.findMany({ where: { status: 'PENDING', deleted_at: null }, include: { site: { select: { id: true, name: true } } }, orderBy: { occurred_at: 'desc' }, take: 300 }),
@@ -56,6 +57,12 @@ async function build(db, now, register) {
       take: 300,
     }),
     leaveTypesInUse(db, now),
+    db.siteTransferRequest.findMany({
+      where: { status: 'PENDING' },
+      include: { employee: { select: { id: true, code: true, name: true, department: { select: { id: true, name: true, colour: true } } } } },
+      orderBy: { requested_at: 'desc' },
+      take: 300,
+    }),
   ]);
   const siteName = new Map(sites.map((s) => [s.id, s.name]));
   const siteOf = (id) => (id ? { id, name: siteName.get(id) ?? 'Unknown site' } : null);
@@ -161,6 +168,26 @@ async function build(db, now, register) {
         to_date: fromDbDate(l.to_date),
         days: Number(l.days),
         reason: l.reason,
+      },
+    });
+  }
+
+  for (const t of transfers) {
+    const fromSite = siteOf(t.from_site_id);
+    items.push({
+      id: `transfer:${t.id}`,
+      kind: 'transfer',
+      at: t.requested_at.toISOString(),
+      day: istDate(t.requested_at),
+      employee: person(t.employee),
+      site: fromSite,
+      detail: {
+        transfer_request_id: t.id,
+        from_site: fromSite,
+        to_site: siteOf(t.to_site_id),
+        departure_date: fromDbDate(t.departure_date),
+        reason: t.reason,
+        requested_by: t.requested_by,
       },
     });
   }

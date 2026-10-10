@@ -209,14 +209,13 @@ export const OVERRIDE_MODES = ['TIMES', 'MARK'];
 /** What HR can mark a working day as. On an off day, PRESENT and HALF_DAY mean it was worked. */
 export const OVERRIDE_MARKS = ['PRESENT', 'HALF_DAY', 'ABSENT'];
 
-/** The onboarding checklist is a constant, not a table. */
+/** The onboarding checklist is a constant. Face registration happens after activation at a site. */
 export const ONBOARDING_TASKS = [
   { code: 'PERSONAL', label: 'Personal details', required: true, opens: 'edit' },
   { code: 'IDENTITY', label: 'Identity documents — PAN and Aadhaar', required: true, opens: 'edit' },
   { code: 'BANK', label: 'Bank account', required: true, opens: 'edit' },
   { code: 'PAY', label: 'Pay group and salary', required: true, opens: 'pay' },
   { code: 'JOINING_LETTER', label: 'Joining letter issued', required: true, opens: 'letters' },
-  { code: 'FACE', label: 'Face enrolment', required: true, opens: 'face' },
   { code: 'STATUTORY', label: 'Statutory setup — PF, ESI, PT state, tax regime', required: false, opens: 'pay' },
   { code: 'SAFETY', label: 'Safety induction', required: false, opens: null },
   { code: 'MEDICAL', label: 'Medical fitness', required: false, opens: null },

@@ -27,7 +27,13 @@ npm run dev
 ```
 
 Open **http://localhost:5173** and sign in with `ADMIN_EMAIL` / `ADMIN_PASSWORD` from `.env`.
-A site tablet signs in at **http://localhost:5173/tablet** with a site login (it only works inside that site's geofence — for local testing, set your browser's location to the site's coordinates in DevTools → Sensors). The seeded people have only old face templates: register a face first with **Register face** on the tablet (employee ID and name), or from the profile.
+A site tablet signs in at **http://localhost:5173/tablet** with a site login (it only works inside that site's geofence — for local testing, set your browser's location to the site's coordinates in DevTools → Sensors). After activation, employees register with **Register face** on a tablet at any site (employee ID and name). Face registration is separate from onboarding; registration from the profile and re-registration are unavailable for now.
+
+The site workspace opens on **Today**, with total punched, current headcount, late arrivals, sign-outs and early departures. Select a department in the donut to see who is on site. The monthly attendance bar chart opens the selected day's register. Daily and monthly registers are read-only and scoped to the signed-in site; blank days mean no recorded punch, not an assigned-site absence.
+
+Use **Transfer requests** before someone leaves for another site. HR approves or rejects the request in Approvals. A request does not create attendance or travel pay: the person still punches out at the source and in at the destination. **Punch in / out** opens the camera separately.
+
+When updating an existing local checkout, run `npm run build` and `npm run db:migrate`, then restart the app. The transfer-request migration adds a table without replacing employee or attendance data. Keep the existing `.env`; do not reset or reseed an imported employee database.
 
 The seed creates about 30 people with three months of punches. The two months before last are run, locked and paid; last month is ready to run; the current month contains every case spec §20 asks for (a mid-month joiner with no bank account, a mid-month leaver near the gratuity threshold, a cross-site worker, a worked holiday and Sunday, a loan big enough to hit the recovery cap, an old-regime employee with declarations, a CTC-agreed salary, PF above the ceiling with restrict-to-ceiling off, two people in one crew in different PT states, and an expired document).
 
@@ -167,11 +173,11 @@ Recorded here as the spec asks for any "SHOULD" done differently.
 - **No offline punching.** Without network the tablet says "No network. Punch is not possible right now. Tell your site in-charge." and HR enters the day manually. (The earlier offline queue is gone.)
 - **Face v2** (face/INTEGRATION.md).
   - Recognition and the live-face check run on our server: YuNet, SFace and MiniFASNetV2 + V1SE in a Python service. The browser only guides (Tiny Face Detector).
-  - A punch needs a live face and a head turn in the direction the server asks, then "Is this you?".
+  - A punch captures three straight frames for the server's live-face check, then asks "Is this you?". First registration guides straight, left, right and blink captures with photo review.
   - Five failed tries (including "This is not me") open an ID and name form that becomes a manual request for HR, with the face crops.
   - Templates made by the old face-api are kept as `faceapi-v1` and never matched. Everyone registers once more, and until then their punches go through the manual request.
   - Confident punches add rolling templates (at most five per person).
-  - Change site records travel, which counts only on arrival at the named site the same day; HR can change it.
+  - Transfer requests are separate from punching and reviewed by HR; they do not create punches or travel credit. Historical Change site travel records remain available to HR.
 - **Face exception review** shows the face crops of the failed tries (or the gate snapshot for older exceptions). Enrolled photographs are not stored (only face codes, per §18), so HR compares the crops with the person or their ID.
 - **Sites.** HR marks each site on an OpenStreetMap map (drag the marker, search a place, paste coordinates or a Google Maps link, or use the browser's location) with a 50–2000 m geofence, and sets the tablet's login ID and password on the same form (typed, or generated: 12 characters without look-alikes). A new centre or radius is audited and applies from the next sign-in and punch; past punches keep the distance recorded when they were made. Site names are unique ignoring case. The migration that introduced this brought any radius outside 50–2000 m inside it and appended the code to duplicate names, and recorded each change in the audit log. Permission `sites.write` became `sites.manage`.
 - **Tablet sign-in order.** The login ID, then the password, then the lockout, then GPS accuracy, then distance, each with its own message. The lockout is looked up before the password is checked, so a locked-out caller cannot keep guessing.

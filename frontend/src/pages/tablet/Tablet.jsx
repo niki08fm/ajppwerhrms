@@ -1,14 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ArrowRight, ArrowRightLeft, Check, CheckCircle2, CloudOff, EyeOff, Loader2, LogOut, MapPin, RotateCcw, ScanFace, UserPlus, UserX } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, CloudOff, EyeOff, Loader2, MapPin, RotateCcw, UserX } from 'lucide-react';
 import { api, ApiError, errorMessage } from '@/services/api';
 import { capture, loadGuidance, loadLandmarks, messageFor, startCamera, stopCamera, waitForBlink, waitForGoodFrame, waitForHeadTurn, waitForStraight } from '@/services/face';
 import { getPosition } from '@/services/location';
 import { useDebounced, useOnline } from '@/hooks';
-import { istTime } from '@/utils';
 import { Button } from '@/components/ui/button';
 import { Field, Input } from '@/components/ui/form';
 import { Notice } from '@/components/states';
+import { TabletDashboard } from '@/components/tablet/TabletDashboard';
 
 const DEVICE_KEY = 'ajpwer.device';
 function deviceId() {
@@ -101,12 +101,12 @@ function useOval(video, active) {
   return oval;
 }
 
-const REGISTER_STEPS = ['Look straight', 'Turn left', 'Turn right', 'Blink', 'Check your photos'];
+const REGISTER_STEPS = ['Look straight', 'Turn left', 'Turn right', 'Blink'];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const newRequestId = () => `req-${crypto.randomUUID()}`;
 
-/** Upload the two frames; a busy face service is retried with the same request id (never a failed try). */
+/** A busy face service is retried with the same frames and request ID. */
 async function sendFrames(sessionId, pictures, pos, requestId, onBusy) {
   for (let attempt = 0; ; attempt++) {
     const form = new FormData();
@@ -129,19 +129,12 @@ async function sendFrames(sessionId, pictures, pos, requestId, onBusy) {
 }
 
 /**
- * The punch station (face/INTEGRATION.md §4): the browser guides and captures; the
- * server decides. Look straight → turn as asked → "Is this you?" → punch in or out,
- * "This is not me", or Change site. After the last try, the ID and name form.
+ * The site workspace opens a scan only when Punch or Register face is chosen.
+ * The browser guides capture; the server checks identity and chooses IN or OUT.
  */
 function Station({ site }) {
   const qc = useQueryClient();
   const online = useOnline();
-  const summary = useQuery({
-    queryKey: ['tablet-summary'],
-    queryFn: () => api.get('/tablet/summary').then((r) => r.data),
-    refetchInterval: 60_000,
-    enabled: online,
-  });
   const [stage, setStage] = useState({ k: 'idle' });
   const [hint, setHint] = useState('');
   // Where the person is in the capture: step 1 look straight, step 2 turn; how far along; which way.
@@ -152,6 +145,9 @@ function Station({ site }) {
   const stream = useRef(null);
   const abort = useRef(null);
   const session = useRef(null);
+  const previews = useRef({});
+  const finishTimer = useRef(null);
+  const flow = useRef(0);
 
   const [cameraOn, setCameraOn] = useState(false);
   const oval = useOval(video, cameraOn);
@@ -161,28 +157,38 @@ function Station({ site }) {
     stream.current = null;
   }, []);
   const reset = useCallback(() => {
+    flow.current += 1;
     stop();
+    clearTimeout(finishTimer.current);
+    Object.values(previews.current).forEach((url) => URL.revokeObjectURL(url));
+    previews.current = {};
     session.current = null;
     setHint('');
+    setError(null);
     setStage({ k: 'idle' });
   }, [stop]);
-  useEffect(() => () => stop(), [stop]);
+  useEffect(() => () => {
+    flow.current += 1;
+    session.current = null;
+    stop();
+    clearTimeout(finishTimer.current);
+    Object.values(previews.current).forEach((url) => URL.revokeObjectURL(url));
+  }, [stop]);
   useEffect(() => {
     setCameraOn(stage.k === 'camera' || stage.k === 'checking');
   }, [stage.k]);
   useEffect(() => {
     if (!online && stage.k !== 'idle' && stage.k !== 'done') {
-      stop();
-      setStage({ k: 'idle' });
+      reset();
     }
-  }, [online, stage.k, stop]);
+  }, [online, stage.k, reset]);
 
   const finish = (text, ms = 4000) => {
     stop();
     session.current = null;
     setStage({ k: 'done', text });
-    qc.invalidateQueries({ queryKey: ['tablet-summary'] });
-    setTimeout(reset, ms);
+    qc.invalidateQueries({ predicate: (query) => String(query.queryKey[0]).startsWith('tablet-') });
+    finishTimer.current = setTimeout(reset, ms);
   };
 
   const fail = (e) => {
@@ -199,13 +205,19 @@ function Station({ site }) {
   const scan = async () => {
     setError(null);
     const sess = session.current;
+    if (!sess) return;
+    const current = () => session.current?.id === sess.id;
     setStage({ k: 'camera', purpose: sess.purpose });
     setStep({ n: 1, progress: 0, good: false });
     try {
       if (!stream.current) {
         setHint(messageFor('LOOK_AT_CAMERA'));
         await loadGuidance();
-        stream.current = await startCamera(video.current, 'user');
+        await new Promise(requestAnimationFrame);
+        if (!current()) return;
+        const camera = await startCamera(video.current, 'user');
+        if (!current()) { stopCamera(camera); return; }
+        stream.current = camera;
       }
       abort.current = new AbortController();
       const signal = abort.current.signal;
@@ -221,12 +233,14 @@ function Station({ site }) {
       if (!ok) return signal.aborted ? undefined : fail(new Error(messageFor('NO_FACE')));
       const pictures = {};
       for (const name of ['front', 'front2', 'front3']) {
+        if (signal.aborted || !current()) return;
         pictures[name] = await capture(video.current);
         if (name !== 'front3') await sleep(350);
       }
       setHint('');
       await send(pictures, 'checking');
     } catch (e) {
+      if (!current()) return;
       if (e?.name === 'NotAllowedError') return fail(new Error(messageFor('CAMERA_BLOCKED')));
       fail(e);
     }
@@ -241,6 +255,9 @@ function Station({ site }) {
   const registration = useRef({ photos: {} });
   const registerScan = async (from = 1) => {
     setError(null);
+    const sess = session.current;
+    if (!sess) return;
+    const current = () => session.current?.id === sess.id;
     if (from === 1) registration.current = { photos: {} };
     const r = registration.current;
     setStage({ k: 'camera', purpose: 'REGISTER' });
@@ -248,7 +265,11 @@ function Station({ site }) {
       if (!stream.current) {
         setHint(messageFor('LOOK_STRAIGHT'));
         await loadLandmarks();
-        stream.current = await startCamera(video.current, 'user');
+        await new Promise(requestAnimationFrame);
+        if (!current()) return;
+        const camera = await startCamera(video.current, 'user');
+        if (!current()) { stopCamera(camera); return; }
+        stream.current = camera;
       }
       abort.current = new AbortController();
       const signal = abort.current.signal;
@@ -291,10 +312,14 @@ function Station({ site }) {
       const b = await waitForBlink(video.current, { fromYaw: r.frontYaw, skip: blinkSkip.current, onSlow: () => setStep((st) => ({ ...st, canSkip: true })), ...follow });
       if (!b) return stuck(4, 'BLINK_NOT_SEEN');
       r.photos.blink = b.blob;
+      if (signal.aborted || !current()) return;
       stop();
       setHint('');
-      setStage({ k: 'review', urls: Object.fromEntries(Object.entries(r.photos).map(([k, blob]) => [k, URL.createObjectURL(blob)])) });
+      Object.values(previews.current).forEach((url) => URL.revokeObjectURL(url));
+      previews.current = Object.fromEntries(Object.entries(r.photos).map(([k, blob]) => [k, URL.createObjectURL(blob)]));
+      setStage({ k: 'review', urls: previews.current });
     } catch (e) {
+      if (!current()) return;
       if (e?.name === 'NotAllowedError') return fail(new Error(messageFor('CAMERA_BLOCKED')));
       fail(e);
     }
@@ -302,13 +327,22 @@ function Station({ site }) {
 
   /** Send the pictures; the server decides. */
   const send = async (pictures, k) => {
+    const sess = session.current;
+    if (!sess) return;
     setStage({ k });
     const pos = await getPosition();
-    const d = await sendFrames(session.current.id, pictures, pos, newRequestId(), () => setHint(messageFor('BUSY')));
+    if (session.current?.id !== sess.id) return;
+    const d = await sendFrames(sess.id, pictures, pos, newRequestId(), () => {
+      if (session.current?.id === sess.id) setHint(messageFor('BUSY'));
+    });
+    if (session.current?.id !== sess.id) return;
     handle(d, pos);
   };
 
-  const dropPreviews = () => Object.values(stage.urls ?? {}).forEach((u) => URL.revokeObjectURL(u));
+  const dropPreviews = () => {
+    Object.values(previews.current).forEach((url) => URL.revokeObjectURL(url));
+    previews.current = {};
+  };
 
   /** Registering: the person has looked at the four photos. Use them, or take them again. */
   const review = async (use) => {
@@ -323,6 +357,7 @@ function Station({ site }) {
 
   const handle = (d, pos) => {
     const sess = session.current;
+    if (!sess) return;
     if (d.challenge) sess.challenge = d.challenge;
     if (d.outcome === 'IDENTIFIED') {
       stop();
@@ -339,14 +374,20 @@ function Station({ site }) {
   };
 
   const begin = async (purpose = 'PUNCH', who = null) => {
+    const currentFlow = ++flow.current;
     setError(null);
+    setStage({ k: 'starting', purpose });
     try {
       const pos = await getPosition();
+      if (flow.current !== currentFlow) return;
       const r = await api.post('/punches/sessions', { purpose, ...(who ?? {}), ...pos });
+      if (flow.current !== currentFlow) return;
       session.current = { id: r.data.session_id, purpose, challenge: r.data.challenge };
       await (purpose === 'REGISTER' ? registerScan(1) : scan());
     } catch (e) {
+      if (flow.current !== currentFlow) return;
       setError(e instanceof ApiError && e.code === 'NETWORK' ? messageFor('OFFLINE') : errorMessage(e));
+      setStage({ k: 'idle' });
     }
   };
 
@@ -376,13 +417,6 @@ function Station({ site }) {
       handle(r.data, stage.pos);
     });
 
-  const changeSite = (toSite) =>
-    act(async () => {
-      const pos = await getPosition();
-      const r = await api.post(`/punches/sessions/${session.current.id}/change-site`, { confirm_token: stage.d.confirm_token, to_site_id: toSite.id, ...pos });
-      finish(r.data.message, 6000);
-    });
-
   const manual = (code, name) =>
     act(async () => {
       const pos = await getPosition();
@@ -391,17 +425,31 @@ function Station({ site }) {
     });
 
   const signOut = async () => {
-    await api.post('/auth/site-logout').catch(() => undefined);
-    qc.invalidateQueries({ queryKey: ['site-me'] });
+    setError(null);
+    try {
+      await api.post('/auth/site-logout');
+      qc.removeQueries({ predicate: (query) => String(query.queryKey[0]).startsWith('tablet-') });
+      qc.setQueryData(['site-me'], null);
+    } catch (err) {
+      setError(errorMessage(err));
+    }
   };
 
-  const s = summary.data;
+  if (stage.k === 'idle') return (
+    <>
+      {error && <div className="px-4 pt-4 sm:px-6"><Notice tone="destructive">{error}</Notice></div>}
+      <TabletDashboard site={site} online={online} onPunch={() => begin('PUNCH')} onRegister={() => { setError(null); setStage({ k: 'register' }); }} onSignOut={signOut} />
+    </>
+  );
   return (
     <div className="flex min-h-screen flex-col bg-background">
       <header className="flex items-center justify-between border-b bg-card px-6 py-3">
-        <div>
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="icon" aria-label="Back to site attendance" onClick={reset}><ArrowLeft /></Button>
+          <div>
           <div className="font-display text-xl font-semibold">{site.name}</div>
-          <div className="text-[13px] text-muted-foreground">{s?.date}</div>
+          <div className="text-[13px] text-muted-foreground">{stage.k === 'register' || session.current?.purpose === 'REGISTER' ? 'Register face' : 'Punch attendance'}</div>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           {!online && (
@@ -409,25 +457,13 @@ function Station({ site }) {
               <CloudOff className="size-4" /> Offline
             </span>
           )}
-          <Button variant="ghost" size="sm" onClick={signOut}>
-            <LogOut /> Sign out
-          </Button>
         </div>
       </header>
-      <main className="grid flex-1 gap-6 p-6 lg:grid-cols-[1fr_320px]">
+      <main className="flex flex-1 justify-center p-4 sm:p-6">
         <section className="flex flex-col items-center justify-center gap-5">
           {!online && <Notice tone="destructive">{messageFor('OFFLINE')}</Notice>}
           {error && online && <Notice tone="destructive">{error}</Notice>}
-          {stage.k === 'idle' && (
-            <div className="flex w-full max-w-md flex-col gap-3">
-              <Button size="xl" className="h-40 w-full flex-col gap-2 text-2xl" disabled={!online} onClick={() => begin('PUNCH')}>
-                <ScanFace className="!size-12" /> Mark attendance
-              </Button>
-              <Button size="lg" variant="outline" disabled={!online} onClick={() => setStage({ k: 'register' })}>
-                <UserPlus /> Register face
-              </Button>
-            </div>
-          )}
+          {stage.k === 'starting' && <div className="flex flex-col items-center gap-3" aria-live="polite"><Loader2 className="size-10 animate-spin text-primary" /><p className="text-muted-foreground">Opening camera…</p></div>}
           {stage.k === 'register' && <RegisterForm onCancel={reset} onStart={(who) => begin('REGISTER', who)} />}
           {/* The camera fills the screen; only the button below stays. */}
           <div className={stage.k === 'camera' || stage.k === 'checking' ? 'fixed inset-0 z-40 flex flex-col bg-black text-white' : 'hidden'} style={{ height: '100dvh' }}>
@@ -453,7 +489,7 @@ function Station({ site }) {
               )}
               {stage.k === 'camera' && (
                 <div className="pointer-events-none absolute inset-x-0 top-0 bg-gradient-to-b from-black/70 to-transparent px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-8 text-center text-[13px] font-semibold tracking-wide uppercase">
-                  {stage.purpose === 'REGISTER' ? `Step ${step.n} of 5 · ${REGISTER_STEPS[step.n - 1]}` : 'Mark attendance'}
+                  {stage.purpose === 'REGISTER' ? `Step ${step.n} of 4 · ${REGISTER_STEPS[step.n - 1]}` : 'Punch attendance'}
                 </div>
               )}
               <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center gap-3 bg-gradient-to-t from-black/80 to-transparent px-5 pt-10 pb-4">
@@ -479,11 +515,11 @@ function Station({ site }) {
             </div>
           </div>
           {stage.k === 'identified' && (
-            <Confirmation d={stage.d} onConfirm={confirmPunch} onNotMe={notMe} onChangeSite={() => setStage({ ...stage, k: 'change-site' })} />
+            <Confirmation d={stage.d} onConfirm={confirmPunch} onNotMe={notMe} />
           )}
           {stage.k === 'review' && (
             <div className="flex w-full max-w-lg flex-col items-center gap-4 rounded-xl border bg-card p-6 text-center">
-              <div className="text-[13px] font-semibold tracking-wide text-muted-foreground uppercase">Step 5 of 5 · Check your photos</div>
+              <div className="text-[13px] font-semibold tracking-wide text-muted-foreground uppercase">Ready to register</div>
               <div className="font-display text-xl font-semibold">{messageFor('CHECK_PHOTOS')}</div>
               <div className="grid w-full grid-cols-2 gap-3">
                 {[
@@ -522,7 +558,7 @@ function Station({ site }) {
             <div className="flex w-full max-w-lg flex-col items-center gap-4 rounded-xl border bg-card p-6 text-center">
               <UserX className="size-12 text-warning" />
               <div className="text-[13px] font-semibold tracking-wide text-muted-foreground uppercase">
-                Step {stage.step} of 5 · {REGISTER_STEPS[stage.step - 1]}
+                Step {stage.step} of 4 · {REGISTER_STEPS[stage.step - 1]}
               </div>
               <div className="font-display text-xl font-semibold">{stage.text}</div>
               {stage.step > 1 && <p className="text-muted-foreground">The pictures already taken are kept.</p>}
@@ -547,7 +583,6 @@ function Station({ site }) {
               <div className="font-display text-xl font-semibold">{hint || 'Registering your face…'}</div>
             </div>
           )}
-          {stage.k === 'change-site' && <ChangeSite onPick={changeSite} onBack={() => setStage({ ...stage, k: 'identified' })} />}
           {stage.k === 'retry' && (
             <div className="flex w-full max-w-lg flex-col items-center gap-4 rounded-xl border bg-card p-6 text-center">
               <UserX className="size-12 text-warning" />
@@ -571,40 +606,13 @@ function Station({ site }) {
             </div>
           )}
         </section>
-        <aside className="flex flex-col gap-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="rounded-lg border bg-card p-4 text-center">
-              <div className="text-3xl font-semibold num">{s?.on_site_now.length ?? '—'}</div>
-              <div className="text-[13px] text-muted-foreground">on site now</div>
-            </div>
-            <div className="rounded-lg border bg-card p-4 text-center">
-              <div className="text-3xl font-semibold num">{s?.punched_in_today ?? '—'}</div>
-              <div className="text-[13px] text-muted-foreground">in today</div>
-            </div>
-          </div>
-          <div className="rounded-lg border bg-card">
-            <div className="border-b px-4 py-2 text-[14px] font-semibold">On site now</div>
-            <ul className="max-h-[50vh] divide-y overflow-y-auto text-[14px]">
-              {s?.on_site_now.map((p) => (
-                <li key={p.id} className="flex justify-between px-4 py-2">
-                  <span>{p.name}</span>
-                  <span className="text-muted-foreground num">{istTime(p.since)}</span>
-                </li>
-              ))}
-              {s && !s.on_site_now.length && <li className="px-4 py-6 text-center text-muted-foreground">Nobody yet.</li>}
-            </ul>
-          </div>
-          <p className="text-[12px] text-muted-foreground">
-            Location is checked on every punch. The camera pictures are checked on our server and not kept; only when the face check fails five times are small face crops kept for HR, for 30 days.
-          </p>
-        </aside>
       </main>
     </div>
   );
 }
 
 /** "Is this you?" — the existing confirmation card, with one punch button for the direction the server worked out. */
-function Confirmation({ d, onConfirm, onNotMe, onChangeSite }) {
+function Confirmation({ d, onConfirm, onNotMe }) {
   const [busy, setBusy] = useState(false);
   const run = (fn) => async () => {
     setBusy(true);
@@ -634,52 +642,9 @@ function Confirmation({ d, onConfirm, onNotMe, onChangeSite }) {
       <Button size="xl" className="w-full" loading={busy} onClick={run(onConfirm)}>
         {d.direction === 'IN' ? 'Punch in' : 'Punch out'}
       </Button>
-      {d.can_change_site && (
-        <Button size="lg" variant="outline" className="w-full" disabled={busy} onClick={onChangeSite}>
-          <ArrowRightLeft /> Change site
-        </Button>
-      )}
       <button className="text-[15px] text-muted-foreground underline" disabled={busy} onClick={run(onNotMe)}>
         This is not me
       </button>
-    </div>
-  );
-}
-
-/** Leaving for another site: pick it; this punches out here. Travel counts if he punches in there today. */
-function ChangeSite({ onPick, onBack }) {
-  const sites = useQuery({ queryKey: ['tablet-sites'], queryFn: () => api.get('/tablet/sites').then((r) => r.data) });
-  const [busy, setBusy] = useState(null);
-  return (
-    <div className="flex w-full max-w-lg flex-col gap-3 rounded-xl border bg-card p-6">
-      <div className="font-display text-xl font-semibold">Which site are you going to?</div>
-      <p className="text-[14px] text-muted-foreground">You are punched out here now. Your travel time counts if you punch in at that site today.</p>
-      <div className="flex max-h-72 flex-col gap-2 overflow-y-auto">
-        {sites.data?.map((x) => (
-          <Button
-            key={x.id}
-            size="lg"
-            variant="outline"
-            className="justify-start"
-            loading={busy === x.id}
-            disabled={!!busy}
-            onClick={async () => {
-              setBusy(x.id);
-              try {
-                await onPick(x);
-              } finally {
-                setBusy(null);
-              }
-            }}
-          >
-            {x.name}
-          </Button>
-        ))}
-        {sites.data && !sites.data.length && <p className="text-muted-foreground">No other sites.</p>}
-      </div>
-      <Button variant="ghost" onClick={onBack} disabled={!!busy}>
-        Back
-      </Button>
     </div>
   );
 }
@@ -688,7 +653,8 @@ function ChangeSite({ onPick, onBack }) {
  * Pick yourself from a list: type part of a name or employee ID and tap the right person.
  * `forRegister` lists only people with no face registered yet.
  */
-function PersonPicker({ value, onChange, forRegister }) {
+function PersonPicker({ value, onChange, forRegister, inputId }) {
+  const listId = useId();
   const [text, setText] = useState('');
   const [active, setActive] = useState(0);
   const q = useDebounced(text.trim(), 200);
@@ -696,7 +662,6 @@ function PersonPicker({ value, onChange, forRegister }) {
     queryKey: ['tablet-people', q, !!forRegister],
     queryFn: () => api.get('/tablet/employees', { q, ...(forRegister ? { for: 'register' } : {}) }).then((r) => r.data),
     enabled: q.length >= 2 && !value,
-    placeholderData: (prev) => prev,
   });
   if (value) {
     return (
@@ -719,9 +684,12 @@ function PersonPicker({ value, onChange, forRegister }) {
   return (
     <div className="relative">
       <Input
+        id={inputId}
         role="combobox"
+        aria-label="Employee name or ID"
         aria-expanded={list.length > 0}
-        aria-controls="tablet-people"
+        aria-controls={listId}
+        aria-activedescendant={list[active] ? `${listId}-${active}` : undefined}
         aria-autocomplete="list"
         value={text}
         placeholder="Start typing your name or employee ID"
@@ -730,15 +698,15 @@ function PersonPicker({ value, onChange, forRegister }) {
         className="h-11 text-base"
         onChange={(e) => { setText(e.target.value); setActive(0); }}
         onKeyDown={(e) => {
-          if (e.key === 'ArrowDown') { e.preventDefault(); setActive((a) => Math.min(a + 1, list.length - 1)); }
-          else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
+          if (e.key === 'ArrowDown' && list.length) { e.preventDefault(); setActive((a) => Math.min(a + 1, list.length - 1)); }
+          else if (e.key === 'ArrowUp' && list.length) { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
           else if (e.key === 'Enter' && list[active]) { e.preventDefault(); pick(list[active]); }
         }}
       />
       {q.length >= 2 && (
-        <ul id="tablet-people" role="listbox" className="absolute z-20 mt-1 max-h-72 w-full overflow-y-auto rounded-md border bg-card shadow-lg">
+        <ul id={listId} role="listbox" aria-label="Matching employees" className="absolute z-20 mt-1 max-h-72 w-full overflow-y-auto rounded-md border bg-card shadow-lg">
           {list.map((p, i) => (
-            <li key={p.code} role="option" aria-selected={i === active}>
+            <li id={`${listId}-${i}`} key={p.code} role="option" aria-selected={i === active}>
               <button
                 type="button"
                 onMouseEnter={() => setActive(i)}
@@ -753,7 +721,7 @@ function PersonPicker({ value, onChange, forRegister }) {
               </button>
             </li>
           ))}
-          {!list.length && <li className="px-3 py-3 text-[14px] text-muted-foreground">{found.isFetching ? 'Searching…' : forRegister ? 'No one by that name needs to register. Already registered? Go back and punch with your face.' : 'No one found. Check the spelling or ask HR.'}</li>}
+          {!list.length && <li className="px-3 py-3 text-[14px] text-muted-foreground">{found.isFetching ? 'Searching…' : found.isError ? errorMessage(found.error) : forRegister ? 'No active employee needing registration found. Already registered? Use Punch.' : 'No one found. Check the spelling or ask HR.'}</li>}
         </ul>
       )}
     </div>
@@ -775,22 +743,15 @@ function RegisterForm({ onStart, onCancel }) {
   return (
     <form onSubmit={submit} className="flex w-full max-w-md flex-col gap-4 rounded-xl border bg-card p-6">
       <div className="font-display text-xl font-semibold">Register face</div>
-      <p className="text-[14px] text-muted-foreground">Once only, at any site. Then you punch with your face everywhere.</p>
-      <ol className="list-decimal space-y-1 pl-5 text-[14px] text-muted-foreground">
-        <li>Look straight at the camera and hold still until the bar fills.</li>
-        <li>Turn your head slowly to your left, then hold still.</li>
-        <li>Turn your head slowly to your right, then hold still.</li>
-        <li>Close your eyes slowly, then open them.</li>
-        <li>Check the four photos, then use them or take them again.</li>
-      </ol>
-      <p className="text-[13px] text-muted-foreground">Take off a cap or sunglasses, and face the light.</p>
-      <Field label="Who are you?">{() => <PersonPicker value={who} onChange={setWho} forRegister />}</Field>
+      <p className="text-[14px] text-muted-foreground">Active employees can register once at any site.</p>
+      <Field label="Choose your name">{(id) => <PersonPicker inputId={id} value={who} onChange={setWho} forRegister />}</Field>
+      <div className="rounded-md bg-muted/50 px-3 py-2.5 text-[13px] text-muted-foreground">Face the light and remove anything covering your face. Follow the camera prompts; each photo is taken automatically.</div>
       <div className="flex gap-2">
         <Button variant="outline" size="lg" onClick={onCancel}>
           Cancel
         </Button>
         <Button type="submit" size="lg" className="flex-1" loading={busy} disabled={!who}>
-          Start
+          Start camera
         </Button>
       </div>
     </form>
@@ -814,7 +775,7 @@ function ManualForm({ text, onSend, onCancel }) {
     <form onSubmit={submit} className="flex w-full max-w-md flex-col gap-4 rounded-xl border bg-card p-6">
       <UserX className="size-10 text-warning" />
       <p className="font-display text-lg font-semibold">{text}</p>
-      <Field label="Who are you?">{() => <PersonPicker value={who} onChange={setWho} />}</Field>
+      <Field label="Who are you?">{(id) => <PersonPicker inputId={id} value={who} onChange={setWho} />}</Field>
       <div className="flex gap-2">
         <Button variant="outline" size="lg" onClick={onCancel}>
           Cancel

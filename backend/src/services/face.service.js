@@ -55,7 +55,7 @@ export function invalidateFaceCache() {
   cache = null;
 }
 
-const ACTIVE_STATUSES = ['ACTIVE', 'NOTICE', 'ONBOARDING'];
+const ACTIVE_STATUSES = ['ACTIVE', 'NOTICE'];
 
 /** Every current-model template of people who can punch, grouped by person. Cached for a minute. */
 export async function loadGallery() {

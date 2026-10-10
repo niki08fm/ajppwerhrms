@@ -26,6 +26,7 @@ const KINDS = {
   face: { label: 'Face checks', one: 'Face check', tone: 'warning', dot: TONE.warn },
   miss: { label: 'No punch-out', one: 'No punch-out', tone: 'muted', dot: 'var(--muted-foreground)' },
   short: { label: 'Short days', one: 'Short day', tone: 'destructive', dot: TONE.bad },
+  transfer: { label: 'Transfers', one: 'Transfer request', tone: 'muted', dot: 'var(--primary)' },
   move: { label: 'Site changes', one: 'Site change', tone: 'muted', dot: 'var(--muted-foreground)' },
   leave: { label: 'Leave', one: 'Leave', tone: 'muted', dot: 'var(--muted-foreground)' },
 };
@@ -69,7 +70,7 @@ export default function Approvals() {
   const scoped = open.filter(
     (it) =>
       (day === 'all' || bucket(it.day) === day) &&
-      (!site || it.site?.id === site) &&
+      (!site || it.site?.id === site || (it.kind === 'transfer' && it.detail.to_site?.id === site)) &&
       (!dept || it.employee?.department?.id === dept) &&
       (!needle || `${it.employee?.name ?? ''} ${it.employee?.code ?? ''}`.toLowerCase().includes(needle)),
   );
@@ -90,15 +91,16 @@ export default function Approvals() {
     setSel(rest[Math.min(i, rest.length - 1)]?.id ?? null);
     setDone((d) => new Set(d).add(it.id));
     toast.success(message);
-    reload();
-    qc.invalidateQueries({ queryKey: ['dashboard'] });
+    // Refresh the server's waiting-list cache before the dashboard asks for its count.
+    reload().then(() => qc.invalidateQueries({ queryKey: ['dashboard'] }));
+    if (it.kind === 'transfer') qc.invalidateQueries({ queryKey: ['site-transfer-requests'] });
   };
 
   return (
     <div>
       <PageHeader
         title="Approvals"
-        description="One list for everything that waits on HR. Nothing counts toward pay until you decide."
+        description="Review attendance, leave and site transfer requests."
         actions={
           can('reports.export') && (
             <Button variant="outline" onClick={() => download('/punch-attempts.csv', 'punch-attempts.csv').catch((e) => toast.error(errorMessage(e)))}>
@@ -220,7 +222,7 @@ export default function Approvals() {
 function whenOf(it, today) {
   const d = dayName(it.day, today, addDays);
   if (it.kind === 'face' || it.kind === 'move') return `${d} ${istTime(it.at)}`;
-  if (it.kind === 'leave') return `Asked ${d === 'Today' || d === 'Yesterday' ? d.toLowerCase() : d}`;
+  if (it.kind === 'leave' || it.kind === 'transfer') return `Asked ${d === 'Today' || d === 'Yesterday' ? d.toLowerCase() : d}`;
   return d;
 }
 
@@ -235,6 +237,8 @@ function summaryOf(it) {
       return `${mins(x.worked_min)} · ${mins(x.early_min)} short`;
     case 'move':
       return `to ${x.to_site?.name ?? '—'} · ${x.travel_min} min travel`;
+    case 'transfer':
+      return `to ${x.to_site?.name ?? '—'} · ${fullDate(x.departure_date)}`;
     case 'leave':
       return `${x.leave_name} · ${dateSpan(x.from_date, x.to_date)} · ${x.days} ${x.days === 1 ? 'day' : 'days'}`;
     default:
@@ -292,6 +296,7 @@ function Detail({ it, today, can, onDecided, onOpenDay }) {
         {it.kind === 'face' && <FaceDecision it={it} allowed={allowed} onDecided={onDecided} />}
         {(it.kind === 'miss' || it.kind === 'short') && <DayDecision it={it} allowed={allowed} onDecided={onDecided} onOpenDay={onOpenDay} />}
         {it.kind === 'move' && <MoveDecision it={it} allowed={allowed} onDecided={onDecided} />}
+        {it.kind === 'transfer' && <TransferDecision it={it} allowed={allowed} onDecided={onDecided} />}
         {it.kind === 'leave' && <LeaveDecision it={it} allowed={allowed} onDecided={onDecided} />}
         {!allowed && <p className="text-[13px] text-muted-foreground">You can see this but not decide it. Someone with permission has to.</p>}
       </div>
@@ -498,6 +503,39 @@ function DayDecision({ it, allowed, onDecided, onOpenDay }) {
 }
 
 const MOVE_STATUS = { COUNTED: 'Punched in at the new site the same day', NOT_COUNTED: 'Did not punch in at the named site that day' };
+
+function TransferDecision({ it, allowed, onDecided }) {
+  const x = it.detail;
+  const [note, setNote] = useState('');
+  const decide = useDecide(
+    (decision) => api.post(`/site-transfer-requests/${x.transfer_request_id}/decide`, { decision, ...(note.trim() ? { note: note.trim() } : {}) }),
+    (_r, decision) => onDecided(it, `${first(it.employee?.name)}'s transfer to ${x.to_site?.name}: ${decision === 'APPROVED' ? 'approved' : 'rejected'}.`),
+  );
+  return (
+    <>
+      <Facts items={[
+        ['From', x.from_site?.name],
+        ['To', x.to_site?.name],
+        ['Departure', fullDate(x.departure_date)],
+        ['Reason', x.reason || '—'],
+      ]} />
+      <p className="m-0 text-[13px] text-muted-foreground">The employee punches out before leaving and punches in at the destination.</p>
+      {allowed && (
+        <>
+          <Note value={note} onChange={setNote} />
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button variant="outline" className="text-destructive" loading={decide.isPending && decide.variables === 'REJECTED'} disabled={decide.isPending} onClick={() => decide.mutate('REJECTED')}>
+              Reject
+            </Button>
+            <Button loading={decide.isPending && decide.variables === 'APPROVED'} disabled={decide.isPending} onClick={() => decide.mutate('APPROVED')}>
+              <Check /> Approve transfer
+            </Button>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
 
 /** Someone used Change site on a tablet. HR's travel figure is final. */
 function MoveDecision({ it, allowed, onDecided }) {

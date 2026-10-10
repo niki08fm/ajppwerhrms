@@ -282,14 +282,15 @@ describe('Picking an employee on the tablet', () => {
     expect((await tablet.get('/api/v1/tablet/employees').query({ q: 'P' })).body.data).toEqual([]);
     const r = await tablet.get('/api/v1/tablet/employees').query({ q: 'person' });
     const names = r.body.data.map((p) => p.name);
-    // Active people, and those still onboarding (they register a face before their first day).
-    expect(names).toEqual(expect.arrayContaining(['Person A', 'Person B', 'Person C', 'Person ONBOARD']));
+    // Face registration happens after activation; onboarding people never appear here.
+    expect(names).toEqual(expect.arrayContaining(['Person A', 'Person B', 'Person C']));
     expect(names).not.toContain('Person OFFER');
+    expect(names).not.toContain('Person ONBOARD');
     expect(Object.keys(r.body.data[0]).sort()).toEqual(['code', 'designation', 'name']);
     // By employee ID too.
     expect((await tablet.get('/api/v1/tablet/employees').query({ q: 'T002' })).body.data.map((p) => p.name)).toEqual(['Person B']);
-    // Registering lists only people with no face yet: all four, here.
-    expect((await tablet.get('/api/v1/tablet/employees').query({ q: 'person', for: 'register' })).body.data.length).toBe(4);
+    // Registering lists only active people with no face yet: all three, here.
+    expect((await tablet.get('/api/v1/tablet/employees').query({ q: 'person', for: 'register' })).body.data.length).toBe(3);
   });
 });
 

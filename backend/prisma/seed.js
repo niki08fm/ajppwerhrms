@@ -602,14 +602,14 @@ async function main() {
           },
         },
         onboarding_tasks: {
-          create: ['PERSONAL', 'IDENTITY', 'BANK', 'PAY', 'JOINING_LETTER', 'FACE', 'STATUTORY']
+          create: ['PERSONAL', 'IDENTITY', 'BANK', 'PAY', 'JOINING_LETTER', 'STATUTORY']
             .filter((t) => !(p.noBank && t === 'BANK'))
             .map((t) => ({ task_code: t, done_at: new Date(), done_by: 'seed' })),
         },
       },
     });
     // Old face-api templates (random, demo only): like production after the face v2 migration, each
-    // person must register once more (tablet "Register face" or the profile) before punching by face.
+    // active person registers using the tablet's "Register face" before punching by face.
     const v = Array.from({ length: 128 }, () => rand() * 2 - 1);
     const norm = Math.sqrt(v.reduce((a, x) => a + x * x, 0));
     await prisma.employeeFace.create({ data: { employee_id: e.id, embedding: Buffer.from(new Float32Array(v.map((x) => x / norm)).buffer), model_version: 'faceapi-v1', consent_at: new Date() } });

@@ -3,7 +3,7 @@ import { waitingItems } from '../../src/services/approvals.service.js';
 
 /**
  * The Approvals list: one list of what waits on HR, built from face exceptions, the day
- * registers of the last week, unreviewed site changes and pending leave. The database and
+ * registers of the last week, planned transfers, unreviewed site changes and pending leave. The database and
  * the day register are stand-ins here; the register's own rules are tested in attendance.test.js.
  */
 const NOW = '2026-09-30';
@@ -16,7 +16,7 @@ const people = {
   suresh: { id: 'e-4', code: 'AJ0002', name: 'Suresh Reddy', department: ELEC },
 };
 
-function mockDb({ frozenMonths = [] } = {}) {
+function mockDb({ frozenMonths = [], transfers = [] } = {}) {
   return {
     site: { findMany: async () => [{ id: 's-a', name: 'Alpha substation' }, { id: 's-b', name: 'Beta line camp' }] },
     employee: { findMany: async ({ where }) => Object.values(people).filter((p) => where.id.in.includes(p.id)) },
@@ -38,6 +38,7 @@ function mockDb({ frozenMonths = [] } = {}) {
         { id: 'lv-1', employee: people.padma, leave_type: 'SL', from_date: new Date('2026-10-01T00:00:00Z'), to_date: new Date('2026-10-02T00:00:00Z'), days: '2', reason: 'Fever', created_at: new Date('2026-09-28T02:40:00Z') },
       ],
     },
+    siteTransferRequest: { findMany: async () => transfers },
   };
 }
 
@@ -105,5 +106,25 @@ describe('waiting items', () => {
     };
     await waitingItems(mockDb({ frozenMonths: ['2026-09'] }), '2026-10-02', { fresh: true, register: spy });
     expect(asked.sort()).toEqual(['2026-10-01', '2026-10-02']);
+  });
+
+  it('includes planned transfers independently of punches or frozen attendance', async () => {
+    const request = {
+      id: 'tr-1', employee: people.harish, from_site_id: 's-a', to_site_id: 's-b', departure_date: new Date('2026-10-03T00:00:00Z'),
+      reason: 'Electrical work at Beta', requested_by: 'tablet-alpha', requested_at: new Date('2026-09-30T07:00:00Z'), status: 'PENDING',
+    };
+    const db = mockDb({ frozenMonths: ['2026-09'], transfers: [request] });
+    const queried = [];
+    db.siteTransferRequest.findMany = async (query) => { queried.push(query); return [request]; };
+    const asked = [];
+    const items = await waitingItems(db, NOW, { fresh: true, register: async (_db, date) => { asked.push(date); return []; } });
+    expect(asked).toEqual([]);
+    expect(queried[0].where).toEqual({ status: 'PENDING' });
+    expect(items[0]).toMatchObject({
+      id: 'transfer:tr-1', kind: 'transfer', at: '2026-09-30T07:00:00.000Z', day: NOW,
+      employee: people.harish, site: { id: 's-a', name: 'Alpha substation' },
+      detail: { transfer_request_id: 'tr-1', from_site: { id: 's-a', name: 'Alpha substation' }, to_site: { id: 's-b', name: 'Beta line camp' }, departure_date: '2026-10-03', reason: 'Electrical work at Beta' },
+    });
+    expect(items.some((item) => item.kind === 'move')).toBe(true);
   });
 });

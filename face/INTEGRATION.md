@@ -27,22 +27,23 @@ The live-face score is the average of 3 and 4. In the browser, only the Tiny Fac
    - Not tries (the tablet should have caught them): no face, several faces, poor light, too small, blurred. Also "busy" and "face service down".
    - Tries: not a live face (the middle of the three camera scores must reach `FACE_LIVE_MIN`; with no head turn this is the whole check that it is not a photo), the three pictures not one person (`FACE_SAME_PERSON_MIN`), no match. The three face codes are averaged before matching.
    - Identified: the best person scores at least `FACE_MATCH_MIN` *and* beats the next person by `FACE_MATCH_MARGIN`.
-4. **Identified** → the confirmation screen: "Is this you?", the name, and one button for the direction the server worked out (IN, or OUT while an IN from the same shift, 16 h, is open). The tablet can also choose **"This is not me"** (a try) or, when punching out, **Change site**. Confirming writes the punch. The confirm token expires after `FACE_CONFIRM_SECONDS`; after that the person scans again, and it does not count as a try.
+4. **Identified** → the confirmation screen: "Is this you?", the name, and one button for the direction the server worked out (IN, or OUT while an IN from the same shift, 16 h, is open at this site). The tablet can also choose **"This is not me"** (a try). Confirming writes the punch. An open IN at another site must be closed there first. The confirm token expires after `FACE_CONFIRM_SECONDS`; after that the person scans again, and it does not count as a try.
 5. After `FACE_MAX_TRIES` failed tries (default 5) the session is **blocked**. The tablet shows the ID and name form. It becomes a manual request (a face exception of kind `FAILED_TRIES`) with the aligned face crops of the failed tries. Nothing is marked present until HR decides.
 
-**Duplicates** (`checkDuplicate`). Any punch within 2 minutes of the person's last one is a repeat and is not written (a second scan by accident). An IN while an IN from the same shift is open is refused, at this site or another; at another site the person uses Change site there.
+**Duplicates** (`checkDuplicate`). Any punch within 2 minutes of the person's last one is a repeat and is not written (a second scan by accident). An IN while an IN from the same shift is open is refused. For travel to another site, request the transfer separately, then punch OUT at the source and IN at the destination.
 
 **Busy.** A "busy" reply from the face service (HTTP 503, or no answer within `FACE_SERVICE_TIMEOUT_MS`) is never a failed try. The tablet sends the same upload again with the same `request_id`.
 
 **The same `request_id` never punches twice.** Each analysed upload is stored under (session, request_id) with the reply it got. A retry gets the same reply. If it was an identification still waiting, the retry gets a fresh confirm token and the old one stops working. Confirming a session that already punched returns the same punch. There is also at most one punch per session (unique `punch.session_id`).
 
-**Registration.** Every existing template was made by face-api in the browser. They are kept as model version `faceapi-v1` and never matched (`buildGallery` ignores them). Everyone registers once more at any site: **Register face** on the tablet takes their employee ID and name, then the same scan (live face, head turn). It is refused when:
-- the person already has a face v2 template (HR re-enrols from the profile), or
+**Registration.** Face registration is separate from onboarding and never blocks activation. Once **ACTIVE**, employees can register at any site: **Register face** on the tablet takes their employee ID and name, then guides live captures. Registration does not create an attendance punch. Employees have no permanent site assignment; their latest punch determines current presence. Old `faceapi-v1` templates remain stored but are never matched (`buildGallery` ignores them). Registration is refused when:
+- the employee is not active,
+- the person already has a face v2 template, or
 - the face is already registered to someone else (`FACE_DUPLICATE_MIN`).
 
 Until they register, their scans do not match, and after the tries they go through the manual request.
 
-HR can also enrol from the profile (Onboarding → Enrol face) with one straight frame. The frame must show one live face. If it resembles someone else's face, HR is told and can enrol anyway. Re-enrolling replaces every earlier template.
+Profile registration and re-registration are deferred. Existing templates remain intact; the old profile endpoint returns `409 FACE_REGISTRATION_AT_SITE` and never replaces a template. Historical FACE onboarding rows are retained but excluded from the current checklist.
 
 **Rolling templates.** A confirmed punch that was sure (`FACE_LEARN_MIN`) and live adds its face code as a *rolling* template. Each person keeps at most `FACE_ROLLING_MAX` rolling templates, the oldest dropped first (`rollingToDelete`). Registered templates are never dropped.
 
@@ -79,7 +80,7 @@ Retention (nightly job):
 
 ## 3. Routes
 
-All under `/api/v1`. Tablet routes need the site session and re-check the geofence on every call. Code: `backend/src/routes/tablet.routes.js`, `backend/src/controllers/tablet.controller.js`.
+All under `/api/v1`. Tablet routes need the site session; punch and registration writes re-check the geofence. Workspace reads are scoped to the authenticated site. Code: `backend/src/routes/tablet.routes.js`, `backend/src/controllers/tablet.controller.js`, `backend/src/controllers/site-workspace.controller.js`.
 
 | Route | Who | Does |
 | --- | --- | --- |
@@ -87,10 +88,15 @@ All under `/api/v1`. Tablet routes need the site session and re-check the geofen
 | `POST /punches/sessions/:id/frames` | tablet | Multipart: a punch sends `front`, `front2`, `front3`; a registration sends `front`, `left`, `right`, `blink` (JPEG), `request_id`, `lat`, `lng`, `accuracy_m`. Returns the decision. 503 `FACE_BUSY`: send the same upload again. |
 | `POST /punches/sessions/:id/confirm` | tablet | `confirm_token`, position → the punch (201; a repeat returns it again with `duplicate: true`). 409 `CONFIRM_EXPIRED`: scan again. |
 | `POST /punches/sessions/:id/not-me` | tablet | `confirm_token` → a try; a new challenge, or blocked. |
-| `POST /punches/sessions/:id/change-site` | tablet | `confirm_token`, `to_site_id`, position → OUT here and a pending site change. |
+| `POST /punches/sessions/:id/change-site` | tablet | Legacy compatibility only; absent from the current punch screen. Existing travel records remain available to HR. |
 | `POST /punches/sessions/:id/manual` | tablet | After the try limit: `employee_code`, `name`, position → a manual request for HR with the crops. |
-| `GET /tablet/sites` | tablet | Other active sites, for Change site. |
-| `POST /employees/:id/face` | HR (`people.write`) | Multipart `front`, `consent=true`, optional `confirm_duplicate=true`. |
+| `GET /tablet/sites` | tablet | Other active sites, for the separate transfer request form. |
+| `GET /tablet/summary` | tablet | Today's counts, current presence and department headcount for this site. |
+| `GET /tablet/attendance/day?date=YYYY-MM-DD` | tablet | Read-only daily site register. |
+| `GET /tablet/attendance/month?ym=YYYY-MM` | tablet | Read-only monthly site register and daily bar-chart counts. |
+| `GET /tablet/transfers` · `POST /tablet/transfers` | tablet | List outgoing requests or request transfer of a person currently on site; no implicit punches. |
+| `GET /site-transfer-requests` · `POST /site-transfer-requests/:id/decide` | HR | List requests (`attendance.read`) or approve/reject (`attendance.write`); no attendance or travel-pay changes. |
+| `POST /employees/:id/face` | HR (`people.write`) | Deferred: `409 FACE_REGISTRATION_AT_SITE`; no face analysis or template changes. |
 | `GET /face-exceptions/:id/crops/:n` | HR (`attendance.read`) | One face crop of a manual request. |
 | `GET /site-changes` · `PATCH /site-changes/:id` | HR | The list (with `meta.unreviewed`) · set the travel minutes with a reason. |
 | `GET /punch-attempts.csv?from&to` | HR (`attendance.read` + `reports.export`) | The attempt log, for tuning thresholds. |
@@ -104,14 +110,15 @@ The backend's client is `createFaceClient` (face/src/client.js).
 
 ## 4. Tablet
 
-`frontend/src/pages/tablet/Tablet.jsx` keeps its layout; the steps added:
+`frontend/src/pages/tablet/Tablet.jsx` opens the site workspace. Its dashboard and read-only registers live in `frontend/src/components/tablet/`.
 
-1. **Mark attendance** → guidance in the oval ("Come a little closer", "Only one person", "It is too dark") until the frame is right → "Hold still…" → three pictures → "Checking…" (and "Still checking…" while it retries a busy service with the same `request_id`).
-2. **Confirmation screen:** "Is this you?", the name and code, **Punch in** / **Punch out**, **Change site** (when punching out), **This is not me**.
-3. **Change site:** the list of other sites; picking one punches out here.
-4. **Try again** with tries left; after the last, the **ID and name form** → "Sent to HR".
-5. **Register face:** employee ID and name, then the same scan.
-6. **No network:** the message, and the buttons disabled.
+1. **Today:** five attendance counts, department headcount donut, current on-site people and a monthly attendance bar chart. Select a department to see names or a day bar to open its register.
+2. **Daily register** and **Monthly register:** read-only attendance for the signed-in site, with date/month controls; no HR profile or payroll access.
+3. **Transfer requests:** choose a person currently at this site, a destination, departure date and reason. HR reviews the request in Approvals. The request never creates a punch or travel pay.
+4. **Punch in / out** → camera guidance until the frame is right → "Hold still…" → three pictures → "Checking…" (with the same `request_id` when retrying a busy service) → "Is this you?" → confirm IN/OUT or **This is not me**. Transfers are absent from this screen.
+5. **Try again** with tries left; after the last, the **ID and name form** → "Sent to HR".
+6. **Register face:** select an active employee without a current template; look straight, turn left, turn right, blink, then review four photos before saving. Registration does not punch attendance.
+7. **No network:** show the message and disable writes; cancel camera capture and return to the workspace.
 
 Messages are in `face/src/messages.js` (`messageFor`), shared by the backend and the tablet. Guidance is `face/src/guidance.js`, served through `frontend/src/services/face.js`.
 

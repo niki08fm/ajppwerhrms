@@ -2,7 +2,6 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createReadStream, existsSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
 import {
-  istDate,
   punchChangeSiteSchema,
   punchConfirmSchema,
   punchFramesSchema,
@@ -32,6 +31,7 @@ import { prisma } from '../config/db.js';
 import { faceClient, faceConfig, hasCurrentTemplate, MODEL_VERSION, learnFromPunch, loadGallery, saveCrop, saveRegisteredTemplate, snapshotDir } from '../services/face.service.js';
 import { attendanceFrozen } from '../services/attendance.service.js';
 import { bumpAggregate } from '../services/aggregates.service.js';
+import { currentSitePeople } from '../services/site-workspace.service.js';
 
 /**
  * Tablet punches, face v2 (face/INTEGRATION.md §3). The browser only guides and
@@ -70,6 +70,13 @@ async function lastPunch(employeeId, db = prisma) {
 function nextDirection(last, now) {
   const recent = last && now.getTime() - last.punched_at.getTime() <= OVERNIGHT_MAX_GAP_MIN * 60_000 ? last : null;
   return inferDirection(recent);
+}
+
+/** A destination tablet cannot close another site's open shift as if it were an OUT here. */
+function requireSourcePunchOut(last, siteId, now) {
+  if (last?.direction === 'IN' && last.site_id !== siteId && now.getTime() - last.punched_at.getTime() <= OVERNIGHT_MAX_GAP_MIN * 60_000) {
+    throw new AppError('CROSS_SITE_OPEN_SHIFT', `Still punched in at ${last.site?.name ?? 'the previous site'}. Punch out there before punching in here.`, 409);
+  }
 }
 
 function duplicateOf(direction, last, siteId, now) {
@@ -131,31 +138,7 @@ const attemptNumbers = (d) => ({
   yaw_turn: d.yaw_turn ?? null,
 });
 
-// ─── Summary ─────────────────────────────────────────────────────────────────
-
-/** A site token can read that site's own day summary — and nothing about salaries or other sites. */
-export const getSummary = asyncHandler(async (req, res) => {
-  const site = req.site;
-  const today = istDate(new Date());
-  const punches = await prisma.punch.findMany({
-    where: { work_date: toDbDate(today), site_id: site.id },
-    select: { employee_id: true },
-    distinct: ['employee_id'],
-  });
-  // On site now: the person's most recent punch anywhere is an IN, here.
-  const latest = await prisma.$queryRaw`
-      SELECT DISTINCT ON (p.employee_id) p.employee_id, e.name, e.code, p.punched_at, p.site_id, p.direction
-      FROM punch p JOIN employee e ON e.id = p.employee_id
-      WHERE p.work_date >= ${toDbDate(today)}::date - 1
-      ORDER BY p.employee_id, p.punched_at DESC`;
-  const onSite = latest
-    .filter((r) => r.site_id === site.id && r.direction === 'IN')
-    .map((r) => ({ id: r.employee_id, name: r.name, code: r.code, since: r.punched_at }))
-    .sort((a, b) => a.name.localeCompare(b.name));
-  res.json({ data: { site: { id: site.id, code: site.code, name: site.name }, date: today, punched_in_today: punches.length, on_site_now: onSite } });
-});
-
-/** Other active sites, for "Change site". Names only. */
+/** Other active sites, for a separate transfer request. Names only. */
 export const listOtherSites = asyncHandler(async (req, res) => {
   const sites = await prisma.site.findMany({ where: { deleted_at: null, is_active: true, id: { not: req.site.id } }, select: { id: true, name: true }, orderBy: { name: 'asc' } });
   res.json({ data: sites });
@@ -163,9 +146,9 @@ export const listOtherSites = asyncHandler(async (req, res) => {
 
 // ─── Sessions ────────────────────────────────────────────────────────────────
 
-async function findEmployeeByCode(code) {
+async function findEmployeeByCode(code, purpose = 'PUNCH') {
   return prisma.employee.findFirst({
-    where: { code: { equals: code.trim(), mode: 'insensitive' }, deleted_at: null, status: { in: ['ACTIVE', 'NOTICE', 'ONBOARDING'] } },
+    where: { code: { equals: code.trim(), mode: 'insensitive' }, deleted_at: null, status: purpose === 'REGISTER' ? 'ACTIVE' : { in: ['ACTIVE', 'NOTICE'] } },
     select: { id: true, code: true, name: true, designation: true },
   });
 }
@@ -178,10 +161,17 @@ async function findEmployeeByCode(code) {
 export const searchEmployees = asyncHandler(async (req, res) => {
   const q = String(req.query.q ?? '').trim();
   if (q.length < 2) return res.json({ data: [] });
+  if (req.query.for === 'transfer') {
+    const words = q.toLowerCase().split(/\s+/);
+    const people = (await currentSitePeople(prisma, req.site.id))
+      .filter((p) => words.every((w) => `${p.name} ${p.code}`.toLowerCase().includes(w)))
+      .slice(0, 8).map(({ code, name, designation }) => ({ code, name, designation }));
+    return res.json({ data: people });
+  }
   const people = await prisma.employee.findMany({
     where: {
       deleted_at: null,
-      status: { in: ['ACTIVE', 'NOTICE', 'ONBOARDING'] },
+      status: req.query.for === 'register' ? 'ACTIVE' : { in: ['ACTIVE', 'NOTICE'] },
       OR: [{ name: { contains: q, mode: 'insensitive' } }, { code: { contains: q, mode: 'insensitive' } }],
       ...(req.query.for === 'register' ? { faces: { none: { deleted_at: null, model_version: MODEL_VERSION } } } : {}),
     },
@@ -205,7 +195,7 @@ export const startSession = asyncHandler(async (req, res) => {
   await fence(req, b);
   let employee = null;
   if (b.purpose === 'REGISTER') {
-    employee = await findEmployeeByCode(b.employee_code);
+    employee = await findEmployeeByCode(b.employee_code, 'REGISTER');
     if (!employee || !nameMatches(b.name, employee.name)) throw new AppError('UNKNOWN_EMPLOYEE', messageFor('UNKNOWN_EMPLOYEE'), 422, 'employee_code');
     if (await hasCurrentTemplate(employee.id)) throw new AppError('ALREADY_REGISTERED', messageFor('ALREADY_REGISTERED'), 409, 'employee_code');
   }
@@ -243,6 +233,11 @@ export const uploadFrames = asyncHandler(async (req, res) => {
       return res.json({ data: { ...prior.reply, confirm_token: token } });
     }
     return res.json({ data: prior.reply });
+  }
+  if (row.purpose === 'REGISTER') {
+    const active = await prisma.employee.findFirst({ where: { id: row.employee_id, status: 'ACTIVE', deleted_at: null }, select: { id: true } });
+    if (!active) throw new AppError('FACE_REGISTRATION_NOT_ACTIVE', 'Face registration is available after the employee becomes active.', 409);
+    if (await hasCurrentTemplate(active.id)) throw new AppError('ALREADY_REGISTERED', messageFor('ALREADY_REGISTERED'), 409, 'employee_code');
   }
   const check = await fence(req, b);
   const s = sessionOf(row);
@@ -296,6 +291,10 @@ export const uploadFrames = asyncHandler(async (req, res) => {
     if (d.outcome === 'REGISTERED') {
       const e = await prisma.employee.findUnique({ where: { id: row.employee_id }, select: { id: true, name: true, code: true } });
       await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM employee WHERE id = ${e.id}::uuid FOR UPDATE`;
+        const active = await tx.employee.findFirst({ where: { id: e.id, status: 'ACTIVE', deleted_at: null }, select: { id: true } });
+        if (!active) throw new AppError('FACE_REGISTRATION_NOT_ACTIVE', 'Face registration is available after the employee becomes active.', 409);
+        if (await hasCurrentTemplate(e.id, tx)) throw new AppError('ALREADY_REGISTERED', messageFor('ALREADY_REGISTERED'), 409, 'employee_code');
         // Straight, left and right: three face codes, so a face is known from any of those angles.
         for (const embedding of d.embeddings) await saveRegisteredTemplate(tx, { employeeId: e.id, embedding, siteId: row.site_id, liveScore: d.live_score });
         s.finish({ registered: true });
@@ -331,9 +330,11 @@ export const uploadFrames = asyncHandler(async (req, res) => {
   if (d.outcome === 'IDENTIFIED') {
     const now = new Date();
     const last = await lastPunch(d.employee_id);
+    requireSourcePunchOut(last, row.site_id, now);
     const direction = nextDirection(last, now);
     const dup = duplicateOf(direction, last, row.site_id, now);
-    const e = await prisma.employee.findUnique({ where: { id: d.employee_id }, select: { id: true, name: true, code: true, designation: true } });
+    const e = await prisma.employee.findFirst({ where: { id: d.employee_id, deleted_at: null, status: { in: ['ACTIVE', 'NOTICE'] } }, select: { id: true, name: true, code: true, designation: true } });
+    if (!e) throw new AppError('EMPLOYEE_NOT_ACTIVE', 'This employee is not active for attendance. Ask HR to check their status.', 409);
     if (dup) {
       s.finish({ duplicate: dup.code });
       await saveSession(prisma, row.id, s, { employee_id: e.id });
@@ -346,7 +347,6 @@ export const uploadFrames = asyncHandler(async (req, res) => {
       s.annotate({ token_hash: hash(token), embedding: d.embedding, request_id: b.request_id });
       await saveSession(prisma, row.id, s, { employee_id: e.id });
       const st = s.state;
-      const crossSite = direction === 'OUT' && last && last.site_id !== row.site_id ? last.site.name : null;
       reply = {
         ...sessionReply(s),
         outcome: 'IDENTIFIED',
@@ -357,7 +357,7 @@ export const uploadFrames = asyncHandler(async (req, res) => {
         confirm_token: token,
         confirm_expires_at: st.identified.expires_at,
         can_change_site: direction === 'OUT',
-        note: crossSite ? `Last punch was IN at ${crossSite}. Punching out here is fine — both sites are recorded and the day is paid by hours.` : null,
+        note: null,
         distance_m: check.distance_m,
       };
     }
@@ -380,8 +380,12 @@ export const uploadFrames = asyncHandler(async (req, res) => {
 /** Write the punch the person confirmed. Idempotent: confirming twice returns the same punch. */
 async function writePunch(tx, { row, s, siteId, direction, distance_m, deviceId }) {
   const id = s.state.identified;
+  await tx.$queryRaw`SELECT id FROM employee WHERE id = ${id.employee_id}::uuid FOR UPDATE`;
+  const active = await tx.employee.findFirst({ where: { id: id.employee_id, deleted_at: null, status: { in: ['ACTIVE', 'NOTICE'] } }, select: { id: true } });
+  if (!active) throw new AppError('EMPLOYEE_NOT_ACTIVE', 'This employee is not active for attendance. Ask HR to check their status.', 409);
   const now = new Date();
   const last = await lastPunch(id.employee_id, tx);
+  requireSourcePunchOut(last, siteId, now);
   const dup = duplicateOf(direction, last, siteId, now);
   if (dup) throw new AppError('DUPLICATE_PUNCH', dup.message, 409);
   const work_date = assignWorkDate(now, direction, last ? { direction: last.direction, work_date: fromDbDate(last.work_date), at: last.punched_at.getTime() } : null);
@@ -546,6 +550,7 @@ export const manualRequest = asyncHandler(async (req, res) => {
   if (!e) throw new AppError('UNKNOWN_EMPLOYEE', messageFor('UNKNOWN_EMPLOYEE'), 422, 'employee_code');
   const now = new Date();
   const last = await lastPunch(e.id);
+  requireSourcePunchOut(last, req.site.id, now);
   const direction = nextDirection(last, now);
   const reasons = [`${row.tries} failed face tries`];
   if (!nameMatches(b.name, e.name)) reasons.push(`name typed "${b.name}" does not match`);

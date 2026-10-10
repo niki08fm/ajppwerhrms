@@ -14,7 +14,6 @@ import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { Field, Input, Select, Textarea } from '@/components/ui/form';
 import { Dialog } from '@/components/ui/overlay';
-import { FaceEnrolDialog } from './Onboarding';
 
 function describePolicy(kind, r) {
   if (!r) return '';
@@ -66,10 +65,8 @@ const yearsSince = (dob, today) => {
  * rules their pay group applies — left to right, the way HR reads a profile.
  */
 export function OverviewTab({ e }) {
-  const qc = useQueryClient();
   const { data: lk } = useLookups();
   const [editing, setEditing] = useState(false);
-  const [enrolling, setEnrolling] = useState(false);
   const [full, setFull] = useState(false);
   const { can } = useSession();
   // The unmasked numbers are a separate read, with its own permission and log line.
@@ -144,17 +141,10 @@ export function OverviewTab({ e }) {
             />
           </CardBody>
         </Card>
-        <Card>
+        <Card id="section-face">
           <CardHeader
             title="Face punch"
-            actions={
-              !e.read_only &&
-              can('people.write') && (
-                <Button variant="outline" size="sm" onClick={() => setEnrolling(true)}>
-                  {e.face.enrolled ? 'Register face again' : 'Register face'}
-                </Button>
-              )
-            }
+            description={!e.face.enrolled && !e.read_only ? 'Active employees register at any site.' : undefined}
           />
           <CardBody>
             <KV
@@ -166,7 +156,7 @@ export function OverviewTab({ e }) {
                   e.face.enrolled ? (
                     'Ready to punch'
                   ) : e.face.needs_registration ? (
-                    <Chip tone="warning">Register again (new face system)</Chip>
+                    <Chip tone="warning">Registration needed at a site</Chip>
                   ) : (
                     <Chip tone="warning">Not registered</Chip>
                   ),
@@ -179,7 +169,6 @@ export function OverviewTab({ e }) {
       </div>
       <PayGroupRulesCard e={e} />
       {editing && <EditDialog e={e} onClose={() => setEditing(false)} />}
-      {enrolling && <FaceEnrolDialog e={e} onClose={() => setEnrolling(false)} onDone={() => qc.invalidateQueries({ queryKey: ['employee', e.id] })} />}
     </div>
   );
 }

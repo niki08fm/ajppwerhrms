@@ -45,6 +45,8 @@ export function identityView(idn, full) {
 }
 
 export function onboardingView(tasks) {
+  // Only current checklist steps count. Historical FACE rows remain as records,
+  // but site registration is independent of employee activation.
   const items = ONBOARDING_TASKS.map((t) => {
     const row = tasks.find((x) => x.task_code === t.code);
     return { ...t, done_at: row?.done_at ?? null, done_by: row?.done_by ?? null };

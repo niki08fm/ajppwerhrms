@@ -154,6 +154,12 @@ enum SiteChangeStatus {
   NOT_COUNTED
 }
 
+enum SiteTransferStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 enum LeaveStatus {
   PENDING
   APPROVED
@@ -380,6 +386,8 @@ model Site {
   deleted_at      DateTime?       @db.Timestamptz(6)
   punches         Punch[]
   face_exceptions FaceException[]
+  outgoing_transfers SiteTransferRequest[] @relation("TransferFromSite")
+  incoming_transfers SiteTransferRequest[] @relation("TransferToSite")
 
   @@map("site")
 }
@@ -639,6 +647,7 @@ model Employee {
   recovery_carries  RecoveryCarry[]
   salary_holds      SalaryHold[]
   held_pay          HeldPay[]
+  transfer_requests SiteTransferRequest[]
 
   @@index([pay_group_id])
   @@index([department_id])
@@ -1016,6 +1025,31 @@ model SiteChange {
   @@index([employee_id, work_date])
   @@index([status, created_at])
   @@map("site_change")
+}
+
+/// A site's request to send someone to another site. Recording or approving a
+/// request never creates a punch, changes face templates or awards travel pay.
+model SiteTransferRequest {
+  id             String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id    String             @db.Uuid
+  employee       Employee           @relation(fields: [employee_id], references: [id])
+  from_site_id   String             @db.Uuid
+  from_site      Site               @relation("TransferFromSite", fields: [from_site_id], references: [id])
+  to_site_id     String             @db.Uuid
+  to_site        Site               @relation("TransferToSite", fields: [to_site_id], references: [id])
+  departure_date DateTime           @db.Date
+  reason         String
+  status         SiteTransferStatus @default(PENDING)
+  requested_by   String
+  requested_at   DateTime           @default(now()) @db.Timestamptz(6)
+  decided_by     String?
+  decided_at     DateTime?          @db.Timestamptz(6)
+  decision_note  String?
+  updated_at     DateTime?          @updatedAt @db.Timestamptz(6)
+
+  @@index([from_site_id, requested_at(sort: Desc)])
+  @@index([status, requested_at])
+  @@map("site_transfer_request")
 }
 
 model LeaveRequest {

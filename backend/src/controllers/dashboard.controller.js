@@ -253,7 +253,7 @@ export const getOverview = asyncHandler(async (req, res) => {
   const nameOf = (id) => named.get(id)?.name ?? people.find((p) => p.id === id)?.name ?? null;
 
   // What waits on HR: the same list the Approvals screen shows, counted by kind.
-  const LABELS = { face: 'Face checks', miss: 'Missing punch-outs', short: 'Short days', move: 'Site changes', leave: 'Leave requests' };
+  const LABELS = { face: 'Face checks', miss: 'Missing punch-outs', short: 'Short days', transfer: 'Site transfer requests', move: 'Site changes', leave: 'Leave requests' };
   const item = (key, label, list, to, at) => ({ key, label, n: list.length, names: list.map((x) => x.name).filter(Boolean).slice(0, 6), employee_ids: list.map((x) => x.id).filter(Boolean), to, oldest_at: at ?? null });
   const waiting = [
     ...KINDS.map((k) => {
@@ -264,7 +264,7 @@ export const getOverview = asyncHandler(async (req, res) => {
     item('heldback', 'Left out of payroll', heldBack.map((h) => ({ id: h.employee.id, name: h.employee.name })), '/payroll', null),
   ].filter((w) => w.n > 0);
 
-  const KIND_WORD = { face: 'face check', miss: 'missing punch-out', short: 'short day', move: 'site change', leave: 'leave request' };
+  const KIND_WORD = { face: 'face check', miss: 'missing punch-out', short: 'short day', transfer: 'site transfer request', move: 'site change', leave: 'leave request' };
   const last = waitingNow[waitingNow.length - 1];
   const oldest = last ? { label: KIND_WORD[last.kind], name: last.employee?.name ?? 'Unknown face', at: last.at } : null;
 
