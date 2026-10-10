@@ -35,7 +35,8 @@ export async function resolveMonthlyGross(db, r) {
   if (r.mode === 'GROSS' && r.requirePreview === false) {
     await requireSalaryStructure(db, r.structure_id);
     if (!(await structureComponents(db, r.structure_id)).length) throw new AppError('VALIDATION', 'That salary structure has no components.', 422, 'structure_id');
-    return { monthly_gross: r.amount, amount: r.amount };
+    const rounded = Math.ceil(r.amount / 100) * 100;
+    return { monthly_gross: rounded, amount: rounded };
   }
   const preview = await previewSalary(db, r);
   if (r.mode === 'CTC') {
@@ -56,15 +57,15 @@ export async function resolveMonthlyGross(db, r) {
       const messages = {
         CTC_COMPONENT_CYCLE: 'This structure cannot produce a stable CTC for this rounded salary. Adjust the amount or salary structure.',
         CTC_STRUCTURE_GROSS: 'The rounded salary is below this structure’s components. Adjust the CTC or salary structure.',
-        CTC_ROUNDING_RANGE: 'This structure changes the calculated CTC beyond the permitted ₹24 annual salary-rounding difference. Adjust the amount or salary structure.',
+        CTC_ROUNDING_RANGE: 'This structure cannot produce a CTC at or above the entered amount using its normal upward salary rounding. Adjust the amount or salary structure.',
       };
-      throw new AppError('VALIDATION', messages[sol.reason] ?? 'No rounded monthly salary matches this annual CTC with this structure and statutory rules within the permitted ₹24 annual rounding difference. Choose a different annual CTC.', 422, 'amount');
+      throw new AppError('VALIDATION', messages[sol.reason] ?? 'No upward-rounded monthly salary matches this annual CTC with this structure and statutory rules. Choose a different annual CTC.', 422, 'amount');
     }
     if (preview.structure.gross !== preview.gross) {
       throw new AppError('VALIDATION', 'The rounded salary is below this structure’s components. Adjust the CTC or the salary structure.', 422, 'amount');
     }
   }
-  return { monthly_gross: preview.gross, amount: r.mode === 'CTC' ? preview.ctc.annual_ctc : r.amount, preview };
+  return { monthly_gross: preview.gross, amount: r.mode === 'CTC' ? preview.ctc.annual_ctc : preview.gross, preview };
 }
 
 async function requireSalaryStructure(db, id) {

@@ -332,27 +332,30 @@ describe('Structure preview reads as a salary breakup: earnings → gross, compa
   const components = [comp(1, 'Basic', 'PCT_GROSS', 50), comp(2, 'HRA', 'PCT_BASIC', 40), comp(3, 'Conveyance', 'FIXED', R(1600))];
   const at = (sample) => f.agent.post('/api/v1/structures/validate').send({ components, sample: { pt_state: 'Telangana', ...sample } });
 
-  it('CTC ₹4,00,000: with PF off the whole CTC is gross; with PF on the company share comes out of it', async () => {
+  it('CTC ₹4,00,000: salary rounds upward with or without employer PF', async () => {
     const off = (await at({ mode: 'CTC', amount: R(400000), pf_enabled: false, esi_enabled: true })).body.data.breakup;
-    expect(off.gross).toBe(R(33333));
+    expect(off.gross).toBe(R(33334));
     expect(off.ctc.employer_pf).toBe(0);
-    expect(off.take_home).toBe(R(33333 - 200));
+    expect(off.ctc.annual_ctc).toBe(R(400008));
+    expect(off.take_home).toBe(R(33334 - 200));
     const on = (await at({ mode: 'CTC', amount: R(400000), pf_enabled: true, esi_enabled: true })).body.data.breakup;
-    // Company contributions are the 12% PF only (EDLI and admin are not in CTC): gross + 12% of basic = ₹33,333.
-    expect(on.gross).toBe(R(31446));
+    // Employer PF plus upward-rounded gross gives ₹33,334 a month and ₹4,00,008 a year.
+    expect(on.gross).toBe(R(31447));
     expect(on.pf.employee).toBe(R(1887));
     expect(on.ctc.employer_pf).toBe(R(1887));
-    expect(on.ctc.monthly_cost).toBe(R(33333));
-    expect(on.take_home).toBe(R(31446 - 1887 - 200));
+    expect(on.ctc.monthly_cost).toBe(R(33334));
+    expect(on.ctc.annual_ctc).toBe(R(400008));
+    expect(on.take_home).toBe(R(31447 - 1887 - 200));
   });
 
-  it('gross ₹4,00,000 a year: gross stays; with PF on the company share is paid on top', async () => {
+  it('gross ₹4,00,000 a year: monthly paise round upward and employer PF is paid on top', async () => {
     const monthly = Math.round(R(400000 / 12)); // ₹33,333.33
     const on = (await at({ mode: 'GROSS', amount: monthly, pf_enabled: true, esi_enabled: true })).body.data.breakup;
-    expect(on.gross).toBe(monthly);
+    expect(on.gross).toBe(R(33334));
     expect(on.pf.employee).toBe(R(2000));
     expect(on.ctc.employer_pf).toBe(R(2000));
-    expect(on.take_home).toBe(monthly - R(2000) - R(200));
+    expect(on.ctc.annual_ctc).toBe(R(424008));
+    expect(on.take_home).toBe(R(33334 - 2000 - 200));
   });
 
   it('ESI applies only at ₹21,000 gross or less, and switching it off removes both shares', async () => {

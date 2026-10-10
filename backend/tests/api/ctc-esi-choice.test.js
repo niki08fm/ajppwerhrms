@@ -19,31 +19,37 @@ const employeeInput = (overrides = {}) => ({ name: 'CTC employee', gender: 'MALE
 const salaryRows = (id = f.employees.A) => prisma.employeeSalary.findMany({ where: { employee_id: id, deleted_at: null }, orderBy: { valid_from: 'desc' } });
 
 describe('ESI-first CTC preview retains an explicit saved choice', () => {
-  it('rounds salary and saves the calculated ₹275,328 CTC from a ₹275,325 target without ESI', async () => {
-    const amount = R(275325);
+  it.each([
+    { target: 275325, gross: 21645, pf: 1299, annual: 275328 },
+    { target: 276578, gross: 21744, pf: 1305, annual: 276588 },
+  ])('rounds target ₹$target upward and keeps the calculated CTC consistent through profiles and letters', async ({ target, gross, pf, annual }) => {
+    const amount = R(target);
     const preview = await f.agent.post('/api/v1/employees/salary-preview').send(previewInput({ amount }));
     expect(preview.status, JSON.stringify(preview.body)).toBe(200);
-    expect(preview.body.data).toMatchObject({ gross: R(21645), esi_within_ceiling: false, esi_eligible_gross: null,
-      solution: { ambiguous: false, approximate: false }, ctc: { employer_pf: R(1299), employer_esi: 0, annual_ctc: R(275328) },
+    expect(preview.body.data).toMatchObject({ gross: R(gross), esi_within_ceiling: false, esi_eligible_gross: null,
+      solution: { ambiguous: false, approximate: false }, ctc: { employer_pf: R(pf), employer_esi: 0, annual_ctc: R(annual) },
     });
     const result = await f.agent.post('/api/v1/employees').send(employeeInput({ salary: { mode: 'CTC', amount, structure_id: f.structureId } }));
     expect(result.status, JSON.stringify(result.body)).toBe(201);
     const id = result.body.data.id;
     const [saved] = await salaryRows(id);
-    expect(saved).toMatchObject({ amount: BigInt(R(275328)), monthly_gross: BigInt(R(21645)) });
+    expect(saved).toMatchObject({ amount: BigInt(R(annual)), monthly_gross: BigInt(R(gross)) });
     const pay = await f.agent.get(`/api/v1/employees/${id}/pay`);
-    expect(pay.body.data.preview).toMatchObject({ gross: R(21645), ctc: { annual_ctc: R(275328), employer_esi: 0 } });
+    expect(pay.status, JSON.stringify(pay.body)).toBe(200);
+    expect(pay.body.data.preview).toMatchObject({ gross: R(gross), ctc: { annual_ctc: R(annual), employer_pf: R(pf), employer_esi: 0 } });
+    expect((await prisma.employeeStatutory.findUniqueOrThrow({ where: { employee_id: id } })).esi_enabled).toBe(false);
     const joining = await f.agent.post(`/api/v1/employees/${id}/letters`).send({ kind: 'JOINING', issue: false });
     expect(joining.status, JSON.stringify(joining.body)).toBe(201);
-    expect(joining.body.data.snapshot.salary).toMatchObject({ amount: R(275328), monthly_gross: R(21645), annual_ctc: R(275328) });
+    expect(joining.body.data.snapshot.salary).toMatchObject({ amount: R(annual), monthly_gross: R(gross), annual_ctc: R(annual), employer_pf: R(pf), employer_esi: 0 });
     const offer = await f.agent.post('/api/v1/offers').send({ name: 'Rounded CTC offer', gender: 'MALE', phone: '9000000000',
       department_id: f.deptId, designation: 'Engineer', pay_group_id: f.payGroupId,
       mode: 'CTC', amount, structure_id: f.structureId, join_by: '2026-11-01', valid_till: '2026-10-31', pt_state: 'Andhra Pradesh' });
     expect(offer.status, JSON.stringify(offer.body)).toBe(201);
     const savedOffer = await prisma.offer.findUniqueOrThrow({ where: { id: offer.body.data.offer_id } });
-    expect(savedOffer).toMatchObject({ amount: BigInt(R(275328)), monthly_gross: BigInt(R(21645)) });
+    expect(savedOffer).toMatchObject({ amount: BigInt(R(annual)), monthly_gross: BigInt(R(gross)) });
     const letter = await prisma.letter.findFirstOrThrow({ where: { employee_id: offer.body.data.employee_id, kind: 'OFFER' } });
-    expect(letter.snapshot.salary).toMatchObject({ amount: R(275328), monthly_gross: R(21645), annual_ctc: R(275328) });
+    expect(letter.snapshot.salary).toMatchObject({ amount: R(annual), monthly_gross: R(gross), annual_ctc: R(annual), employer_pf: R(pf), employer_esi: 0 });
+    expect(letter.snapshot.offer.amount).toBe(R(annual));
   });
 
   it('offers whole-rupee choices and normalizes a selected revision to its calculated CTC', async () => {
@@ -62,12 +68,12 @@ describe('ESI-first CTC preview retains an explicit saved choice', () => {
     const amount = R(275316) + 1;
     const preview = await f.agent.post('/api/v1/employees/salary-preview').send(previewInput({ amount }));
     expect(preview.status).toBe(200);
-    expect(preview.body.data).toMatchObject({ gross: R(21644), esi_eligible_gross: null,
-      solution: { approximate: false, ambiguous: false }, ctc: { employer_esi: 0, annual_ctc: R(275316) },
+    expect(preview.body.data).toMatchObject({ gross: R(21645), esi_eligible_gross: null, esi_within_ceiling: false,
+      solution: { approximate: false, ambiguous: false }, ctc: { employer_esi: 0, annual_ctc: R(275328) },
     });
     const saved = await f.agent.post(`/api/v1/employees/${f.employees.A}/salary`).send(revisionInput({ amount }));
     expect(saved.status, JSON.stringify(saved.body)).toBe(201);
-    expect((await salaryRows())[0]).toMatchObject({ monthly_gross: BigInt(R(21644)), amount: BigInt(R(275316)) });
+    expect((await salaryRows())[0]).toMatchObject({ monthly_gross: BigInt(R(21645)), amount: BigInt(R(275328)) });
   });
 
   it('rounds salary upward without employer contributions and rejects a structure the target cannot cover', async () => {
@@ -85,7 +91,7 @@ describe('ESI-first CTC preview retains an explicit saved choice', () => {
     expect(await salaryRows()).toEqual(before);
   });
 
-  it('rejects unstable CTC component normalization and saves a stable basis that matches the profile', async () => {
+  it('steps upward to a stable CTC component basis that stays identical on saved profile reads', async () => {
     const structure = await prisma.salaryStructure.create({ data: { name: 'CTC remainder PF', components: { create: [
       { seq: 1, name: 'Basic', calc_type: 'PCT_GROSS', calc_value: 50, counts_as_wages: true },
       { seq: 2, name: 'HRA', calc_type: 'PCT_CTC', calc_value: 30 },
@@ -93,15 +99,9 @@ describe('ESI-first CTC preview retains an explicit saved choice', () => {
     ] } } });
     const preview = await f.agent.post('/api/v1/employees/salary-preview').send(previewInput({ amount: R(246792), structure_id: structure.id, esi_enabled: false }));
     expect(preview.status).toBe(200);
-    expect(preview.body.data.solution).toMatchObject({ approximate: true, reason: 'CTC_COMPONENT_CYCLE' });
-    const before = await prisma.employee.count();
-    const rejected = await f.agent.post('/api/v1/employees').send(employeeInput({ esi_enabled: false,
-      salary: { mode: 'CTC', amount: R(246792), structure_id: structure.id } }));
-    expect(rejected.status).toBe(422);
-    expect(rejected.body.error.message).toMatch(/stable CTC/);
-    expect(await prisma.employee.count()).toBe(before);
+    expect(preview.body.data).toMatchObject({ gross: R(19025), solution: { approximate: false }, ctc: { annual_ctc: R(246816), ctc_basis: R(246816) } });
     const stable = await f.agent.post('/api/v1/employees').send(employeeInput({ esi_enabled: false,
-      salary: { mode: 'CTC', amount: R(246804), structure_id: structure.id } }));
+      salary: { mode: 'CTC', amount: R(246792), structure_id: structure.id } }));
     expect(stable.status, JSON.stringify(stable.body)).toBe(201);
     const [saved] = await salaryRows(stable.body.data.id);
     expect(saved).toMatchObject({ amount: BigInt(R(246816)), monthly_gross: BigInt(R(19025)) });
@@ -109,6 +109,37 @@ describe('ESI-first CTC preview retains an explicit saved choice', () => {
     expect(pay.status).toBe(200);
     expect(pay.body.data.preview.ctc).toMatchObject({ annual_ctc: R(246816), ctc_basis: R(246816) });
     expect(pay.body.data.preview.gross).toBe(R(19025));
+  });
+
+  it('rounds monthly gross and reported annual CTC upward without changing the raw percent-of-CTC component basis', async () => {
+    const structure = await prisma.salaryStructure.create({ data: { name: 'Gross with fractional yearly bonus', components: { create: [
+      { seq: 1, name: 'Basic', calc_type: 'PCT_GROSS', calc_value: 50, counts_as_wages: true },
+      { seq: 2, name: 'HRA', calc_type: 'PCT_CTC', calc_value: 10 },
+      { seq: 3, name: 'Special Allowance', calc_type: 'BALANCE', calc_value: 0 },
+      { seq: 4, name: 'Bonus', calc_type: 'FIXED', calc_value: 25, frequency: 'YEARLY', pay_month: 3 },
+    ] } } });
+    const target = R(4000) + 1;
+    const expected = { gross: R(4001), ctc: { annual_ctc: R(48013), raw_annual_ctc: R(48012) + 25,
+      ctc_basis: R(48012) + 25, employer_pf: 0, employer_esi: 0 } };
+    const preview = await f.agent.post('/api/v1/employees/salary-preview').send(previewInput({ mode: 'GROSS', amount: target,
+      structure_id: structure.id, pf_enabled: false, esi_enabled: false }));
+    expect(preview.status, JSON.stringify(preview.body)).toBe(200);
+    expect(preview.body.data).toMatchObject(expected);
+    // Using the rounded ₹48,013 as the component basis would incorrectly add one paise to HRA.
+    expect(preview.body.data.structure.monthly.find((component) => component.name === 'HRA').amount).toBe(40010);
+    const created = await f.agent.post('/api/v1/employees').send(employeeInput({ pf_enabled: false, esi_enabled: false,
+      salary: { mode: 'GROSS', amount: target, structure_id: structure.id } }));
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const id = created.body.data.id;
+    expect((await salaryRows(id))[0]).toMatchObject({ mode: 'GROSS', amount: BigInt(R(4001)), monthly_gross: BigInt(R(4001)) });
+    const pay = await f.agent.get(`/api/v1/employees/${id}/pay`);
+    expect(pay.status, JSON.stringify(pay.body)).toBe(200);
+    expect(pay.body.data.preview).toMatchObject(expected);
+    expect(pay.body.data.preview.structure.monthly.find((component) => component.name === 'HRA').amount).toBe(40010);
+    const joining = await f.agent.post(`/api/v1/employees/${id}/letters`).send({ kind: 'JOINING', issue: false });
+    expect(joining.status, JSON.stringify(joining.body)).toBe(201);
+    expect(joining.body.data.snapshot.salary).toMatchObject({ amount: R(4001), monthly_gross: R(4001), annual_ctc: R(48013),
+      components: expect.arrayContaining([{ name: 'HRA', amount: 40010 }]), yearly: [{ name: 'Bonus', amount: 25 }] });
   });
 
   it('previews eligible ESI first and requires an explicit valid choice before inserting a revision', async () => {

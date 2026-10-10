@@ -4,12 +4,12 @@ import { Switch } from '@/components/ui/overlay';
 
 /**
  * Salary is typed as a yearly figure: annual gross or annual CTC. A gross is stored as
- * the monthly gross it divides into; a CTC is kept as typed and its gross worked out
+ * the monthly gross rounded up to whole rupees; a CTC is kept as typed and its gross worked out
  * (CTC less the employer's PF and ESI).
  */
 export function agreement(mode, annualText) {
   const annual = toPaise(annualText) || 0;
-  return { mode, amount: mode === 'GROSS' ? Math.round(annual / 12) : annual };
+  return { mode, amount: mode === 'GROSS' ? Math.ceil(annual / 1200) * 100 : annual };
 }
 
 /** The other way: what to show in the box for a stored agreement. */
@@ -23,6 +23,7 @@ export const MODE_OPTIONS = [
 /** "Agreed as" and the yearly amount, with the monthly figure under it. */
 export function SalaryAmountFields({ mode, annual, onMode, onAnnual, error, label = 'Agreed as' }) {
   const a = toPaise(annual) || 0;
+  const monthly = Math.ceil(a / 1200) * 100;
   return (
     <>
       <div className="flex flex-col gap-1.5">
@@ -33,7 +34,7 @@ export function SalaryAmountFields({ mode, annual, onMode, onAnnual, error, labe
         label={mode === 'CTC' ? 'Annual CTC' : 'Annual gross'}
         required
         error={error}
-        hint={a ? (mode === 'CTC' ? `${inr(Math.round(a / 12))} a month, PF and ESI included` : `${inr(Math.round(a / 12))} a month gross`) : 'A yearly figure'}
+        hint={a ? (mode === 'CTC' ? `${inr(monthly)} a month, PF and ESI included` : `${inr(monthly)} a month gross`) : 'A yearly figure'}
       >
         {(id, inv) => <MoneyInput id={id} aria-invalid={inv} value={annual} onChange={(e) => onAnnual(e.target.value)} />}
       </Field>

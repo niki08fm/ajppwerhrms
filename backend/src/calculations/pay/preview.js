@@ -2,7 +2,7 @@ import { computeEsi } from '../statutory/esi.js';
 import { computePf } from '../statutory/pf.js';
 import { computePt } from '../statutory/pt.js';
 import { computeAnnualTax } from '../statutory/incomeTax.js';
-import { CTC_ROUNDING_LIMIT, ctcForGross, solveGrossFromCtc } from './ctc.js';
+import { ctcForGross, solveGrossFromCtc } from './ctc.js';
 import { expandStructure, usesCtc } from './structure.js';
 
 /** Everything the offer, profile and revision screens show about a salary, at full pay. */
@@ -18,7 +18,7 @@ export function salaryPreview(input) {
       if (allowed.includes(input.chosen_gross)) gross = input.chosen_gross;
     }
   } else {
-    gross = input.amount;
+    gross = Math.ceil(input.amount / 100) * 100;
   }
   // Only trusted reads of an existing agreement supply this. A later statutory
   // choice or rate change must not re-solve and replace its recorded gross.
@@ -34,13 +34,18 @@ export function salaryPreview(input) {
   }
   // Existing agreements keep their recorded CTC basis. New CTC calculations
   // run on the actual CTC of the rounded gross, including "% of CTC" items.
-  const ctc = ctcForGross(gross, ctx, undefined, input.mode === 'CTC' && input.saved_gross !== undefined ? input.amount : undefined);
+  const existingCtc = input.mode === 'CTC' && input.saved_gross !== undefined;
+  const rawCtc = ctcForGross(gross, ctx, undefined, existingCtc ? input.amount : undefined,
+    { round_annual_up: input.mode === 'CTC' && !existingCtc });
+  const roundedAnnual = Math.ceil(rawCtc.annual_ctc / 100) * 100;
+  const roundReportedAnnual = !existingCtc || roundedAnnual === input.amount;
+  const ctc = roundReportedAnnual ? { ...rawCtc, raw_annual_ctc: rawCtc.raw_annual_ctc ?? rawCtc.annual_ctc, annual_ctc: roundedAnnual } : rawCtc;
   const structure = expandStructure(input.components, gross, ctc.ctc_basis);
   if (input.mode === 'CTC' && input.saved_gross === undefined) {
     let reason;
     if (usesCtc(input.components) && ctc.ctc_basis !== ctc.annual_ctc) reason = 'CTC_COMPONENT_CYCLE';
     else if (structure.gross !== gross) reason = 'CTC_STRUCTURE_GROSS';
-    else if (Math.abs(ctc.annual_ctc - input.amount) > CTC_ROUNDING_LIMIT) reason = 'CTC_ROUNDING_RANGE';
+    else if (ctc.annual_ctc < input.amount || ctc.annual_ctc - input.amount > (solution.alternative?.gross === gross ? solution.alternative.rounding_limit : solution.rounding_limit)) reason = 'CTC_ROUNDING_RANGE';
     if (reason) solution = { ...solution, approximate: true, reason };
   }
   const pf = computePf(structure.pf_base, input.pf, input.rates.pf);
