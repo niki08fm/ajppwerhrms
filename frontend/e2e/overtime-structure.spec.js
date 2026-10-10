@@ -9,7 +9,29 @@ const SAMPLE_STRUCTURE = {
   },
 };
 
-function builderPreview(components) {
+function builderPreview(components, sample = {}) {
+  if (sample.mode === 'CTC' && sample.amount === 27_531_600) {
+    const gross = sample.chosen_gross ?? 2_100_000;
+    const withEsi = gross <= 2_100_000;
+    const pf = Math.round(gross * 0.5 * 0.12 / 100) * 100;
+    const employerEsi = withEsi ? 68_300 : 0;
+    const employeeEsi = withEsi ? 15_800 : 0;
+    const base = builderPreview(components);
+    const fixed = components.filter((c) => c.calc_type !== 'BALANCE').map((c) => ({
+      ...c, amount: c.calc_type === 'FIXED' ? c.calc_value : Math.round((c.calc_type === 'PCT_BASIC' ? gross / 2 : gross) * c.calc_value / 100),
+    }));
+    const fixedTotal = fixed.reduce((sum, c) => sum + c.amount, 0);
+    return { ...base, breakup: {
+      ...base.breakup, gross, take_home: gross - pf - employeeEsi,
+      esi_within_ceiling: withEsi, esi_eligible_gross: 2_100_000,
+      solution: { ambiguous: true, gross: 2_100_000, breakdown: { esi_applies: true }, alternative: { gross: 2_164_400, breakdown: { esi_applies: false } }, approximate: false },
+      structure: { monthly: [...fixed, ...components.filter((c) => c.calc_type === 'BALANCE').map((c) => ({ ...c, amount: gross - fixedTotal }))], yearly: [], over_budget: false },
+      ctc: { annual_ctc: (gross + pf + employerEsi) * 12, monthly_cost: gross + pf + employerEsi, employer_pf: pf, employer_esi: employerEsi },
+      pf: { employee: pf, employer_total: pf, employer_epf: pf, eps: 0, pf_wage: gross / 2, vpf: 0 },
+      esi: { applicable: withEsi, employee: employeeEsi, employer: employerEsi },
+      employee_statutory: pf + employeeEsi,
+    } };
+  }
   const monthly = components.map((c) => ({ ...c, amount: c.name === 'Basic' ? 1_200_000 : c.name === 'HRA' ? 480_000 : c.calc_type === 'BALANCE' ? 720_000 : 0 }));
   return {
     errors: [], warnings: [], pt_state: 'Andhra Pradesh',
@@ -39,7 +61,7 @@ async function mockSetup(page) {
     else if (path === '/structures/validate') {
       const body = request.postDataJSON();
       validations.push(body);
-      data = builderPreview(body.components);
+      data = builderPreview(body.components, body.sample);
     } else if (request.method() === 'POST') {
       const body = request.postDataJSON();
       writes.push({ path, body });
@@ -158,4 +180,39 @@ test('the Overtime table displays the selected component base together with hour
   await expect(row.getByRole('cell', { name: '₹60.00', exact: true })).toBeVisible();
   await expect(row.getByRole('cell', { name: '₹240', exact: true })).toBeVisible();
   await expect(row).not.toContainText('undefined');
+});
+
+test('structure CTC preview defaults to ESI and can compare the higher gross without retaining stale choices', async ({ page }) => {
+  const { validations } = await mockSetup(page);
+  await page.goto('/setup/structures/new');
+  await page.getByRole('radio', { name: 'Annual CTC', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Sample annual CTC', exact: true }).fill('275316');
+  const withEsi = page.getByRole('radio', { name: '₹21,000 a month with ESI', exact: true });
+  const withoutEsi = page.getByRole('radio', { name: '₹21,644 a month without ESI', exact: true });
+  await expect(withEsi).toBeChecked();
+  await expect(withoutEsi).not.toBeChecked();
+  const employerEsi = page.getByRole('row').filter({ has: page.getByRole('cell', { name: /^ESI — company share/ }) });
+  await expect(employerEsi.getByRole('cell').nth(1)).toHaveText('₹683');
+  await withoutEsi.check();
+  await expect.poll(() => validations.at(-1)?.sample.chosen_gross).toBe(2_164_400);
+  await expect(withoutEsi).toBeChecked();
+  await expect(employerEsi.getByRole('cell').nth(1)).toHaveText('—');
+  const esiSwitch = page.getByRole('switch', { name: 'ESI on for the sample', exact: true });
+  await expect(esiSwitch).not.toBeChecked();
+  await expect(esiSwitch).toBeEnabled();
+  await esiSwitch.click();
+  await expect(withEsi).toBeChecked();
+  await expect(employerEsi.getByRole('cell').nth(1)).toHaveText('₹683');
+  await withoutEsi.check();
+  await expect(withoutEsi).toBeChecked();
+  await expect(employerEsi.getByRole('cell').nth(1)).toHaveText('—');
+
+  // Rename an allowance without changing its calculation: the chosen comparison
+  // must still be discarded when the structure definition changes.
+  const hraRow = page.locator('tr').filter({ has: page.getByRole('button', { name: 'Remove HRA', exact: true }) });
+  await hraRow.getByRole('textbox', { name: 'Component name', exact: true }).fill('Housing allowance');
+  await expect.poll(() => validations.at(-1)?.components.some((c) => c.name === 'Housing allowance')).toBe(true);
+  expect(validations.at(-1).sample).not.toHaveProperty('chosen_gross');
+  await expect(withEsi).toBeChecked();
+  await expect(employerEsi.getByRole('cell').nth(1)).toHaveText('₹683');
 });

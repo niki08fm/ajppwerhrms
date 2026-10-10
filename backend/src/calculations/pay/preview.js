@@ -20,6 +20,18 @@ export function salaryPreview(input) {
   } else {
     gross = input.amount;
   }
+  // Only trusted reads of an existing agreement supply this. A later statutory
+  // choice or rate change must not re-solve and replace its recorded gross.
+  if (input.saved_gross !== undefined) gross = input.saved_gross;
+
+  let esi_eligible_gross = gross <= input.rates.esi.ceiling ? gross : null;
+  if (input.mode === 'CTC') {
+    // The editor can offer ESI even when the current without-ESI preview is
+    // above the ceiling. This candidate is informational, not a flag change.
+    const eligibleSolution = input.esi_enabled ? solution : solveGrossFromCtc(input.amount, { ...ctx, esi_enabled: true });
+    const candidates = [eligibleSolution, eligibleSolution.alternative].filter(Boolean);
+    esi_eligible_gross = eligibleSolution.approximate ? null : candidates.find((candidate) => candidate.breakdown.esi_applies && candidate.gross <= input.rates.esi.ceiling)?.gross ?? null;
+  }
   // On a CTC agreement, "% of CTC" components run on the agreed figure; on gross, on the CTC it works out to.
   const ctc = ctcForGross(gross, ctx, undefined, input.mode === 'CTC' ? input.amount : undefined);
   const structure = expandStructure(input.components, gross, ctc.ctc_basis);
@@ -43,6 +55,7 @@ export function salaryPreview(input) {
     pf,
     esi,
     esi_within_ceiling,
+    esi_eligible_gross,
     pt,
     pt_february,
     tds_monthly,

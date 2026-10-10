@@ -15,6 +15,7 @@ import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { Field, Input, MoneyInput, Select } from '@/components/ui/form';
 import { Switch } from '@/components/ui/overlay';
 import { SalaryBreakup } from '../../components/people/SalaryBreakup';
+import { grossChoiceOptions } from '../../components/people/SalaryPreview';
 
 const colourFor = (i) => `chart-${(i % 5) + 1}`;
 const blank = (i, over = {}) => ({
@@ -109,6 +110,8 @@ export default function StructureBuilder() {
   const [pfOn, setPfOn] = useState(true);
   const [esiOn, setEsiOn] = useState(true);
   const [ptState, setPtState] = useState(null);
+  const [sampleChosen, setSampleChosen] = useState(undefined);
+  useEffect(() => { setSampleChosen(undefined); }, [rows, special, sampleMode, sample, pfOn, esiOn, ptState]);
   const { data: lk } = useLookups();
   useEffect(() => {
     const s = src.data;
@@ -135,7 +138,9 @@ export default function StructureBuilder() {
   }, [src.data]);
 
   const comps = [...rows.map(toComponent), specialComponent(special, rows.length + 1)];
-  const debounced = useDebounced({ comps, sample: { mode: sampleMode, amount: toPaise(sample), pf_enabled: pfOn, esi_enabled: esiOn, ...(ptState ? { pt_state: ptState } : {}) } }, 200);
+  const previewArgs = { comps, sample: { mode: sampleMode, amount: toPaise(sample), pf_enabled: pfOn, esi_enabled: esiOn, ...(ptState ? { pt_state: ptState } : {}), ...(sampleChosen !== undefined ? { chosen_gross: sampleChosen } : {}) } };
+  const debounced = useDebounced(previewArgs, 200);
+  const isInputPending = JSON.stringify(previewArgs) !== JSON.stringify(debounced);
   // Live preview at a sample gross, updating as the user types.
   const preview = useQuery({
     queryKey: ['structure-validate', debounced],
@@ -162,7 +167,7 @@ export default function StructureBuilder() {
       n.splice(i + d, 0, x);
       return n;
     });
-  const p = preview.data;
+  const p = isInputPending || preview.isPlaceholderData ? undefined : preview.data;
   const blankNames = rows.some((r) => !r.name.trim());
   const reservedName = rows.some((r) => r.name.trim().toLowerCase() === SPECIAL_ALLOWANCE.toLowerCase());
   const usesCtc = rows.some((r) => r.kind === 'PERCENT' && r.of === 'PCT_CTC');
@@ -361,7 +366,7 @@ export default function StructureBuilder() {
                 </label>
                 <label className="flex items-center justify-between gap-2 rounded-md border px-2 py-1.5">
                   ESI
-                  <Switch checked={esiOn} onCheckedChange={setEsiOn} label="ESI on for the sample" />
+                  <Switch checked={esiOn && (p?.breakup.esi.applicable ?? true)} disabled={p?.breakup.esi_within_ceiling === false && !(p.breakup.esi_eligible_gross > 0)} onCheckedChange={(enabled) => { setSampleChosen(undefined); setEsiOn(enabled); }} label="ESI on for the sample" />
                 </label>
               </div>
               <Field label="Professional tax state">
@@ -381,7 +386,12 @@ export default function StructureBuilder() {
                 “% of CTC” is a share of this annual CTC, <span className="num font-medium text-foreground">{formatINR(p.breakup.ctc.ctc_basis)}</span>, spread over twelve months.
               </p>
             )}
-            {p?.breakup.solution?.ambiguous && <Notice tone="warning">This CTC has two valid grosses either side of the ESI ceiling; the one without ESI is shown.</Notice>}
+            {p?.breakup.solution?.ambiguous && <Notice tone="warning">
+              <p>This CTC has two valid monthly grosses. Choose one to compare.</p>
+              <div className="mt-2 flex flex-col gap-1">
+                {grossChoiceOptions(p.breakup.solution).map((o) => <label key={o.gross} className="flex items-center gap-2"><input type="radio" name="sample-gross" checked={(sampleChosen ?? p.breakup.gross) === o.gross} onChange={() => setSampleChosen(o.gross)} className="accent-primary" /><span className="num">{formatINR(o.gross)}</span> a month {o.label}</label>)}
+              </div>
+            </Notice>}
             {p?.breakup.solution?.approximate && <Notice tone="warning">No monthly gross reproduces this CTC exactly on this structure; the nearest is shown.</Notice>}
             {blankNames && <Notice tone="warning">Every component needs a name.</Notice>}
             {reservedName && <Notice tone="destructive">{SPECIAL_ALLOWANCE} is added automatically. Give this component another name.</Notice>}

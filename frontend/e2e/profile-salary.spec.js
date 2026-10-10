@@ -74,6 +74,7 @@ function preview(gross = 3_000_000) {
     },
     esi: { applicable: false, employee: 0, employer: 0 },
     esi_within_ceiling: false,
+    esi_eligible_gross: null,
     pt: { state: 'Telangana', amount: 20_000 },
     pt_february: { amount: 20_000 },
     ctc: {
@@ -214,12 +215,25 @@ async function mockProfile(page, { noSalary = false, protectedRevision = false, 
       const body = req.postDataJSON();
       state.previews.push(body);
       data = preview(body.mode === 'GROSS' ? body.amount : Math.round(body.amount / 12));
-      if (body.mode === 'CTC' && body.amount === 40_000_000)
-        data.solution = {
-          ambiguous: true,
-          gross: 3_300_000,
-          alternative: { gross: 3_200_000 },
+      if (body.mode === 'CTC' && body.amount === 27_531_600) {
+        const gross = body.chosen_gross ?? 2_100_000;
+        const esiOn = gross <= 2_100_000;
+        const pf = Math.round((gross / 2) * 0.12 / 100) * 100;
+        const employerEsi = esiOn ? 68_300 : 0;
+        const employeeEsi = esiOn ? 15_800 : 0;
+        data = {
+          ...preview(gross),
+          gross, take_home: gross - pf - employeeEsi,
+          employee_statutory: pf + employeeEsi,
+          esi_within_ceiling: esiOn, esi_eligible_gross: 2_100_000,
+          structure: { ...preview(gross).structure, yearly: [] },
+          pf: { pf_wage: gross / 2, employee: pf, employer_total: pf, employer_epf: pf, eps: 0, vpf: 0 },
+          esi: { applicable: esiOn, employee: employeeEsi, employer: employerEsi },
+          pt: { state: 'Telangana', amount: 0 }, pt_february: { amount: 0 },
+          ctc: { employer_pf: pf, employer_esi: employerEsi, monthly_cost: gross + pf + employerEsi, annual_ctc: (gross + pf + employerEsi) * 12 },
+          solution: { ambiguous: true, gross: 2_100_000, breakdown: { esi_applies: true }, alternative: { gross: 2_164_400, breakdown: { esi_applies: false } } },
         };
+      }
     } else if (path.endsWith('/pay'))
       data = state.e.salary
         ? {
@@ -239,7 +253,7 @@ async function mockProfile(page, { noSalary = false, protectedRevision = false, 
           ...initial,
           ...body,
           id: 'salary-added',
-          monthly_gross: body.mode === 'GROSS' ? body.amount : Math.round(body.amount / 12),
+          monthly_gross: body.mode === 'GROSS' ? body.amount : body.chosen_gross ?? Math.round(body.amount / 12),
           structure: structures.find((s) => s.id === body.structure_id),
         };
         state.rows.unshift(row);
@@ -255,7 +269,7 @@ async function mockProfile(page, { noSalary = false, protectedRevision = false, 
         const row = {
           ...state.rows[index],
           ...body,
-          monthly_gross: body.mode === 'GROSS' ? body.amount : Math.round(body.amount / 12),
+          monthly_gross: body.mode === 'GROSS' ? body.amount : body.chosen_gross ?? Math.round(body.amount / 12),
           structure: structures.find((s) => s.id === body.structure_id),
         };
         state.rows[index] = row;
@@ -440,6 +454,7 @@ test('CTC salary waits for the latest preview and requires an explicit ambiguous
     noSalary: true,
     emptyPayObject: true,
   });
+  state.e.statutory.esi_enabled = true;
   await page.goto('/people/employee-test?tab=salary');
   await tab(page).getByRole('button', { name: 'Add salary', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Add salary', exact: true });
@@ -450,7 +465,7 @@ test('CTC salary waits for the latest preview and requires an explicit ambiguous
   await dialog.getByLabel('Reason').fill('CTC agreement');
   const add = dialog.getByRole('button', { name: 'Add salary', exact: true });
   await expect(add).toBeEnabled();
-  await dialog.getByLabel('Annual CTC').fill('400000');
+  await dialog.getByLabel('Annual CTC').fill('275316');
   await expect(add).toBeDisabled();
   await expect(
     dialog.getByText('This CTC has two valid monthly grosses. Choose one.', {
@@ -458,15 +473,18 @@ test('CTC salary waits for the latest preview and requires an explicit ambiguous
     }),
   ).toBeVisible();
   await expect(add).toBeDisabled();
+  const choices = await dialog.getByRole('radio', { name: /with(out)? ESI$/ }).all();
+  await expect(choices[0]).toHaveAccessibleName('₹21,000 with ESI');
+  await expect(choices[1]).toHaveAccessibleName('₹21,644 without ESI');
   await dialog.getByRole('radio', { name: /with ESI$/ }).check();
   await expect(add).toBeEnabled();
   await add.click();
   await expect(dialog).toHaveCount(0);
   expect(state.requests.find((r) => r.method === 'POST').body).toMatchObject({
     mode: 'CTC',
-    amount: 40_000_000,
+    amount: 27_531_600,
     structure_id: 'structure-a',
-    chosen_gross: 3_200_000,
+    chosen_gross: 2_100_000,
   });
 });
 

@@ -20,6 +20,7 @@ export async function previewSalary(db, r) {
     regime: r.tax_regime_code === 'OLD' ? regimes.OLD : regimes.NEW,
     declarations: r.declarations ?? { decl_80c: 0, decl_80d: 0, decl_rent_monthly: 0, decl_metro: false },
     chosen_gross: r.chosen_gross,
+    saved_gross: r.saved_gross,
     month: Number(r.date.slice(5, 7)),
   });
 }
@@ -40,19 +41,14 @@ export async function resolveMonthlyGross(db, r) {
   if (r.mode === 'CTC') {
     const sol = preview.solution;
     if (sol.ambiguous) {
-      const options = [sol.gross, sol.alternative.gross];
-      if (r.chosen_gross === undefined || !options.includes(r.chosen_gross)) {
+      const options = [sol, sol.alternative].map((candidate) => ({ gross: candidate.gross, esi: candidate.breakdown.esi_applies }));
+      if (r.chosen_gross === undefined || !options.some((option) => option.gross === r.chosen_gross)) {
         throw new AppError(
           'CTC_AMBIGUOUS',
-          `This CTC has two valid monthly grosses: ${formatINR(sol.gross)} without ESI and ${formatINR(sol.alternative.gross)} with ESI. Pick one, or move the CTC out of the band.`,
+          `This CTC has two valid monthly grosses: ${options.map((option) => `${formatINR(option.gross)} ${option.esi ? 'with' : 'without'} ESI`).join(' and ')}. Pick one, or move the CTC out of the band.`,
           409,
           'amount',
-          {
-            options: [
-              { gross: sol.gross, esi: false },
-              { gross: sol.alternative.gross, esi: true },
-            ],
-          },
+          { options },
         );
       }
     }

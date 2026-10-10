@@ -194,16 +194,17 @@ describe('§20.2 ESI cliff', () => {
     expect(at.annual_ctc).toBeGreaterThan(above.annual_ctc);
   });
 
-  it('a CTC inside the band returns both candidate grosses and never picks silently', () => {
+  it('a CTC inside the band previews the eligible ESI gross first and retains the other choice', () => {
     const low = ctcForGross(R(21001), ctx).annual_ctc;
     const high = ctcForGross(R(21000), ctx).annual_ctc;
     const mid = Math.round((low + high) / 2 / 100) * 100;
     const sol = solveGrossFromCtc(mid, ctx);
     expect(sol.ambiguous).toBe(true);
-    expect(sol.gross).toBeGreaterThan(RATES.esi.ceiling);
+    expect(sol.gross).toBeLessThanOrEqual(RATES.esi.ceiling);
+    expect(sol.breakdown.esi_applies).toBe(true);
     expect(sol.alternative).not.toBeNull();
-    expect(sol.alternative.gross).toBeLessThanOrEqual(RATES.esi.ceiling);
-    expect(sol.alternative.breakdown.esi_applies).toBe(true);
+    expect(sol.alternative.gross).toBeGreaterThan(RATES.esi.ceiling);
+    expect(sol.alternative.breakdown.esi_applies).toBe(false);
   });
 });
 

@@ -17,6 +17,14 @@ export function useSalaryPreview(args, enabled = true) {
   return { ...query, data: isInputPending ? undefined : query.data, isInputPending };
 }
 
+/** Each CTC candidate carries its own statutory breakdown; order is not eligibility. */
+export function grossChoiceOptions(solution) {
+  return [solution, solution?.alternative].filter(Boolean).map((option) => ({
+    gross: option.gross,
+    label: option.breakdown?.esi_applies ? 'with ESI' : 'without ESI',
+  }));
+}
+
 /** As the amount is typed: earnings to gross, company contributions to CTC, deductions to net pay. */
 export function SalaryPreviewPanel({ args, chosen, onChoose, compact }) {
   const q = useSalaryPreview({ ...args, chosen_gross: chosen });
@@ -33,13 +41,10 @@ export function SalaryPreviewPanel({ args, chosen, onChoose, compact }) {
           <p className="font-medium">This CTC has two valid monthly grosses.</p>
           <p className="mt-0.5">At the ESI ceiling employer ESI switches off, so a higher gross can produce the same CTC. Pick one, or move the CTC out of the band.</p>
           <div className="mt-2 flex flex-col gap-1">
-            {[
-              { g: sol.gross, label: 'without ESI' },
-              { g: sol.alternative.gross, label: 'with ESI' },
-            ].map((o) => (
-              <label key={o.g} className="flex items-center gap-2">
-                <input type="radio" name="gross-choice" checked={chosen === o.g} onChange={() => onChoose?.(o.g)} />
-                <Money value={o.g} /> a month {o.label}
+            {grossChoiceOptions(sol).map((o) => (
+              <label key={o.gross} className="flex items-center gap-2">
+                <input type="radio" name="gross-choice" checked={chosen === o.gross} onChange={() => onChoose?.(o.gross)} className="accent-primary" />
+                <Money value={o.gross} /> a month {o.label}
               </label>
             ))}
           </div>
@@ -76,7 +81,7 @@ export function SalaryPreviewPanel({ args, chosen, onChoose, compact }) {
         {args.mode === 'CTC'
           ? `A CTC of ${inr(p.ctc.annual_ctc)} a year is ${inr(p.ctc.monthly_cost)} a month. Less the employer's PF ${inr(p.ctc.employer_pf ?? 0)} and ESI ${inr(p.ctc.employer_esi ?? 0)}, the gross is ${inr(p.gross)} a month.`
           : `A gross of ${inr(p.gross * 12)} a year is ${inr(p.gross)} a month. With the employer's PF ${inr(p.ctc.employer_pf ?? 0)} and ESI ${inr(p.ctc.employer_esi ?? 0)} on top, the CTC is ${inr(p.ctc.annual_ctc)} a year.`}
-        {p.esi_within_ceiling === false ? ' Not eligible for ESI: the gross is above the ceiling.' : ''}
+        {p.esi_within_ceiling === false ? p.esi?.applicable ? ' ESI coverage continues for the current contribution period.' : ' Not eligible for ESI: the gross is above the ceiling.' : ''}
       </p>
       {!compact && (
         <>

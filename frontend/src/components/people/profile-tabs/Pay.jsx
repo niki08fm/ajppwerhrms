@@ -14,6 +14,7 @@ import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { Input, Select } from '@/components/ui/form';
 import { Dialog, Switch } from '@/components/ui/overlay';
 import { SalaryBreakup } from '../SalaryBreakup';
+import { grossChoiceOptions } from '../SalaryPreview';
 import { PayslipPreview } from './PayslipPreview';
 
 function ruleText(c) {
@@ -69,7 +70,7 @@ export function PayTab({ e }) {
       <div className="flex flex-col gap-4 xl:col-span-2">
         {p.solution?.ambiguous && (
           <Notice tone="warning">
-            This salary was agreed as a CTC that lands in the ESI band: <Money value={p.solution.gross} /> without ESI and <Money value={p.solution.alternative.gross} /> with ESI both reproduce it.
+            This salary was agreed as a CTC that lands in the ESI band: {grossChoiceOptions(p.solution).map((o, index) => <span key={o.gross}>{index ? ' and ' : ''}<Money value={o.gross} /> {o.label}</span>)} both reproduce it.
             Currently paid on <Money value={salary.monthly_gross} />. Move the CTC out of the band to remove the ambiguity.
           </Notice>
         )}

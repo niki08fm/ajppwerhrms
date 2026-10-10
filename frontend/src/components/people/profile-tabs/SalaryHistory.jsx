@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
 import { Field, Input, Select } from '@/components/ui/form';
 import { Dialog } from '@/components/ui/overlay';
-import { useSalaryPreview } from '../SalaryPreview';
+import { grossChoiceOptions, useSalaryPreview } from '../SalaryPreview';
 import { agreement, annualText, SalaryAmountFields } from '../SalaryEntry';
 
 const salaryMonth = (date) => date?.slice(0, 7) ?? '';
@@ -303,6 +303,7 @@ export function ReviseDialog({
       mode: cur?.mode ?? 'GROSS',
       amount: cur?.amount ?? 0,
       employee_id: e.id,
+      salary_id: cur?.id,
       structure_id: cur?.structure_id ?? cur?.structure?.id,
       chosen_gross: cur?.monthly_gross,
       date: revision?.valid_from,
@@ -413,13 +414,10 @@ export function ReviseDialog({
           {a?.solution?.ambiguous && (
             <Notice tone="warning">
               This CTC has two valid monthly grosses. Choose one.
-              {[
-                { g: a.solution.gross, label: 'without ESI' },
-                { g: a.solution.alternative.gross, label: 'with ESI' },
-              ].map((o) => (
-                <label key={o.g} className="mt-1 flex items-center gap-2">
-                  <input type="radio" name="revision-gross" checked={chosen === o.g} onChange={() => setChosen(o.g)} />
-                  <Money value={o.g} /> {o.label}
+              {grossChoiceOptions(a.solution).map((o) => (
+                <label key={o.gross} className="mt-1 flex items-center gap-2">
+                  <input type="radio" name="revision-gross" checked={chosen === o.gross} onChange={() => setChosen(o.gross)} className="accent-primary" />
+                  <Money value={o.gross} /> {o.label}
                 </label>
               ))}
             </Notice>

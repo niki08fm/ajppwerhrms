@@ -311,6 +311,7 @@ const previewSchema = z
     structure_id: z.string().uuid(),
     pay_group_id: z.string().uuid().optional(),
     employee_id: z.string().uuid().optional(),
+    salary_id: z.string().uuid().optional(),
     date: isoDate.optional(),
     gender: z.enum(['MALE', 'FEMALE', 'OTHER']).optional(),
     pt_state: z.string().optional(),
@@ -319,12 +320,21 @@ const previewSchema = z
     pf_enabled: z.boolean().optional(),
     esi_enabled: z.boolean().optional(),
   })
-  .strict();
+  .strict()
+  .refine((b) => !b.salary_id || b.employee_id, { message: 'Choose an employee for a saved salary preview.', path: ['employee_id'] });
 
 export const getSalaryPreview = asyncHandler(async (req, res) => {
   const b = previewSchema.parse(req.body);
   const e = b.employee_id ? await mustLoad(b.employee_id) : null;
   const st = e?.statutory;
+  let savedSalary = null;
+  if (b.salary_id) {
+    savedSalary = await prisma.employeeSalary.findFirst({ where: { id: b.salary_id, employee_id: e.id, deleted_at: null } });
+    if (!savedSalary) throw notFound('That salary agreement');
+    if (b.mode !== savedSalary.mode || b.amount !== n(savedSalary.amount) || b.structure_id !== savedSalary.structure_id) {
+      throw new AppError('VALIDATION', 'A saved salary preview must use that agreement’s amount, mode and structure.', 422, 'salary_id');
+    }
+  }
   const preview = await previewSalary(prisma, {
     mode: b.mode,
     amount: b.amount,
@@ -340,6 +350,7 @@ export const getSalaryPreview = asyncHandler(async (req, res) => {
     tax_regime_code: st?.tax_regime_code,
     declarations: st ? { decl_80c: n(st.decl_80c), decl_80d: n(st.decl_80d), decl_rent_monthly: n(st.decl_rent_monthly), decl_metro: st.decl_metro } : undefined,
     chosen_gross: b.chosen_gross,
+    saved_gross: savedSalary ? n(savedSalary.monthly_gross) : undefined,
   });
   res.json({ data: preview });
 });
@@ -634,7 +645,7 @@ export const getPay = asyncHandler(async (req, res) => {
     esi_enabled: st.esi_enabled,
     tax_regime_code: st.tax_regime_code,
     declarations: { decl_80c: n(st.decl_80c), decl_80d: n(st.decl_80d), decl_rent_monthly: n(st.decl_rent_monthly), decl_metro: st.decl_metro },
-    chosen_gross: cur.monthly_gross,
+    saved_gross: cur.monthly_gross,
   });
   const rates = await ratesOn(prisma, date);
   res.json({ data: { salary: cur, preview, rates: { pf: rates.pf, esi: rates.esi } } });
@@ -853,7 +864,13 @@ export const createLetter = asyncHandler(async (req, res) => {
   const date = today() > fromDbDate(e.joined_on) ? today() : fromDbDate(e.joined_on);
   const cur = await salaryOn(prisma, e.id, kind === 'RELIEVING' || kind === 'EXPERIENCE' ? (fromDbDate(e.last_day) ?? date) : date);
   const preview = cur
-    ? await previewSalary(prisma, { mode: cur.mode, amount: cur.amount, structure_id: cur.structure_id, date, gender: e.gender, pt_state: e.statutory.pt_state, chosen_gross: cur.monthly_gross })
+    ? await previewSalary(prisma, {
+      mode: cur.mode, amount: cur.amount, structure_id: cur.structure_id, date, gender: e.gender,
+      pt_state: e.statutory.pt_state, pt_applicable: e.statutory.pt_applicable,
+      pf_enabled: e.statutory.pf_enabled, pf_restrict_to_ceiling: e.statutory.pf_restrict_to_ceiling,
+      vpf_pct: Number(e.statutory.vpf_pct), esi_enabled: e.statutory.esi_enabled,
+      saved_gross: cur.monthly_gross,
+    })
     : null;
   const count = await prisma.letter.count();
   const ref = `AJPWER/${kind.slice(0, 3)}/${date.slice(0, 4)}/${String(count + 1).padStart(5, '0')}`;

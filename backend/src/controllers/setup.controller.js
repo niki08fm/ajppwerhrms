@@ -167,6 +167,7 @@ async function sampleAt(components, sample) {
   const breakup = salaryPreview({
     mode: sample.mode,
     amount: sample.amount,
+    chosen_gross: sample.chosen_gross,
     components,
     pf: { pf_enabled: sample.pf_enabled, pf_restrict_to_ceiling: true, vpf_pct: 0 },
     esi_enabled: sample.esi_enabled,
@@ -232,6 +233,7 @@ export const validateStructureDraft = asyncHandler(async (req, res) => {
         .object({
           mode: z.enum(['GROSS', 'CTC']),
           amount: z.number().int().min(1),
+          chosen_gross: z.number().int().min(0).optional(),
           pf_enabled: z.boolean().default(true),
           esi_enabled: z.boolean().default(true),
           pt_state: z.string().min(1).optional(),

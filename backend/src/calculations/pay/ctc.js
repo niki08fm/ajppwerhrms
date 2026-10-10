@@ -109,7 +109,9 @@ export function solveGrossFromCtc(annualCtc, ctx) {
   const plainSide = withoutEsi && withoutEsi.gross > ctx.rates.esi.ceiling && ok(withoutEsi) ? withoutEsi : null;
 
   if (esiSide && plainSide) {
-    return { gross: plainSide.gross, breakdown: plainSide.breakdown, ambiguous: true, alternative: esiSide, approximate: false };
+    // Preview the eligible ESI option first. Both remain explicit choices when
+    // saving the agreement; a preview default does not settle that decision.
+    return { gross: esiSide.gross, breakdown: esiSide.breakdown, ambiguous: true, alternative: plainSide, approximate: false };
   }
   const found = plainSide ?? esiSide;
   if (found) return { gross: found.gross, breakdown: found.breakdown, ambiguous: false, alternative: null, approximate: false };
