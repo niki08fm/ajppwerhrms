@@ -39,8 +39,13 @@ All thresholds are in `.env` (`FACE_*`); the rules are in [INTEGRATION.md](INTEG
 npm run face:install            # python venv in face/service/.venv, packages, and the four models
 # then in .env: FACE_SERVICE_DEV=1, and FACE_SERVICE_URL / FACE_SERVICE_TOKEN
 npm run dev                     # backend, frontend and the face service
+npm run face:check              # check authenticated health and the recognition model
 npm run service:test -w @ajpwer/face
 ```
+
+If the backend and frontend are already running, start the face service in another terminal with `npm run dev:face`. This explicitly starts it even when `FACE_SERVICE_DEV` is unset or `0`; `npm run dev` continues to start it automatically only when `FACE_SERVICE_DEV=1`.
+
+If registration shows **"Face check is not working right now"**, run `npm run face:check` from the repository root. It checks the existing configuration and authenticated health without logging tokens or face data. Missing Python packages or models require `npm run face:install`; missing models in an installed environment require `npm run face:models`. Start the service with `npm run dev:face` and keep that terminal open. An authentication failure means the backend and face service need the same `FACE_SERVICE_TOKEN`; restart both after correcting their configuration.
 
 Production: [docs/OPERATIONS.md](../docs/OPERATIONS.md) §2a.
 

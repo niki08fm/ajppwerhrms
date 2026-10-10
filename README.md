@@ -27,13 +27,17 @@ npm run dev
 ```
 
 Open **http://localhost:5173** and sign in with `ADMIN_EMAIL` / `ADMIN_PASSWORD` from `.env`.
-A site tablet signs in at **http://localhost:5173/tablet** with a site login (it only works inside that site's geofence — for local testing, set your browser's location to the site's coordinates in DevTools → Sensors). After activation, employees register with **Register face** on a tablet at any site (employee ID and name). Face registration is separate from onboarding; registration from the profile and re-registration are unavailable for now.
+A site tablet signs in at **http://localhost:5173/tablet** with a site login from any location. Viewing the site's attendance needs no GPS permission. Punching and face registration check the site's geofence; for local capture testing, set the browser location to the site's coordinates in DevTools → Sensors. After activation, employees register with **Register face** on a tablet at any site (employee ID and name). Face registration is separate from onboarding; cameras remain on site tablets.
+
+For repeated recognition failures, HR can choose **Allow re-registration** in the employee's Overview → Face punch card and record a reason. The employee then uses the same **Register face** button at any site. Approval lasts seven days and permits one successful replacement; HR can cancel it before use. Existing templates remain usable until the new captures pass all checks and save successfully. Approved manual face punches on more than three consecutive calendar work dates prompt HR to review registration; they never authorize a replacement automatically. HR can also authorize a replacement sooner when needed.
 
 The site workspace opens on **Today**, with total punched, current headcount, late arrivals, sign-outs and early departures. Select a department in the donut to see who is on site. The monthly attendance bar chart opens the selected day's register. Daily and monthly registers are read-only and scoped to the signed-in site; blank days mean no recorded punch, not an assigned-site absence.
 
 Use **Transfer requests** before someone leaves for another site. HR approves or rejects the request in Approvals. A request does not create attendance or travel pay: the person still punches out at the source and in at the destination. **Punch in / out** opens the camera separately.
 
-When updating an existing local checkout, run `npm run build` and `npm run db:migrate`, then restart the app. The transfer-request migration adds a table without replacing employee or attendance data. Keep the existing `.env`; do not reset or reseed an imported employee database.
+When updating an existing local checkout, run `npm run build` and `npm run db:migrate`, then restart the app. Transfer requests and face re-registration authorizations use additive migrations without replacing employee or attendance data. Keep the existing `.env`; do not reset or reseed an imported employee database.
+
+If registration says **“Face check is not working right now”**, run `npm run face:install` once, start `npm run dev:face` in a separate terminal, and run `npm run face:check` in another terminal. The check verifies that the backend's configured service is reachable, accepts its token and uses the expected model. Keep the face-service terminal running, then retry registration. Starting only the backend and frontend does not start face processing. To start it with `npm run dev`, set `FACE_SERVICE_DEV=1` in your existing `.env`.
 
 The seed creates about 30 people with three months of punches. The two months before last are run, locked and paid; last month is ready to run; the current month contains every case spec §20 asks for (a mid-month joiner with no bank account, a mid-month leaver near the gratuity threshold, a cross-site worker, a worked holiday and Sunday, a loan big enough to hit the recovery cap, an old-regime employee with declarations, a CTC-agreed salary, PF above the ceiling with restrict-to-ceiling off, two people in one crew in different PT states, and an expired document).
 
@@ -52,7 +56,7 @@ Everything configurable is in [`.env.example`](.env.example), commented. The one
 | `REDIS_URL` | BullMQ queue for payroll runs and large exports. Blank = in-process |
 | `WEB_ORIGIN`, `COOKIE_SECURE`, `TRUST_PROXY` | Set for production behind HTTPS |
 | `FACE_SERVICE_URL`, `FACE_SERVICE_TOKEN` | Where the face service listens (127.0.0.1:8100) and the shared secret it requires. Optional `FACE_*` thresholds: see `.env.example` |
-| `GPS_MAX_ACCURACY_M` | GPS accuracy needed to sign in and punch |
+| `GPS_MAX_ACCURACY_M` | GPS accuracy needed to punch or register a face; site login needs no GPS |
 | `NOMINATIM_USER_AGENT`, `NOMINATIM_EMAIL` | Identify the app to OpenStreetMap's place search, used by the site map |
 
 The API refuses to start with a clear list of what is missing or malformed.
@@ -63,6 +67,8 @@ The API refuses to start with a clear list of what is missing or malformed.
 | --- | --- |
 | `npm run dev` | Backend (`node --watch`), frontend (Vite), and the face service when `FACE_SERVICE_DEV=1`; `dev:backend` / `dev:frontend` run one |
 | `npm run face:install` | Face service: Python venv, packages and the four model files (`face:models` re-checks the models) |
+| `npm run dev:face` | Start face processing explicitly, regardless of the optional `FACE_SERVICE_DEV` setting |
+| `npm run face:check` | Check configured face-service health, token acceptance and recognition-model compatibility |
 | `npm run build` | Generates the database client and builds the frontend (`frontend/dist`); the backend runs as it is |
 | `npm start` | Start the built backend; with `SERVE_WEB_DIR=frontend/dist` it also serves the frontend |
 | `npm run db:migrate` | Apply migrations (`prisma migrate deploy`) |
@@ -144,7 +150,7 @@ Each folder has its own README. The root `package.json` ties them together (npm 
 
 **The list contract** (spec §15) is one hook and one table component: server-side filtering, sorting and keyset pagination (never OFFSET), page sizes 50/100/200, filter state in the URL, filter chips, saved views, "select all N matching" bulk actions with before/after previews, filtered CSV export, sticky header and first column, virtualised rows past 200.
 
-**Security** (spec §18): argon2id passwords; JWT in httpOnly SameSite=Lax cookies with an 8-hour sliding session; five failed sign-ins in 15 minutes lock by account and IP; permissions are a lookup (`role.permissions`), not `isAdmin`; site tablets sign in with a login ID and password set by HR (argon2id; the password is shown once and never stored, returned again or logged) and only inside their geofence, which is re-checked on every punch; resetting a site password or disabling its login invalidates its tokens; PAN, Aadhaar and bank accounts are AES-256-GCM encrypted at rest, Aadhaar is masked everywhere, and every read of identity data is audited; face data is stored as face codes (embeddings), never photographs, is made on our own server by the face service (which keeps nothing), and is deleted on exit; face crops of failed tries are kept 30 days for HR only when a manual request is raised; gate snapshots are deleted after 30 days; punches store distance from the site centre, never a coordinate trail.
+**Security** (spec §18): argon2id passwords; JWT in httpOnly SameSite=Lax cookies with an 8-hour sliding session; five failed sign-ins in 15 minutes lock by account and IP; permissions are a lookup (`role.permissions`), not `isAdmin`; site tablets sign in with a login ID and password set by HR (argon2id; the password is shown once and never stored, returned again or logged) from any location; the site geofence is checked on every punch and face registration; resetting a site password or disabling its login invalidates its tokens; PAN, Aadhaar and bank accounts are AES-256-GCM encrypted at rest, Aadhaar is masked everywhere, and every read of identity data is audited; face data is stored as face codes (embeddings), never photographs, is made on our own server by the face service (which keeps nothing), and is deleted on exit; face crops of failed tries are kept 30 days for HR only when a manual request is raised; gate snapshots are deleted after 30 days; punches store distance from the site centre, never a coordinate trail.
 
 ## Verification
 
@@ -180,7 +186,7 @@ Recorded here as the spec asks for any "SHOULD" done differently.
   - Transfer requests are separate from punching and reviewed by HR; they do not create punches or travel credit. Historical Change site travel records remain available to HR.
 - **Face exception review** shows the face crops of the failed tries (or the gate snapshot for older exceptions). Enrolled photographs are not stored (only face codes, per §18), so HR compares the crops with the person or their ID.
 - **Sites.** HR marks each site on an OpenStreetMap map (drag the marker, search a place, paste coordinates or a Google Maps link, or use the browser's location) with a 50–2000 m geofence, and sets the tablet's login ID and password on the same form (typed, or generated: 12 characters without look-alikes). A new centre or radius is audited and applies from the next sign-in and punch; past punches keep the distance recorded when they were made. Site names are unique ignoring case. The migration that introduced this brought any radius outside 50–2000 m inside it and appended the code to duplicate names, and recorded each change in the audit log. Permission `sites.write` became `sites.manage`.
-- **Tablet sign-in order.** The login ID, then the password, then the lockout, then GPS accuracy, then distance, each with its own message. The lockout is looked up before the password is checked, so a locked-out caller cannot keep guessing.
+- **Tablet sign-in order.** Check the login ID, account availability and password. GPS is requested and verified when starting and saving a punch or face registration; remote attendance viewing does not require it.
 - **People search** covers name, code, designation and phone. PAN is encrypted at rest, so it is not substring-searchable.
 - **Theme.** The tweakcn theme referred to in §2 was not in the document; the tokens in `frontend/src/styles.css` follow the same shadcn/tweakcn format (with both font corrections applied), so a tweakcn export can be pasted over `:root` and `.dark`.
 - **Dependency advisories.** `npm audit` reports four *moderate* advisories (React Router 6 client-side redirect handling; `uuid` inside `exceljs`). Neither path is exercised in a way that is exploitable here; upgrading to React Router 7 is a planned follow-up. CI fails on any *high* advisory.

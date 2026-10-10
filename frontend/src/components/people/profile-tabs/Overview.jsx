@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { Field, Input, Select, Textarea } from '@/components/ui/form';
 import { Dialog } from '@/components/ui/overlay';
+import { FaceRegistrationCard } from '@/components/people/FaceRegistrationCard';
 
 function describePolicy(kind, r) {
   if (!r) return '';
@@ -141,31 +142,7 @@ export function OverviewTab({ e }) {
             />
           </CardBody>
         </Card>
-        <Card id="section-face">
-          <CardHeader
-            title="Face punch"
-            description={!e.face.enrolled && !e.read_only ? 'Active employees register at any site.' : undefined}
-          />
-          <CardBody>
-            <KV
-              cols={3}
-              items={[
-                ['Registered', e.face.enrolled ? longDate(String(e.face.enrolled_at).slice(0, 10)) : '—'],
-                [
-                  'Status',
-                  e.face.enrolled ? (
-                    'Ready to punch'
-                  ) : e.face.needs_registration ? (
-                    <Chip tone="warning">Registration needed at a site</Chip>
-                  ) : (
-                    <Chip tone="warning">Not registered</Chip>
-                  ),
-                ],
-                ['Face samples', e.face.enrolled ? String(e.face.templates ?? '—') : '—'],
-              ]}
-            />
-          </CardBody>
-        </Card>
+        <FaceRegistrationCard e={e} />
       </div>
       <PayGroupRulesCard e={e} />
       {editing && <EditDialog e={e} onClose={() => setEditing(false)} />}

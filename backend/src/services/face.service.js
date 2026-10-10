@@ -49,9 +49,11 @@ export function setFaceClient(c) {
 // ─── Gallery ─────────────────────────────────────────────────────────────────
 
 let cache = null;
+let galleryGeneration = 0;
 const CACHE_MS = 60_000;
 
 export function invalidateFaceCache() {
+  galleryGeneration += 1;
   cache = null;
 }
 
@@ -60,12 +62,15 @@ const ACTIVE_STATUSES = ['ACTIVE', 'NOTICE'];
 /** Every current-model template of people who can punch, grouped by person. Cached for a minute. */
 export async function loadGallery() {
   if (cache && Date.now() - cache.at < CACHE_MS) return cache.gallery;
+  const generation = galleryGeneration;
   const rows = await prisma.employeeFace.findMany({
     where: { deleted_at: null, model_version: MODEL_VERSION, employee: { deleted_at: null, status: { in: ACTIVE_STATUSES } } },
     select: { employee_id: true, embedding: true, model_version: true },
   });
   const gallery = buildGallery(rows);
-  cache = { at: Date.now(), gallery };
+  // A query started before replacement can finish after its cache invalidation.
+  // Do not let that older snapshot repopulate the shared cache.
+  if (generation === galleryGeneration) cache = { at: Date.now(), gallery };
   return gallery;
 }
 

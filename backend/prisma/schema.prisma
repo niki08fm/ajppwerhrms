@@ -140,6 +140,12 @@ enum PunchSessionPurpose {
   REGISTER
 }
 
+enum FaceRegistrationAuthorizationStatus {
+  APPROVED
+  USED
+  REVOKED
+}
+
 enum PunchSessionStatus {
   ACTIVE
   IDENTIFIED
@@ -388,6 +394,7 @@ model Site {
   face_exceptions FaceException[]
   outgoing_transfers SiteTransferRequest[] @relation("TransferFromSite")
   incoming_transfers SiteTransferRequest[] @relation("TransferToSite")
+  face_registration_uses FaceRegistrationAuthorization[]
 
   @@map("site")
 }
@@ -629,6 +636,7 @@ model Employee {
   statutory         EmployeeStatutory?
   salaries          EmployeeSalary[]
   faces             EmployeeFace[]
+  face_registration_authorizations FaceRegistrationAuthorization[]
   offers            Offer[]
   onboarding_tasks  OnboardingTask[]
   documents         Document[]
@@ -946,6 +954,9 @@ model PunchSession {
   tries             Int                 @default(0)
   /// REGISTER: who is registering. PUNCH: who was identified, once identified.
   employee_id       String?             @db.Uuid
+  /// A re-registration is bound to the specific one-time HR approval at start.
+  face_registration_authorization_id String? @db.Uuid
+  face_registration_authorization FaceRegistrationAuthorization? @relation(fields: [face_registration_authorization_id], references: [id], onDelete: Restrict)
   /// createPunchSession state (challenge, identification, failures) — no embeddings
   state             Json
   /// Face crops of failed tries, kept only for a manual request (deleted with gate snapshots)
@@ -960,6 +971,27 @@ model PunchSession {
   @@index([site_id, created_at])
   @@index([status, created_at])
   @@map("punch_session")
+}
+
+/// HR permits one replacement from any site. Existing templates remain usable until successful capture.
+model FaceRegistrationAuthorization {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id String @db.Uuid
+  employee Employee @relation(fields: [employee_id], references: [id])
+  status FaceRegistrationAuthorizationStatus @default(APPROVED)
+  reason String
+  approved_by String
+  approved_at DateTime @default(now()) @db.Timestamptz(6)
+  expires_at DateTime @db.Timestamptz(6)
+  used_at DateTime? @db.Timestamptz(6)
+  used_site_id String? @db.Uuid
+  used_site Site? @relation(fields: [used_site_id], references: [id], onDelete: Restrict)
+  revoked_by String?
+  revoked_at DateTime? @db.Timestamptz(6)
+  sessions PunchSession[]
+
+  @@index([employee_id, approved_at])
+  @@map("face_registration_authorization")
 }
 
 /// Every analysed upload (and every "This is not me"), for tuning the thresholds from real punches. No images, no embeddings.

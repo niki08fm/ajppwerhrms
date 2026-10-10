@@ -14,6 +14,7 @@
     "dev": "npm run dev --workspace=@ajpwer/backend & npm run dev --workspace=@ajpwer/frontend & npm run service:dev --workspace=@ajpwer/face",
     "dev:backend": "npm run dev --workspace=@ajpwer/backend",
     "dev:frontend": "npm run dev --workspace=@ajpwer/frontend",
+    "dev:face": "npm run service:dev --workspace=@ajpwer/face -- --force",
     "build": "npm run build --workspace=@ajpwer/backend && npm run build --workspace=@ajpwer/frontend",
     "test": "npm run test --workspace=@ajpwer/backend",
     "test:engines": "npm run test:engines --workspace=@ajpwer/backend",
@@ -31,6 +32,7 @@
     "jobs:retention": "npm run jobs:retention --workspace=@ajpwer/backend",
     "face:install": "npm run service:install --workspace=@ajpwer/face",
     "face:models": "npm run service:models --workspace=@ajpwer/face",
+    "face:check": "node face/scripts/check-service.js",
     "start": "npm run start --workspace=@ajpwer/backend"
   },
   "engines": {

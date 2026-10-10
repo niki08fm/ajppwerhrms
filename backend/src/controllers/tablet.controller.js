@@ -11,12 +11,14 @@ import {
 } from '@ajpwer/shared';
 import {
   checkDuplicate,
+  buildGallery,
   createPunchSession,
   decideGuidedRegistration,
   decidePunch,
   FaceServiceBadImage,
   FaceServiceBusy,
   FaceServiceUnavailable,
+  embeddingToBytes,
   hasTemplate,
   messageFor,
 } from '@ajpwer/face';
@@ -28,10 +30,11 @@ import { AppError, notFound } from '../utils/errors.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { checkGeofence } from '../utils/geo.js';
 import { prisma } from '../config/db.js';
-import { faceClient, faceConfig, hasCurrentTemplate, MODEL_VERSION, learnFromPunch, loadGallery, saveCrop, saveRegisteredTemplate, snapshotDir } from '../services/face.service.js';
+import { faceClient, faceConfig, hasCurrentTemplate, invalidateFaceCache, MODEL_VERSION, learnFromPunch, loadGallery, saveCrop, snapshotDir } from '../services/face.service.js';
 import { attendanceFrozen } from '../services/attendance.service.js';
 import { bumpAggregate } from '../services/aggregates.service.js';
 import { currentSitePeople } from '../services/site-workspace.service.js';
+import { liveAuthorizationWhere, lockRegistrationEmployee, requireRegistrationActive, requireRegistrationPermission } from '../services/face-registration.service.js';
 
 /**
  * Tablet punches, face v2 (face/INTEGRATION.md §3). The browser only guides and
@@ -156,7 +159,7 @@ async function findEmployeeByCode(code, purpose = 'PUNCH') {
 /**
  * People to pick from on the tablet, by what was typed (name or ID). Only name, ID and
  * designation leave the server, two typed characters are needed, and eight people at most.
- * `for=register` lists only those with no face registered yet.
+ * `for=register` includes first registrations and employees with a live one-time HR approval.
  */
 export const searchEmployees = asyncHandler(async (req, res) => {
   const q = String(req.query.q ?? '').trim();
@@ -172,14 +175,20 @@ export const searchEmployees = asyncHandler(async (req, res) => {
     where: {
       deleted_at: null,
       status: req.query.for === 'register' ? 'ACTIVE' : { in: ['ACTIVE', 'NOTICE'] },
-      OR: [{ name: { contains: q, mode: 'insensitive' } }, { code: { contains: q, mode: 'insensitive' } }],
-      ...(req.query.for === 'register' ? { faces: { none: { deleted_at: null, model_version: MODEL_VERSION } } } : {}),
+      AND: [
+        { OR: [{ name: { contains: q, mode: 'insensitive' } }, { code: { contains: q, mode: 'insensitive' } }] },
+        ...(req.query.for === 'register' ? [{ OR: [
+          { faces: { none: { deleted_at: null, model_version: MODEL_VERSION } } },
+          { face_registration_authorizations: { some: liveAuthorizationWhere() } },
+        ] }] : []),
+      ],
     },
-    select: { code: true, name: true, designation: true },
+    select: { code: true, name: true, designation: true,
+      ...(req.query.for === 'register' ? { faces: { where: { deleted_at: null, model_version: MODEL_VERSION }, select: { id: true }, take: 1 } } : {}) },
     orderBy: { name: 'asc' },
     take: 8,
   });
-  res.json({ data: people });
+  res.json({ data: people.map(({ faces, ...person }) => ({ ...person, ...(req.query.for === 'register' ? { allow_reregistration: faces.length > 0 } : {}) })) });
 });
 
 /** The typed name matches when every word typed appears in the person's name. */
@@ -197,14 +206,25 @@ export const startSession = asyncHandler(async (req, res) => {
   if (b.purpose === 'REGISTER') {
     employee = await findEmployeeByCode(b.employee_code, 'REGISTER');
     if (!employee || !nameMatches(b.name, employee.name)) throw new AppError('UNKNOWN_EMPLOYEE', messageFor('UNKNOWN_EMPLOYEE'), 422, 'employee_code');
-    if (await hasCurrentTemplate(employee.id)) throw new AppError('ALREADY_REGISTERED', messageFor('ALREADY_REGISTERED'), 409, 'employee_code');
   }
   const s = createPunchSession(null, { config: sessionConfig(b.purpose) });
-  const row = await prisma.punchSession.create({
-    data: { site_id: req.site.id, purpose: b.purpose, employee_id: employee?.id ?? null, state: s.state, status: s.status, tries: 0 },
+  const row = await prisma.$transaction(async (tx) => {
+    let authorizationId = null;
+    if (employee) {
+      const active = await lockRegistrationEmployee(tx, employee.id);
+      requireRegistrationActive(active);
+      if (await hasCurrentTemplate(employee.id, tx)) {
+        const grant = await tx.faceRegistrationAuthorization.findFirst({ where: { employee_id: employee.id, ...liveAuthorizationWhere() } });
+        if (!grant) throw new AppError('ALREADY_REGISTERED', messageFor('ALREADY_REGISTERED'), 409, 'employee_code');
+        authorizationId = grant.id;
+      }
+    }
+    return tx.punchSession.create({ data: { site_id: req.site.id, purpose: b.purpose, employee_id: employee?.id ?? null,
+      face_registration_authorization_id: authorizationId, state: s.state, status: s.status, tries: 0 } });
   });
   res.status(201).json({
-    data: { session_id: row.id, purpose: b.purpose, employee: employee ? { name: employee.name, code: employee.code } : null, ...sessionReply(s) },
+    data: { session_id: row.id, purpose: b.purpose, re_registration: !!row.face_registration_authorization_id,
+      employee: employee ? { name: employee.name, code: employee.code } : null, ...sessionReply(s) },
   });
 });
 
@@ -235,9 +255,16 @@ export const uploadFrames = asyncHandler(async (req, res) => {
     return res.json({ data: prior.reply });
   }
   if (row.purpose === 'REGISTER') {
-    const active = await prisma.employee.findFirst({ where: { id: row.employee_id, status: 'ACTIVE', deleted_at: null }, select: { id: true } });
-    if (!active) throw new AppError('FACE_REGISTRATION_NOT_ACTIVE', 'Face registration is available after the employee becomes active.', 409);
-    if (await hasCurrentTemplate(active.id)) throw new AppError('ALREADY_REGISTERED', messageFor('ALREADY_REGISTERED'), 409, 'employee_code');
+    try {
+      await requireRegistrationPermission(prisma, row.employee_id, row.face_registration_authorization_id);
+    } catch (error) {
+      // Another identical upload can commit between the first replay lookup and
+      // this permission check. Return its atomic reply instead of a USED error.
+      const replay = await prisma.punchAttempt.findUnique({ where: { session_id_request_id: { session_id: row.id, request_id: b.request_id } } });
+      if (!replay) throw error;
+      res.setHeader('Idempotent-Replay', 'true');
+      return res.json({ data: replay.reply });
+    }
   }
   const check = await fence(req, b);
   const s = sessionOf(row);
@@ -249,6 +276,23 @@ export const uploadFrames = asyncHandler(async (req, res) => {
     return res.status(409).json({ error: { code: 'SESSION_STATE', message: 'This scan has finished. Start again.', field: null }, data: sessionReply(s) });
   }
   if (s.challengeExpired()) {
+    if (row.purpose === 'REGISTER') {
+      const reply = await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM punch_session WHERE id = ${row.id}::uuid FOR UPDATE`;
+        const prior = await tx.punchAttempt.findUnique({ where: { session_id_request_id: { session_id: row.id, request_id: b.request_id } } });
+        if (prior) return prior.reply;
+        const fresh = await tx.punchSession.findUnique({ where: { id: row.id } });
+        if (fresh.status !== 'ACTIVE') throw new AppError('SESSION_STATE', 'This scan has finished. Start again.', 409);
+        const current = sessionOf(fresh);
+        current.renewChallenge();
+        await saveSession(tx, row.id, current);
+        const reply = sessionReply(current, { outcome: 'EXPIRED', code: 'CHALLENGE_EXPIRED', message: messageFor('CHALLENGE_EXPIRED') });
+        await tx.punchAttempt.create({ data: { session_id: row.id, site_id: row.site_id, purpose: row.purpose,
+          request_id: b.request_id, outcome: 'EXPIRED', code: 'CHALLENGE_EXPIRED', tries_after: current.state.tries, reply } });
+        return reply;
+      });
+      return res.json({ data: reply });
+    }
     s.renewChallenge();
     await saveSession(prisma, row.id, s);
     const reply = sessionReply(s, { outcome: 'EXPIRED', code: 'CHALLENGE_EXPIRED', message: messageFor('CHALLENGE_EXPIRED') });
@@ -256,6 +300,7 @@ export const uploadFrames = asyncHandler(async (req, res) => {
     return res.json({ data: reply });
   }
 
+  const capturedAt = new Date().toISOString();
   let analysis;
   try {
     // The face service takes up to three pictures per request: a registration's four go as two pairs, in order.
@@ -287,41 +332,95 @@ export const uploadFrames = asyncHandler(async (req, res) => {
     const d = decideGuidedRegistration({ analysis, gallery, employeeId: row.employee_id, config: cfg });
     // How the head moved and how the camera scored, kept with the attempt for HR.
     common.quality = { ...quality, yaws: d.yaws, turns: d.turns ?? null, live_best: d.live_best ?? null };
-    let reply;
     if (d.outcome === 'REGISTERED') {
-      const e = await prisma.employee.findUnique({ where: { id: row.employee_id }, select: { id: true, name: true, code: true } });
-      await prisma.$transaction(async (tx) => {
-        await tx.$queryRaw`SELECT id FROM employee WHERE id = ${e.id}::uuid FOR UPDATE`;
-        const active = await tx.employee.findFirst({ where: { id: e.id, status: 'ACTIVE', deleted_at: null }, select: { id: true } });
-        if (!active) throw new AppError('FACE_REGISTRATION_NOT_ACTIVE', 'Face registration is available after the employee becomes active.', 409);
-        if (await hasCurrentTemplate(e.id, tx)) throw new AppError('ALREADY_REGISTERED', messageFor('ALREADY_REGISTERED'), 409, 'employee_code');
-        // Straight, left and right: three face codes, so a face is known from any of those angles.
-        for (const embedding of d.embeddings) await saveRegisteredTemplate(tx, { employeeId: e.id, embedding, siteId: row.site_id, liveScore: d.live_score });
-        s.finish({ registered: true });
-        await saveSession(tx, row.id, s);
-        await audit(tx, {
-          actor: siteActor(req),
-          ip: req.ip ?? null,
-          action: 'face.register',
-          entity_type: 'employee',
-          entity_id: e.id,
-          detail: { site_id: row.site_id, via: 'tablet', pictures: 4, templates: d.embeddings.length, turns: d.turns, live_score: d.live_score, live_best: d.live_best },
+      const result = await prisma.$transaction(async (tx) => {
+        const employee = await lockRegistrationEmployee(tx, row.employee_id);
+        // Different employees must not register the same face concurrently. Employee
+        // locks alone cannot serialize the shared gallery check.
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(190511, 1)`;
+        await tx.$queryRaw`SELECT id FROM punch_session WHERE id = ${row.id}::uuid FOR UPDATE`;
+        const replay = await tx.punchAttempt.findUnique({ where: { session_id_request_id: { session_id: row.id, request_id: b.request_id } } });
+        if (replay) return { reply: replay.reply, replayed: true };
+        const freshSession = await tx.punchSession.findUnique({ where: { id: row.id } });
+        if (freshSession.status !== 'ACTIVE') throw new AppError('SESSION_STATE', 'This scan has finished. Start again.', 409);
+        const current = sessionOf(freshSession);
+        await requireRegistrationPermission(tx, employee.id, row.face_registration_authorization_id);
+        const freshRows = await tx.employeeFace.findMany({
+          where: { deleted_at: null, model_version: MODEL_VERSION, employee: { deleted_at: null, status: { in: ['ACTIVE', 'NOTICE'] } } },
+          select: { employee_id: true, embedding: true, model_version: true },
         });
+        const checked = decideGuidedRegistration({ analysis, gallery: buildGallery(freshRows), employeeId: employee.id, config: cfg });
+        if (checked.outcome === 'DUPLICATE_FACE') {
+          current.finish({ refused: 'DUPLICATE_FACE' });
+          await saveSession(tx, row.id, current);
+          await audit(tx, { actor: siteActor(req), ip: req.ip ?? null, action: 'face.register_refused', entity_type: 'employee', entity_id: employee.id,
+            detail: { reason: 'DUPLICATE_FACE', resembles: checked.duplicate_of, score: checked.score, authorization_id: row.face_registration_authorization_id } });
+          const refused = sessionReply(current, { outcome: 'DUPLICATE_FACE', code: 'DUPLICATE_FACE', message: messageFor('DUPLICATE_FACE') });
+          await tx.punchAttempt.create({ data: { session_id: row.id, site_id: row.site_id, purpose: row.purpose, challenge: current.state.challenge?.direction ?? null,
+            ...common, outcome: checked.outcome, code: checked.code, counts_as_try: false, tries_after: current.state.tries,
+            ...attemptNumbers({ ...checked, employee_id: checked.duplicate_of }), reply: refused } });
+          return { reply: refused, replayed: false };
+        }
+        // This is the first write to the existing templates: every failure before
+        // this point leaves them usable and the approval available for another scan.
+        if (row.face_registration_authorization_id) {
+          await tx.employeeFace.updateMany({ where: { employee_id: employee.id, deleted_at: null }, data: { deleted_at: new Date(), embedding: Buffer.alloc(0) } });
+        }
+        for (const embedding of checked.embeddings) {
+          await tx.employeeFace.create({ data: { employee_id: employee.id, embedding: embeddingToBytes(embedding), model_version: MODEL_VERSION,
+            kind: 'REGISTERED', site_id: row.site_id, live_score: checked.live_score, consent_at: new Date() } });
+        }
+        if (row.face_registration_authorization_id) {
+          await tx.faceRegistrationAuthorization.update({ where: { id: row.face_registration_authorization_id }, data: { status: 'USED', used_at: new Date(), used_site_id: row.site_id } });
+        }
+        current.finish({ registered: true });
+        await saveSession(tx, row.id, current);
+        await audit(tx, {
+          actor: siteActor(req), ip: req.ip ?? null, action: row.face_registration_authorization_id ? 'face.reregister' : 'face.register',
+          entity_type: 'employee', entity_id: employee.id,
+          detail: { site_id: row.site_id, via: 'tablet', authorization_id: row.face_registration_authorization_id,
+            pictures: 4, templates: checked.embeddings.length, turns: checked.turns, live_score: checked.live_score, live_best: checked.live_best },
+        });
+        const success = sessionReply(current, { outcome: 'REGISTERED', code: 'REGISTERED', re_registration: !!row.face_registration_authorization_id,
+          message: messageFor('REGISTERED', { name: employee.name }) });
+        // Template replacement, one-time consumption, session and idempotent reply
+        // commit together so a lost HTTP response cannot force another registration.
+        await tx.punchAttempt.create({ data: { session_id: row.id, site_id: row.site_id, purpose: row.purpose, challenge: current.state.challenge?.direction ?? null,
+          ...common, outcome: checked.outcome, code: checked.code, counts_as_try: false, tries_after: current.state.tries,
+          ...attemptNumbers({ ...checked, employee_id: employee.id }), reply: success } });
+        return { reply: success, replayed: false };
       });
-      reply = sessionReply(s, { outcome: 'REGISTERED', code: 'REGISTERED', message: messageFor('REGISTERED', { name: e.name }) });
-    } else if (d.outcome === 'DUPLICATE_FACE') {
-      s.finish({ refused: 'DUPLICATE_FACE' });
-      await saveSession(prisma, row.id, s);
-      await audit(prisma, { actor: siteActor(req), ip: req.ip ?? null, action: 'face.register_refused', entity_type: 'employee', entity_id: row.employee_id, detail: { reason: 'DUPLICATE_FACE', resembles: d.duplicate_of, score: d.score } });
-      reply = sessionReply(s, { outcome: 'DUPLICATE_FACE', code: 'DUPLICATE_FACE', message: messageFor('DUPLICATE_FACE') });
-    } else {
-      if (d.countsAsTry) s.recordTry(d.outcome);
-      else s.renewChallenge();
-      await saveSession(prisma, row.id, s);
-      reply = sessionReply(s, { outcome: d.outcome, code: d.code, message: messageFor(s.status === 'BLOCKED' ? 'BLOCKED' : d.code, { tries: s.state.tries }) });
+      invalidateFaceCache();
+      if (result.replayed) res.setHeader('Idempotent-Replay', 'true');
+      return res.json({ data: result.reply });
     }
-    await logAttempt({ ...common, outcome: d.outcome, code: d.code, counts_as_try: d.countsAsTry, tries_after: s.state.tries, ...attemptNumbers({ ...d, employee_id: d.duplicate_of ?? row.employee_id }), reply });
-    return res.json({ data: reply });
+    const result = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM punch_session WHERE id = ${row.id}::uuid FOR UPDATE`;
+      const prior = await tx.punchAttempt.findUnique({ where: { session_id_request_id: { session_id: row.id, request_id: b.request_id } } });
+      if (prior) return { reply: prior.reply, replayed: true };
+      const fresh = await tx.punchSession.findUnique({ where: { id: row.id } });
+      if (fresh.status !== 'ACTIVE') throw new AppError('SESSION_STATE', 'This scan has finished. Start again.', 409);
+      const current = sessionOf(fresh);
+      let reply;
+      if (d.outcome === 'DUPLICATE_FACE') {
+        current.finish({ refused: 'DUPLICATE_FACE' });
+        await audit(tx, { actor: siteActor(req), ip: req.ip ?? null, action: 'face.register_refused', entity_type: 'employee', entity_id: row.employee_id,
+          detail: { reason: 'DUPLICATE_FACE', resembles: d.duplicate_of, score: d.score, authorization_id: row.face_registration_authorization_id } });
+        reply = sessionReply(current, { outcome: 'DUPLICATE_FACE', code: 'DUPLICATE_FACE', message: messageFor('DUPLICATE_FACE') });
+      } else {
+        if (d.countsAsTry) current.recordTry(d.outcome);
+        else current.renewChallenge();
+        reply = sessionReply(current, { outcome: d.outcome, code: d.code,
+          message: current.status === 'BLOCKED' ? 'Registration could not be completed. Start again or ask HR for help.' : messageFor(d.code, { tries: current.state.tries }) });
+      }
+      await saveSession(tx, row.id, current);
+      await tx.punchAttempt.create({ data: { session_id: row.id, site_id: row.site_id, purpose: row.purpose, challenge: current.state.challenge?.direction ?? null,
+        ...common, outcome: d.outcome, code: d.code, counts_as_try: d.countsAsTry, tries_after: current.state.tries,
+        ...attemptNumbers({ ...d, employee_id: d.duplicate_of ?? row.employee_id }), reply } });
+      return { reply, replayed: false };
+    });
+    if (result.replayed) res.setHeader('Idempotent-Replay', 'true');
+    return res.json({ data: result.reply });
   }
 
   // ── Punching ─────────────────────────────────────────────────────────────
@@ -344,7 +443,7 @@ export const uploadFrames = asyncHandler(async (req, res) => {
       const token = randomBytes(24).toString('hex');
       s.identify({ employee_id: e.id, score: d.score, live_score: d.live_score, direction });
       // Kept server-side only: the embedding (to learn from on confirm) and the token's hash.
-      s.annotate({ token_hash: hash(token), embedding: d.embedding, request_id: b.request_id });
+      s.annotate({ token_hash: hash(token), embedding: d.embedding, request_id: b.request_id, captured_at: capturedAt });
       await saveSession(prisma, row.id, s, { employee_id: e.id });
       const st = s.state;
       reply = {
@@ -409,7 +508,12 @@ async function writePunch(tx, { row, s, siteId, direction, distance_m, deviceId 
       flag_reason: flags.join('; ') || null,
     },
   });
-  const learned = await learnFromPunch(tx, { employeeId: id.employee_id, embedding: id.embedding, score: id.score, liveScore: id.live_score, siteId });
+  // An outstanding identification can still confirm attendance after HR-authorized
+  // replacement, but must never teach the gallery the face code it just retired.
+  const latestReplacement = await tx.faceRegistrationAuthorization.findFirst({ where: { employee_id: id.employee_id, status: 'USED' }, orderBy: { used_at: 'desc' }, select: { used_at: true } });
+  const captureTime = new Date(id.captured_at ?? row.state.created_at ?? row.created_at);
+  const staleCapture = latestReplacement && latestReplacement.used_at.getTime() >= captureTime.getTime();
+  const learned = staleCapture ? { learned: false, trimmed: 0 } : await learnFromPunch(tx, { employeeId: id.employee_id, embedding: id.embedding, score: id.score, liveScore: id.live_score, siteId });
   await tx.punchAttempt.updateMany({ where: { session_id: row.id, request_id: id.request_id }, data: { resolution: 'CONFIRMED' } });
   return { punch: p, work_date, learned };
 }
@@ -543,6 +647,7 @@ export const changeSite = asyncHandler(async (req, res) => {
 export const manualRequest = asyncHandler(async (req, res) => {
   const b = punchManualSchema.parse(req.body);
   const row = await loadSession(req);
+  if (row.purpose !== 'PUNCH') throw new AppError('REGISTRATION_NOT_ATTENDANCE', 'A face registration cannot create a manual attendance request. Use Punch instead.', 409);
   if (row.face_exception_id) return res.json({ data: { exception_id: row.face_exception_id, message: messageFor('MANUAL_SENT') } });
   if (row.status !== 'BLOCKED') throw new AppError('CONFLICT', 'The ID and name form opens after the face tries run out.', 409);
   const check = await fence(req, b);

@@ -14,16 +14,21 @@ const people = [
 
 /** All records and camera frames are fictional. These tests check the site UI,
  * cancellation and request boundaries, never biometric recognition accuracy. */
-async function mockTablet(page, { loggedIn = true, guidedRegistration = false, delayedCamera = false } = {}) {
+async function mockTablet(page, { loggedIn = true, guidedRegistration = false, delayedCamera = false, deniedLocation = false } = {}) {
   const state = { loggedIn, site: SITE, reads: [], writes: [], unexpected: [], errors: [], transfers: [] };
   // Keep date and month navigation stable when this fixture runs on another day.
   await page.clock.setFixedTime(new Date(`${TODAY}T06:00:00.000Z`));
   page.on('pageerror', (error) => state.errors.push(error.message));
-  await page.addInitScript((position) => {
+  await page.addInitScript(({ position, deniedLocation }) => {
+    window.__tabletLocationCalls = 0;
     Object.defineProperty(navigator, 'geolocation', { configurable: true, value: {
-      getCurrentPosition(resolve) { resolve({ coords: { latitude: position.lat, longitude: position.lng, accuracy: position.accuracy_m } }); },
+      getCurrentPosition(resolve, reject) {
+        window.__tabletLocationCalls++;
+        if (deniedLocation) reject({ code: 1 });
+        else resolve({ coords: { latitude: position.lat, longitude: position.lng, accuracy: position.accuracy_m } });
+      },
     } });
-  }, POSITION);
+  }, { position: POSITION, deniedLocation });
   await page.route('**/src/services/face.js*', (route) => route.fulfill({
     contentType: 'application/javascript',
     body: `
@@ -131,8 +136,28 @@ test('site login opens its own Today workspace without HR or payroll requests', 
   await expect(page.locator('.recharts-line')).toHaveCount(0);
   await expect(page.getByRole('link', { name: 'Monthly payroll', exact: true })).toHaveCount(0);
   await expect(page.getByRole('link', { name: 'Employees', exact: true })).toHaveCount(0);
-  expect(state.writes).toEqual([{ path: '/auth/site-login', body: { login: 'example-site', password: 'test-password', ...POSITION } }]);
+  expect(state.writes).toEqual([{ path: '/auth/site-login', body: { login: 'example-site', password: 'test-password' } }]);
+  expect(await page.evaluate(() => window.__tabletLocationCalls)).toBe(0);
   expect(state.reads.every(({ path }) => path.startsWith('/tablet/') || path.startsWith('/auth/site-'))).toBe(true);
+  expect(state.unexpected).toEqual([]);
+  expect(state.errors).toEqual([]);
+});
+
+test('site login works without GPS permission but punching still requires location', async ({ page }) => {
+  const state = await mockTablet(page, { loggedIn: false, deniedLocation: true });
+  await page.goto('/tablet');
+  await page.getByRole('textbox', { name: 'Login ID', exact: true }).fill('EXAMPLE-SITE');
+  await page.getByLabel('Password', { exact: true }).fill('test-password');
+  await page.getByRole('button', { name: 'Sign in here', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Example site', exact: true })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Today', exact: true })).toHaveAttribute('aria-selected', 'true');
+  expect(await page.evaluate(() => window.__tabletLocationCalls)).toBe(0);
+  expect(state.writes).toEqual([{ path: '/auth/site-login', body: { login: 'example-site', password: 'test-password' } }]);
+  await page.getByRole('button', { name: 'Punch in / out', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('Location permission was refused. Allow location for this site in the browser.');
+  expect(await page.evaluate(() => window.__tabletLocationCalls)).toBe(1);
+  expect(state.writes.some(({ path }) => path.startsWith('/punches/'))).toBe(false);
+  await expect(page.getByRole('tab', { name: 'Today', exact: true })).toHaveAttribute('aria-selected', 'true');
   expect(state.unexpected).toEqual([]);
   expect(state.errors).toEqual([]);
 });

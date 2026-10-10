@@ -1,10 +1,8 @@
 import { loginSchema, siteLoginSchema } from '@ajpwer/shared';
 import { audit } from '../utils/audit.js';
 import { clearSessions, issueAdminSession, issueSiteSession, verifyPassword } from '../services/auth.service.js';
-import { env } from '../config/env.js';
 import { AppError } from '../utils/errors.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
-import { checkGeofence } from '../utils/geo.js';
 import { prisma } from '../config/db.js';
 
 // There is no lockout: wrong passwords can be retried at once. Every attempt is still recorded.
@@ -36,8 +34,8 @@ export const me = asyncHandler(async (req, res) => {
 
 /**
  * Tablet sign-in. Checks, in order, each with its own message: the login exists
- * and is enabled; the password; GPS accuracy; distance from the site centre.
- * Rejections are logged with distance and accuracy, never the password.
+ * and is enabled; the password. Site attendance can be viewed remotely.
+ * Punch and registration endpoints check location when starting and saving a scan.
  */
 export const siteLogin = asyncHandler(async (req, res) => {
   const b = siteLoginSchema.parse(req.body);
@@ -56,21 +54,9 @@ export const siteLogin = asyncHandler(async (req, res) => {
   }
   if (!(await verifyPassword(site.password_hash, b.password))) return fail('WRONG_PASSWORD', `That password is not right for ${site.name}. Forgot the password? Ask HR to reset it.`);
   await prisma.loginAttempt.create({ data: { key, ip, success: true } });
-  const fence = checkGeofence({ name: site.name, lat: Number(site.lat), lng: Number(site.lng), radius_m: site.radius_m }, { lat: b.lat, lng: b.lng, accuracy_m: b.accuracy_m }, env.GPS_MAX_ACCURACY_M, 'Sign in');
-  if (!fence.ok) {
-    await audit(prisma, {
-      actor: key,
-      ip,
-      action: 'geofence.rejected',
-      entity_type: 'site',
-      entity_id: site.id,
-      detail: { stage: 'login', check: fence.code, distance_m: fence.distance_m, accuracy_m: b.accuracy_m, radius_m: site.radius_m },
-    });
-    throw new AppError('GEOFENCE_REJECTED', fence.reason, 403, fence.code);
-  }
   const now = new Date();
   await prisma.site.update({ where: { id: site.id }, data: { last_login_at: now, last_seen_at: now } });
-  await audit(prisma, { actor: key, ip, action: 'auth.site_login', entity_type: 'site', entity_id: site.id, detail: { distance_m: fence.distance_m, accuracy_m: b.accuracy_m } });
+  await audit(prisma, { actor: key, ip, action: 'auth.site_login', entity_type: 'site', entity_id: site.id });
   issueSiteSession(res, site.id, site.token_version);
   res.json({ data: { id: site.id, code: site.code, name: site.name } });
 });

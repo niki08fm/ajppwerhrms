@@ -188,14 +188,12 @@ describe('Auth', () => {
     expect(r.body.error.code).toBe('UNAUTHENTICATED');
   });
 
-  it('site login works only inside the geofence, and the rejection is logged', async () => {
+  it('site login works remotely, while punches stay inside the geofence and rejections are logged', async () => {
     const outside = await request(app).post('/api/v1/auth/site-login').send({ login: 'site-alpha', password: 'site-pass-1', lat: 17.385, lng: 78.4867, accuracy_m: 10 });
-    expect(outside.status).toBe(403);
-    expect(outside.body.error.code).toBe('GEOFENCE_REJECTED');
-    expect(await prisma.auditLog.count({ where: { action: 'geofence.rejected' } })).toBeGreaterThan(0);
+    expect(outside.status).toBe(200);
 
     const poor = await request(app).post('/api/v1/auth/site-login').send({ login: 'site-alpha', password: 'site-pass-1', lat: 16.5062, lng: 80.648, accuracy_m: 120 });
-    expect(poor.status).toBe(403);
+    expect(poor.status).toBe(200);
 
     const tablet = request.agent(app);
     const inside = await tablet.post('/api/v1/auth/site-login').send({ login: 'site-alpha', password: 'site-pass-1', lat: 16.5063, lng: 80.6481, accuracy_m: 12 });
@@ -206,6 +204,8 @@ describe('Auth', () => {
     // A punch from outside the fence is rejected even with a valid session.
     const far = await tablet.post('/api/v1/punches/sessions').send({ lat: 17.385, lng: 78.4867, accuracy_m: 10 });
     expect(far.status).toBe(403);
+    expect(far.body.error.code).toBe('GEOFENCE_REJECTED');
+    expect(await prisma.auditLog.count({ where: { action: 'geofence.rejected' } })).toBeGreaterThan(0);
   });
 
   it('rotation invalidates existing tablet tokens', async () => {

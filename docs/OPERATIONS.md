@@ -80,7 +80,7 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 
 The face service itself is kept out of swap (`MemorySwapMax=0`): if it would need swap, it is better restarted than slow.
 
-**Health.** `curl -H "X-Face-Token: $FACE_SERVICE_TOKEN" http://127.0.0.1:8100/health`. If the service is down, tablets show "Face check is not working right now. Tell your site in-charge." Nobody can punch by face until it is back; HR can enter punches manually.
+**Health.** Run `npm run face:check` from the repository root. It reads the existing environment, calls authenticated `/health`, checks readiness and the model version, and exits non-zero on failure without printing credentials or face data. If the service is down, tablets show "Face check is not working right now. Tell your site in-charge." Nobody can punch by face until it is back; HR can enter punches manually.
 
 **After go-live: tune the thresholds.** For the first weeks, download **Approvals → Punch attempts (CSV)** weekly. Every analysed scan is there, with no images and no face codes:
 - the match score and the margin to the next person;
@@ -94,6 +94,10 @@ What to look for:
 - **Spoofing:** before go-live, try a printed photo and a phone screen at one site and check their live scores sit well below `FACE_LIVE_MIN`.
 
 **Development.** `npm run face:install` (a venv in `face/service/.venv` and the models), then `FACE_SERVICE_DEV=1` in `.env`; `npm run dev` starts the service too. Tests: `npm run test:face`.
+
+Model downloads use system TLS trust. `SSL_CERT_FILE` or `SSL_CERT_DIR` can select a trusted company CA bundle or directory; otherwise certifi roots supplement system trust. Certificate, hostname and model-checksum verification remain enabled.
+
+**Registration says the face service is unavailable.** Run `npm run face:check`. For local development, `npm run dev:face` explicitly starts the service even if `FACE_SERVICE_DEV` is unset or `0`; keep it running beside the backend and frontend. Install the environment and models with `npm run face:install`, or restore only missing models with `npm run face:models`. If health reports an authentication failure, match `FACE_SERVICE_TOKEN` in both process environments and restart both. If it reports a model mismatch, run the service and backend from the same checkout. In production, use the systemd unit above rather than the development command.
 
 ### Site maps (OpenStreetMap)
 

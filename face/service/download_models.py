@@ -85,12 +85,21 @@ def check(m) -> str | None:
     return None
 
 
+def download_tls_context() -> ssl.SSLContext:
+    """Trust system roots, respecting an explicitly configured CA file or directory."""
+    context = ssl.create_default_context()
+    # Supplement system trust for Python installs with incomplete root bundles,
+    # while preserving an operator's SSL_CERT_FILE / SSL_CERT_DIR selection.
+    if certifi is not None and not any(name in os.environ for name in ("SSL_CERT_FILE", "SSL_CERT_DIR")):
+        context.load_verify_locations(cafile=certifi.where())
+    return context
+
+
 def download(m) -> None:
     path = MODELS_DIR / m["file"]
     tmp = path.with_suffix(path.suffix + ".part")
     req = urllib.request.Request(m["url"], headers={"User-Agent": "AJPWER-Workforce model download"})
-    cafile = certifi.where() if certifi is not None else None
-    context = ssl.create_default_context(cafile=cafile) if cafile else ssl.create_default_context()
+    context = download_tls_context()
     with urllib.request.urlopen(req, timeout=120, context=context) as r, tmp.open("wb") as out:
         while chunk := r.read(1 << 20):
             out.write(chunk)

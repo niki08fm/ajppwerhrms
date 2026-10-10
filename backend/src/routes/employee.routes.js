@@ -4,6 +4,7 @@ import { frames, upload } from '../middleware/upload.js';
 import * as employeeController from '../controllers/employee.controller.js';
 import * as exitController from '../controllers/exit.controller.js';
 import * as holdController from '../controllers/hold.controller.js';
+import * as faceRegistrationController from '../controllers/face-registration.controller.js';
 
 export const employeesRouter = Router();
 
@@ -53,6 +54,9 @@ employeesRouter.post('/:id/hold/release', requirePerm('payroll.run'), holdContro
 employeesRouter.post('/:id/hold/stop', requirePerm('payroll.run'), holdController.stopHold);
 
 // ─── Face enrolment ──────────────────────────────────────────────────────────
+employeesRouter.get('/:id/face-registration', requirePerm('people.read'), faceRegistrationController.getFaceRegistration);
+employeesRouter.post('/:id/face-registration/authorize', requirePerm('people.write'), faceRegistrationController.authorizeFaceRegistration);
+employeesRouter.post('/:id/face-registration/revoke', requirePerm('people.write'), faceRegistrationController.revokeFaceRegistration);
 employeesRouter.post('/:id/face', requirePerm('people.write'), frames, employeeController.enrolFace);
 employeesRouter.delete('/:id/face', requirePerm('people.write'), employeeController.removeFace);
 

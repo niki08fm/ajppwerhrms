@@ -7,7 +7,7 @@ import { getPosition } from '@/services/location';
 import { useDebounced, useOnline } from '@/hooks';
 import { Button } from '@/components/ui/button';
 import { Field, Input } from '@/components/ui/form';
-import { Notice } from '@/components/states';
+import { Chip, Notice } from '@/components/states';
 import { TabletDashboard } from '@/components/tablet/TabletDashboard';
 
 const DEVICE_KEY = 'ajpwer.device';
@@ -41,8 +41,7 @@ function SiteLogin() {
     setBusy(true);
     setError(null);
     try {
-      const pos = await getPosition();
-      await api.post('/auth/site-login', { login: login.trim().toLowerCase(), password, ...pos });
+      await api.post('/auth/site-login', { login: login.trim().toLowerCase(), password });
       qc.invalidateQueries({ queryKey: ['site-me'] });
     } catch (err) {
       setError(errorMessage(err));
@@ -57,7 +56,7 @@ function SiteLogin() {
           <MapPin className="size-6 text-primary" />
           <h1 className="font-display text-2xl font-semibold">Site tablet</h1>
         </div>
-        <p className="text-[14px] text-muted-foreground">Sign in with the site's login ID and password. After that the tablet asks for its location: it works only inside the site's boundary.</p>
+        <p className="text-[14px] text-muted-foreground">Sign in from anywhere to view this site's attendance. Location is checked before punching or registering a face.</p>
         {error && <Notice tone="destructive">{error}</Notice>}
         <Field label="Login ID">{(id) => <Input id={id} value={login} onChange={(e) => setLogin(e.target.value)} autoCapitalize="none" className="h-11 text-base" required />}</Field>
         <Field label="Password">{(id) => <Input id={id} type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="h-11 text-base" required />}</Field>
@@ -366,7 +365,9 @@ function Station({ site }) {
     else if (d.outcome === 'DUPLICATE' || d.outcome === 'DUPLICATE_FACE') finish(d.message, 5000);
     else if (d.status === 'BLOCKED') {
       stop();
-      setStage({ k: 'blocked', text: d.message });
+      setStage(sess.purpose === 'REGISTER'
+        ? { k: 'registration-blocked', replacement: sess.reRegistration }
+        : { k: 'blocked', text: d.message });
     } else {
       stop();
       setStage({ k: 'retry', text: d.message, triesLeft: d.tries_left });
@@ -382,7 +383,7 @@ function Station({ site }) {
       if (flow.current !== currentFlow) return;
       const r = await api.post('/punches/sessions', { purpose, ...(who ?? {}), ...pos });
       if (flow.current !== currentFlow) return;
-      session.current = { id: r.data.session_id, purpose, challenge: r.data.challenge };
+      session.current = { id: r.data.session_id, purpose, who, challenge: r.data.challenge, reRegistration: r.data.re_registration === true };
       await (purpose === 'REGISTER' ? registerScan(1) : scan());
     } catch (e) {
       if (flow.current !== currentFlow) return;
@@ -535,6 +536,7 @@ function Station({ site }) {
                 ))}
               </div>
               <p className="text-[14px] text-muted-foreground">Your whole face in every picture, nothing covering it, not blurred? If not, take them again.</p>
+              {session.current?.reRegistration && <p className="text-[13px] text-muted-foreground">HR-approved re-registration. Your current face is replaced only after these photos pass the checks.</p>}
               <div className="flex w-full gap-2">
                 <Button size="lg" variant="outline" className="flex-1" onClick={() => review(false)}>
                   <RotateCcw /> Retake
@@ -599,6 +601,17 @@ function Station({ site }) {
             </div>
           )}
           {stage.k === 'blocked' && <ManualForm text={stage.text} onSend={manual} onCancel={reset} />}
+          {stage.k === 'registration-blocked' && (
+            <div className="flex w-full max-w-lg flex-col items-center gap-4 rounded-xl border bg-card p-6 text-center">
+              <UserX className="size-12 text-warning" />
+              <div className="font-display text-xl font-semibold">Registration could not be completed</div>
+              <p className="text-[14px] text-muted-foreground">{stage.replacement ? 'Your current face is unchanged. You can try again while HR permission is valid.' : 'No face was registered.'} Face the light and try again, or ask your site in-charge for help.</p>
+              <div className="flex gap-2">
+                <Button size="lg" variant="outline" onClick={reset}>Cancel</Button>
+                <Button size="lg" disabled={!online} onClick={() => begin('REGISTER', session.current?.who)}>Try registration again</Button>
+              </div>
+            </div>
+          )}
           {stage.k === 'done' && (
             <div className="flex flex-col items-center gap-3 text-center">
               <CheckCircle2 className="size-16 text-success" />
@@ -651,7 +664,7 @@ function Confirmation({ d, onConfirm, onNotMe }) {
 
 /**
  * Pick yourself from a list: type part of a name or employee ID and tap the right person.
- * `forRegister` lists only people with no face registered yet.
+ * `forRegister` includes first registrations and one-time HR-approved replacements.
  */
 function PersonPicker({ value, onChange, forRegister, inputId }) {
   const listId = useId();
@@ -662,6 +675,8 @@ function PersonPicker({ value, onChange, forRegister, inputId }) {
     queryKey: ['tablet-people', q, !!forRegister],
     queryFn: () => api.get('/tablet/employees', { q, ...(forRegister ? { for: 'register' } : {}) }).then((r) => r.data),
     enabled: q.length >= 2 && !value,
+    staleTime: forRegister ? 0 : 30_000,
+    refetchInterval: forRegister ? 15_000 : false,
   });
   if (value) {
     return (
@@ -672,6 +687,7 @@ function PersonPicker({ value, onChange, forRegister, inputId }) {
             {value.code}
             {value.designation ? ` · ${value.designation}` : ''}
           </span>
+          {forRegister && value.allow_reregistration && <Chip tone="info" className="mt-1">HR approved</Chip>}
         </span>
         <Button type="button" variant="outline" size="sm" onClick={() => { onChange(null); setText(''); }}>
           Change
@@ -713,15 +729,15 @@ function PersonPicker({ value, onChange, forRegister, inputId }) {
                 onClick={() => pick(p)}
                 className={`flex w-full items-center justify-between gap-3 px-3 py-3 text-left ${i === active ? 'bg-accent' : ''}`}
               >
-                <span className="truncate text-base font-medium">{p.name}</span>
-                <span className="shrink-0 text-[13px] text-muted-foreground">
+                <span className="min-w-0"><span className="block truncate text-base font-medium">{p.name}</span>{forRegister && p.allow_reregistration && <Chip tone="info" className="mt-1">HR approved</Chip>}</span>
+                <span className="shrink-0 text-right text-[13px] text-muted-foreground">
                   {p.code}
                   {p.designation ? ` · ${p.designation}` : ''}
                 </span>
               </button>
             </li>
           ))}
-          {!list.length && <li className="px-3 py-3 text-[14px] text-muted-foreground">{found.isFetching ? 'Searching…' : found.isError ? errorMessage(found.error) : forRegister ? 'No active employee needing registration found. Already registered? Use Punch.' : 'No one found. Check the spelling or ask HR.'}</li>}
+          {!list.length && <li className="px-3 py-3 text-[14px] text-muted-foreground">{found.isFetching ? 'Searching…' : found.isError ? errorMessage(found.error) : forRegister ? 'No active employee needing registration found. Already registered? Use Punch, or ask HR if it keeps failing.' : 'No one found. Check the spelling or ask HR.'}</li>}
         </ul>
       )}
     </div>
@@ -743,8 +759,9 @@ function RegisterForm({ onStart, onCancel }) {
   return (
     <form onSubmit={submit} className="flex w-full max-w-md flex-col gap-4 rounded-xl border bg-card p-6">
       <div className="font-display text-xl font-semibold">Register face</div>
-      <p className="text-[14px] text-muted-foreground">Active employees can register once at any site.</p>
+      <p className="text-[14px] text-muted-foreground">Register at any site. Already registered? HR can allow you to register again if punching keeps failing.</p>
       <Field label="Choose your name">{(id) => <PersonPicker inputId={id} value={who} onChange={setWho} forRegister />}</Field>
+      {who?.allow_reregistration && <Notice>HR has approved one re-registration. Your current face is replaced only after the new photos pass the checks.</Notice>}
       <div className="rounded-md bg-muted/50 px-3 py-2.5 text-[13px] text-muted-foreground">Face the light and remove anything covering your face. Follow the camera prompts; each photo is taken automatically.</div>
       <div className="flex gap-2">
         <Button variant="outline" size="lg" onClick={onCancel}>

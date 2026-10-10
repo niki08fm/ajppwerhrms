@@ -131,7 +131,7 @@ const blank = { code: '', name: '', address: '', state: 'Andhra Pradesh', projec
 
 /**
  * Add or edit a site: details, the map with its geofence, and (on add) the tablet
- * login. A changed centre or radius applies to the next sign-in and punch only.
+ * login. A changed centre or radius applies to the next punch and face registration.
  */
 export function SiteFormDialog({ site, onClose, onCreated }) {
   const editing = !!site;
@@ -167,7 +167,7 @@ export function SiteFormDialog({ site, onClose, onCreated }) {
       qc.invalidateQueries({ queryKey: ['lookups'] });
       if (editing) {
         qc.invalidateQueries({ queryKey: ['site-day', site.id] });
-        toast.success('Site saved. A new location or radius applies from the next sign-in and punch.');
+        toast.success('Site saved. A new location or radius applies from the next punch or face registration.');
       } else onCreated?.(r.data.credentials);
       onClose();
     },
@@ -265,7 +265,7 @@ export function SiteFormDialog({ site, onClose, onCreated }) {
               {errors.lat || errors.lng || errors.radius_m}
             </p>
           )}
-          {editing && <p className="text-[13px] text-muted-foreground">A new location or radius applies to the next sign-in and the next punch. Past punches keep their recorded distance.</p>}
+          {editing && <p className="text-[13px] text-muted-foreground">A new location or radius applies to the next punch and face registration. Past punches keep their recorded distance.</p>}
         </div>
       </div>
     </Dialog>

@@ -38,12 +38,16 @@ The live-face score is the average of 3 and 4. In the browser, only the Tiny Fac
 
 **Registration.** Face registration is separate from onboarding and never blocks activation. Once **ACTIVE**, employees can register at any site: **Register face** on the tablet takes their employee ID and name, then guides live captures. Registration does not create an attendance punch. Employees have no permanent site assignment; their latest punch determines current presence. Old `faceapi-v1` templates remain stored but are never matched (`buildGallery` ignores them). Registration is refused when:
 - the employee is not active,
-- the person already has a face v2 template, or
+- the person already has a face v2 template and has no usable HR re-registration authorization, or
 - the face is already registered to someone else (`FACE_DUPLICATE_MIN`).
 
 Until they register, their scans do not match, and after the tries they go through the manual request.
 
-Profile registration and re-registration are deferred. Existing templates remain intact; the old profile endpoint returns `409 FACE_REGISTRATION_AT_SITE` and never replaces a template. Historical FACE onboarding rows are retained but excluded from the current checklist.
+**HR-authorized re-registration.** On the employee's Overview → Face punch card, HR with `people.write` can allow one replacement and record a reason. The authorization expires after seven days and can be revoked before use. The employee uses the existing **Register face** button at any site; its picker includes employees with a usable authorization. A registration session is bound to that specific authorization when it starts. Expiry, revocation, failed captures or a face already belonging to another employee preserve existing templates. Successful registration atomically replaces registered and rolling templates and consumes the authorization. Retrying the completed upload returns the saved reply without replacing again or creating attendance.
+
+The card suggests review after at least four consecutive calendar work dates with HR-approved `FAILED_TRIES` exceptions linked to actual `EXCEPTION` punches. Duplicate failures on one work date count once; pending/rejected exceptions and free manual attendance entries do not count. A successful face punch or a gap breaks the sequence, and stale sequences are not flagged. This is a suggestion, not automatic permission: HR may authorize a replacement sooner.
+
+Profile cameras remain unavailable; the old profile upload endpoint returns `409 FACE_REGISTRATION_AT_SITE` and never replaces a template. Historical FACE onboarding rows are retained but excluded from the current checklist. HR authorization, cancellation and successful replacement are audited without logging embeddings.
 
 **Rolling templates.** A confirmed punch that was sure (`FACE_LEARN_MIN`) and live adds its face code as a *rolling* template. Each person keeps at most `FACE_ROLLING_MAX` rolling templates, the oldest dropped first (`rollingToDelete`). Registered templates are never dropped.
 
@@ -97,6 +101,9 @@ All under `/api/v1`. Tablet routes need the site session; punch and registration
 | `GET /tablet/transfers` · `POST /tablet/transfers` | tablet | List outgoing requests or request transfer of a person currently on site; no implicit punches. |
 | `GET /site-transfer-requests` · `POST /site-transfer-requests/:id/decide` | HR | List requests (`attendance.read`) or approve/reject (`attendance.write`); no attendance or travel-pay changes. |
 | `POST /employees/:id/face` | HR (`people.write`) | Deferred: `409 FACE_REGISTRATION_AT_SITE`; no face analysis or template changes. |
+| `GET /employees/:id/face-registration` | HR (`people.read`) | Current face status, latest authorization and repeated approved manual failure hint. |
+| `POST /employees/:id/face-registration/authorize` | HR (`people.write`) | Record a reason and allow one replacement within seven days; existing live approval is reused without extending it. |
+| `POST /employees/:id/face-registration/revoke` | HR (`people.write`) | Cancel the exact unused approval identified by `authorization_id`; existing templates remain intact. |
 | `GET /face-exceptions/:id/crops/:n` | HR (`attendance.read`) | One face crop of a manual request. |
 | `GET /site-changes` · `PATCH /site-changes/:id` | HR | The list (with `meta.unreviewed`) · set the travel minutes with a reason. |
 | `GET /punch-attempts.csv?from&to` | HR (`attendance.read` + `reports.export`) | The attempt log, for tuning thresholds. |
@@ -117,7 +124,7 @@ The backend's client is `createFaceClient` (face/src/client.js).
 3. **Transfer requests:** choose a person currently at this site, a destination, departure date and reason. HR reviews the request in Approvals. The request never creates a punch or travel pay.
 4. **Punch in / out** → camera guidance until the frame is right → "Hold still…" → three pictures → "Checking…" (with the same `request_id` when retrying a busy service) → "Is this you?" → confirm IN/OUT or **This is not me**. Transfers are absent from this screen.
 5. **Try again** with tries left; after the last, the **ID and name form** → "Sent to HR".
-6. **Register face:** select an active employee without a current template; look straight, turn left, turn right, blink, then review four photos before saving. Registration does not punch attendance.
+6. **Register face:** select an active employee without a current template or with a usable HR re-registration approval; look straight, turn left, turn right, blink, then review four photos before saving. Registration does not punch attendance. Replacement consumes the approval only after a successful save.
 7. **No network:** show the message and disable writes; cancel camera capture and return to the workspace.
 
 Messages are in `face/src/messages.js` (`messageFor`), shared by the backend and the tablet. Guidance is `face/src/guidance.js`, served through `frontend/src/services/face.js`.

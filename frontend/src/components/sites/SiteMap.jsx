@@ -172,7 +172,7 @@ export function SiteMap({ lat, lng, radius, onChange, onRadius }) {
         {centre ? `Latitude ${centre.lat.toFixed(6)}, longitude ${centre.lng.toFixed(6)}` : 'No location yet — click the map, search, paste or use your location.'}
       </p>
 
-      <Field label="Geofence radius (metres)" hint={`Between ${SITE_RADIUS_MIN_M} and ${SITE_RADIUS_MAX_M} m. Tablets sign in and punch only inside this circle.`}>
+      <Field label="Geofence radius (metres)" hint={`Between ${SITE_RADIUS_MIN_M} and ${SITE_RADIUS_MAX_M} m. Login works anywhere; punching and face registration require being inside this circle.`}>
         {(id) => (
           <div className="flex items-center gap-3">
             <input

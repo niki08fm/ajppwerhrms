@@ -118,17 +118,19 @@ describe('Create and edit a site: validation', () => {
     }
   });
 
-  it('moving the centre or changing the radius is audited and applies from the next sign-in', async () => {
+  it('moving the centre or changing the radius is audited and applies to the next punch', async () => {
     const s = await createSite({ password: 'goodpass9' });
     const r = await f.agent.patch(`/api/v1/sites/${s.id}`).send({ lat: 17.45, lng: 78.35, radius_m: 300, address: 'Plot 4, Gachibowli' });
     expect(r.status).toBe(200);
     const log = await prisma.auditLog.findFirst({ where: { action: 'site.geofence_change', entity_id: s.id } });
     expect(log.detail.radius_m).toEqual({ from: 200, to: 300 });
     expect(log.detail.lat).toEqual({ from: 17.4448, to: 17.45 });
-    // The old centre is now 620 m away: sign-in there is refused with the new radius in the message.
-    const t = await signIn(request.agent(app), 'site-a-tab', 'goodpass9', INSIDE);
-    expect(t.status).toBe(403);
-    expect(t.body.error.message).toMatch(/Sign in from inside the site \(within 300 m\)/);
+    // Remote viewing is permitted, but the old location is outside the new punch boundary.
+    const tablet = request.agent(app);
+    expect((await signIn(tablet, 'site-a-tab', 'goodpass9', INSIDE)).status).toBe(200);
+    const punch = await tablet.post('/api/v1/punches/sessions').send(INSIDE);
+    expect(punch.status).toBe(403);
+    expect(punch.body.error.message).toMatch(/Punch from inside the site \(within 300 m\)/);
   });
 });
 
@@ -242,18 +244,33 @@ describe('Tablet sign-in, check by check', () => {
     expect((await signIn(request.agent(app), 'site-a-tab', 'rightPass1')).status).toBe(200);
   });
 
-  it('poor GPS accuracy', async () => {
-    const r = await signIn(request.agent(app), 'site-a-tab', 'rightPass1', { ...INSIDE, accuracy_m: 120 });
+  it('signs in without GPS and opens only its own site workspace', async () => {
+    const tablet = request.agent(app);
+    const r = await tablet.post('/api/v1/auth/site-login').send({ login: 'site-a-tab', password: 'rightPass1' });
+    expect(r.status).toBe(200);
+    expect((await tablet.get('/api/v1/tablet/summary')).body.data.site.id).toBe(r.body.data.id);
+    expect((await tablet.get('/api/v1/employees')).status).toBe(401);
+    expect((await tablet.post('/api/v1/punches/sessions').send({ purpose: 'PUNCH' })).status).toBe(422);
+  });
+
+  it('GPS accuracy is checked for punching rather than login', async () => {
+    const tablet = request.agent(app);
+    const position = { ...INSIDE, accuracy_m: 120 };
+    expect((await signIn(tablet, 'site-a-tab', 'rightPass1', position)).status).toBe(200);
+    const r = await tablet.post('/api/v1/punches/sessions').send(position);
     expect(r.status).toBe(403);
-    expect(r.body.error.field).toBe('GPS_ACCURACY');
+    expect(r.body.error.code).toBe('GEOFENCE_REJECTED');
     expect(r.body.error.message).toContain('accurate to 120 m');
   });
 
-  it('outside the geofence: says how far, from which site, and the limit', async () => {
-    const r = await signIn(request.agent(app), 'site-a-tab', 'rightPass1', OUTSIDE);
+  it('can view remotely but an outside punch says the distance and site boundary', async () => {
+    const tablet = request.agent(app);
+    expect((await signIn(tablet, 'site-a-tab', 'rightPass1', OUTSIDE)).status).toBe(200);
+    expect((await tablet.get('/api/v1/tablet/summary')).status).toBe(200);
+    const r = await tablet.post('/api/v1/punches/sessions').send(OUTSIDE);
     expect(r.status).toBe(403);
-    expect(r.body.error.field).toBe('OUTSIDE_GEOFENCE');
-    expect(r.body.error.message).toMatch(/^You are 3\d\d m from Site A\. Sign in from inside the site \(within 200 m\)\.$/);
+    expect(r.body.error.code).toBe('GEOFENCE_REJECTED');
+    expect(r.body.error.message).toMatch(/^You are 3\d\d m from Site A\. Punch from inside the site \(within 200 m\)\.$/);
     const log = await prisma.auditLog.findFirst({ where: { action: 'geofence.rejected' }, orderBy: { at: 'desc' } });
     expect(log.detail.check).toBe('OUTSIDE_GEOFENCE');
   });

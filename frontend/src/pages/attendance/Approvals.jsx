@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Download, ImageOff, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -293,7 +293,7 @@ function Detail({ it, today, can, onDecided, onOpenDay }) {
         <Chip tone={k.tone}>{k.one}</Chip>
       </div>
       <div className="flex flex-col gap-4 px-5 py-4">
-        {it.kind === 'face' && <FaceDecision it={it} allowed={allowed} onDecided={onDecided} />}
+        {it.kind === 'face' && <FaceDecision it={it} allowed={allowed} canReadPeople={can('people.read')} onDecided={onDecided} />}
         {(it.kind === 'miss' || it.kind === 'short') && <DayDecision it={it} allowed={allowed} onDecided={onDecided} onOpenDay={onOpenDay} />}
         {it.kind === 'move' && <MoveDecision it={it} allowed={allowed} onDecided={onDecided} />}
         {it.kind === 'transfer' && <TransferDecision it={it} allowed={allowed} onDecided={onDecided} />}
@@ -328,7 +328,7 @@ function useDecide(fn, onSuccess) {
 }
 
 /** The camera could not confirm who punched. Approving writes the punch at the time of the attempt. */
-function FaceDecision({ it, allowed, onDecided }) {
+function FaceDecision({ it, allowed, canReadPeople, onDecided }) {
   const x = it.detail;
   const people = useQuery({ queryKey: ['people', 'active-fx'], queryFn: () => api.get('/employees', { 'filter[status]': 'ACTIVE,NOTICE', limit: 200 }).then((r) => r.data), staleTime: 5 * 60_000 });
   const [who, setWho] = useState(x.claimed?.id ?? x.best_match?.id ?? '');
@@ -373,6 +373,7 @@ function FaceDecision({ it, allowed, onDecided }) {
         ]}
       />
       <p className="m-0 text-[12px] text-muted-foreground">Only face data is kept for enrolled people, not photographs. Compare with the person or their ID.</p>
+      {x.exception_kind === 'FAILED_TRIES' && canReadPeople && who && <Link to={`/people/${who}?tab=face`} className="text-[13px] text-primary hover:underline">Repeated face failures? Review face registration →</Link>}
       {allowed && (
         <>
           <div className="grid gap-3 sm:grid-cols-2">

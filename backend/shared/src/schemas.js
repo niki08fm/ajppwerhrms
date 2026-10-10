@@ -35,9 +35,10 @@ export const siteLoginSchema = z
   .object({
     login: z.string().min(1),
     password: z.string().min(1),
-    lat: z.number().min(-90).max(90),
-    lng: z.number().min(-180).max(180),
-    accuracy_m: z.number().min(0),
+    // Older tablets may still send location; login itself no longer requires it.
+    lat: z.number().min(-90).max(90).optional(),
+    lng: z.number().min(-180).max(180).optional(),
+    accuracy_m: z.number().min(0).optional(),
   })
   .strict();
 
