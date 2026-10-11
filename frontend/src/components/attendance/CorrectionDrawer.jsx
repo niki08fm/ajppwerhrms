@@ -55,31 +55,46 @@ function Outcome({ value, kind }) {
   );
 }
 
-/** Legacy approval/dashboard callers retain their drawer. New screens use the same editor inline. */
-export function CorrectionDrawer({ employeeId, date: startDate, open, onOpenChange }) {
-  const [date, setDate] = useState(startDate);
-  useEffect(() => setDate(startDate), [startDate, employeeId]);
+/** The month calendar stays above the selected day's details and correction editor. */
+export function CorrectionDrawer({ employeeId, date: startDate, open, onOpenChange, readOnly = false }) {
+  const { can } = useSession();
+  const [selection, setSelection] = useState(() => ({ employeeId, startDate, date: startDate }));
+  const matches = selection.employeeId === employeeId && selection.startDate === startDate;
+  const date = matches ? selection.date : startDate;
+  useEffect(() => {
+    setSelection((current) => current.employeeId === employeeId && current.startDate === startDate ? current : { employeeId, startDate, date: startDate });
+  }, [startDate, employeeId]);
+  const pickDate = (next) => setSelection({ employeeId, startDate, date: next });
   const { data: lk } = useLookups();
   const today = lk?.today ?? istToday();
   const ym = date?.slice(0, 7);
   const month = useQuery({
     queryKey: ['emp-attendance', employeeId, ym],
     queryFn: () => api.get('/employees/' + employeeId + '/attendance', { month: ym }).then((r) => r.data),
-    enabled: open && !!employeeId && !!ym,
+    enabled: open && !!employeeId && !!ym && can('attendance.read'),
     placeholderData: keepPreviousData,
   });
+  // A previous employee or month's cached response must never appear in this drawer.
+  const data = !month.isPlaceholderData && month.data?.month === ym ? month.data : null;
+  const monthlyDay = data?.days?.find((day) => day.date === date);
   return (
     <Drawer open={open} onOpenChange={onOpenChange} title="Attendance details">
       {date && (
         <>
-          <AttendanceMonthCalendar ym={ym} data={month.data} loading={month.isLoading} date={date} today={today} onPick={setDate} />
+          {month.isError ? (
+            <ErrorState error={month.error} onRetry={() => month.refetch()} compact />
+          ) : (
+            <AttendanceMonthCalendar ym={ym} data={data} loading={month.isLoading || month.isPlaceholderData || !data} date={date} today={today} onPick={pickDate} />
+          )}
           <div className="mt-4 border-t pt-4">
             <AttendanceDayPanel
               employeeId={employeeId}
               date={date}
+              monthlyDay={monthlyDay}
+              readOnly={readOnly}
               enabled={open}
-              onPreviousDay={() => setDate(addDays(date, -1))}
-              onNextDay={date < today ? () => setDate(addDays(date, 1)) : undefined}
+              onPreviousDay={() => pickDate(addDays(date, -1))}
+              onNextDay={date < today ? () => pickDate(addDays(date, 1)) : undefined}
             />
           </div>
         </>
@@ -505,7 +520,7 @@ export function AttendanceMonthCalendar({ ym, data, loading, date, today, onPick
           <span className="text-[12px] font-semibold tracking-wide text-muted-foreground uppercase">{monthName(ym)}</span>
           {days.length > 0 && (
             <span className="text-[12px] text-muted-foreground num">
-              Paid {paid} · LOP {lop} · Late {late} min
+              Paid {paid} · LOP {lop}
             </span>
           )}
         </div>
@@ -547,6 +562,12 @@ export function AttendanceMonthCalendar({ ym, data, loading, date, today, onPick
           );
         })}
       </div>
+      {showSummary && days.length > 0 && (
+        <section aria-label="Monthly attendance totals" className="mt-3 flex items-center justify-between rounded-md bg-muted/60 px-3 py-2 text-[12px]" title="Total shortfall from the employee's required shift across this month.">
+          <span className="text-muted-foreground">Late minutes</span>
+          <b className={cn('font-semibold num', late > 0 ? 'text-warning-foreground dark:text-warning' : 'text-foreground')}>{late} min</b>
+        </section>
+      )}
     </section>
   );
 }

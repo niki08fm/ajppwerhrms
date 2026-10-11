@@ -129,32 +129,69 @@ describe('Downloadable attendance registers', () => {
     expect(sheet.getRow(3).getCell(1).value).toContain('TOTAL FINAL LOP: 1 days');
   });
 
-  it('includes every month date for every employee, and highlights missing IN and OUT with real directions', async () => {
+  it('exports employees as rows, every month date as IN/OUT/OT columns, missing highlights and final attendance totals', async () => {
+    // This fixture intentionally separates an unpaid absence from an approved
+    // paid leave day; automatic cover is tested by the earlier leave case.
+    const leavePolicy = await prisma.policy.findFirst({ where: { kind: 'LEAVE' } });
+    await prisma.policy.update({ where: { id: leavePolicy.id }, data: { rules: { ...leavePolicy.rules, types: leavePolicy.rules.types.map((type) => ({ ...type, auto_apply: false })) } } });
     await mutatePunches(async (tx) => {
       await tx.punch.deleteMany({ where: { employee_id: f.employees.A, work_date: toDbDate(`${YM}-03`), direction: 'OUT' } });
       await tx.punch.deleteMany({ where: { employee_id: f.employees.B, work_date: toDbDate(`${YM}-04`), direction: 'IN' } });
     });
+    // Effective absence must be obvious even when original physical punches are
+    // retained underneath HR's correction for audit.
+    expect((await f.agent.post('/api/v1/attendance/overrides').send({ employee_id: f.employees.C, work_date: `${YM}-05`, mode: 'MARK', status: 'ABSENT', reason_text: 'Original punches do not count for this day' })).status).toBe(201);
+    expect((await f.agent.post('/api/v1/leave/adjustments').send({ employee_id: f.employees.C, leave_type: 'SL', date: `${YM}-01`, days: 1, reason: 'Available paid sick leave' })).status).toBe(201);
+    const paid = await f.agent.post('/api/v1/leave').send({ employee_id: f.employees.C, leave_type: 'SL', from_date: `${YM}-06`, to_date: `${YM}-06`, days: 1, reason: 'Approved paid leave supersedes original punches' });
+    expect(paid.status).toBe(201);
+    expect((await f.agent.post(`/api/v1/leave/${paid.body.data.id}/decide`).send({ decision: 'APPROVE' })).status).toBe(200);
     const response = await download('monthly', { ym: YM, report: 'detailed', format: 'xlsx' });
     const book = await workbook(response);
-    const sheet = book.getWorksheet('Daily details');
-    const dates = [];
-    const missing = [];
-    sheet.eachRow((row, rowNo) => {
-      if (rowNo > 6 && /^\d\d Aug 2026$/.test(String(row.getCell(1).value))) dates.push(row);
-      if (rowNo > 6 && String(row.getCell(7).value).includes('Missing punch')) missing.push(row);
-    });
-    expect(dates).toHaveLength(31 * 3);
-    expect(missing).toHaveLength(2);
-    expect(missing[0].getCell(4).value).toBe('09:00');
-    expect(missing[0].getCell(5).value).toBe('');
-    expect(missing[1].getCell(4).value).toBe('');
-    expect(missing[1].getCell(5).value).toBe('17:30');
-    expect(missing[0].getCell(1).fill.fgColor.argb).toBe('FFF3D7');
-    expect(sheet.getRow(6).getCell(10).value).toBe('Late minutes');
-    const totals = [];
-    sheet.eachRow((row) => { if (row.getCell(1).value === 'MONTH TOTAL') totals.push(row); });
-    expect(totals).toHaveLength(3);
-    expect(totals[0].getCell(9).value).toBe(0.5);
+    const sheet = book.getWorksheet('Monthly register');
+    expect(book.worksheets).toHaveLength(1);
+    expect(sheet.views[0]).toMatchObject({ state: 'frozen', xSplit: 3, ySplit: 7 });
+    expect(sheet.columnCount).toBe(3 + 31 * 3 + 9);
+    expect(sheet.rowCount).toBe(7 + 3 + 1);
+    expect([8, 9, 10].map((i) => sheet.getRow(i).getCell(1).value)).toEqual(['T001', 'T002', 'T003']);
+    for (let day = 1; day <= 31; day++) {
+      const start = 4 + (day - 1) * 3;
+      expect(sheet.getRow(6).getCell(start).value).toContain(`${String(day).padStart(2, '0')} Aug 2026`);
+      expect([0, 1, 2].map((offset) => sheet.getRow(7).getCell(start + offset).value)).toEqual(['IN', 'OUT', 'OT hours']);
+      for (const row of [8, 9, 10]) {
+        expect(sheet.getRow(row).getCell(start).value).not.toBeNull();
+        expect(sheet.getRow(row).getCell(start + 2).value === '' || typeof sheet.getRow(row).getCell(start + 2).value === 'number').toBe(true);
+      }
+    }
+    const a = sheet.getRow(8), b = sheet.getRow(9);
+    expect(a.getCell(10).value).toBe('09:00');
+    expect(a.getCell(11).value).toBe('Missing');
+    expect(a.getCell(11).fill.fgColor.argb).toBe('FFF3D7');
+    expect(a.getCell(11).note).toContain('Missing punch-out');
+    expect(a.getCell(10).fill.fgColor.argb).not.toBe('FFF3D7');
+    expect(b.getCell(13).value).toBe('Missing');
+    expect(b.getCell(13).fill.fgColor.argb).toBe('FFF3D7');
+    expect(b.getCell(14).value).toBe('17:30');
+    const c = sheet.getRow(10);
+    expect(c.getCell(16).value).toBe('Absent');
+    expect(c.getCell(17).value).toBe('');
+    expect(c.getCell(18).value).toBe('');
+    expect(c.getCell(16).fill.fgColor.argb).toBe('FCECEE');
+    expect(c.getCell(16).note).toContain('Recorded IN: 09:00');
+    expect(c.getCell(19).value).toBe('On leave');
+    expect(c.getCell(20).value).toBe('');
+    expect(c.getCell(21).value).toBe('');
+    expect(c.getCell(19).fill.fgColor.argb).toBe('E5F5FC');
+    expect(c.getCell(19).note).toContain('SL paid leave');
+    const totalCol = (label) => sheet.getRow(7).values.findIndex((value) => value === label);
+    expect(sheet.getRow(7).getCell(sheet.columnCount).value).toBe('Late minutes');
+    expect(a.getCell(totalCol('Final paid days')).value).toBe(30.5);
+    expect(a.getCell(totalCol('Final LOP')).value).toBe(0.5);
+    expect(a.getCell(totalCol('Working days')).value).toBe(25);
+    expect(c.getCell(totalCol('Paid leave applied')).value).toBe(1);
+    expect(c.getCell(totalCol('Final paid days')).value).toBe(30);
+    expect(c.getCell(totalCol('Final LOP')).value).toBe(1);
+    expect(sheet.getRow(11).getCell(2).value).toBe('TOTAL');
+    expect(sheet.getRow(11).getCell(totalCol('Final LOP')).value).toBe(2);
   });
 
   it('keeps future and non-employed dates clear instead of reporting them as absences', async () => {
@@ -166,6 +203,13 @@ describe('Downloadable attendance registers', () => {
     expect(person.details[10]).toMatchObject({ status: 'Future', in: '', out: '', lop: null, late_minutes: null });
     expect(person.summary.days).toBe(6);
     expect(person.summary.lop_days).toBe(0);
+    const book = new ExcelJS.Workbook();
+    await book.xlsx.load(await renderAttendanceReport(report, 'xlsx'));
+    const row = book.getWorksheet('Monthly register').getRow(8);
+    expect(row.getCell(4).value).toBe('Not joined');
+    expect(row.getCell(34).value).toBe('Future'); // Day 11, IN/status column.
+    expect(row.getCell(35).value).toBe('');
+    expect(row.getCell(36).value).toBe('');
   });
 
   it('exports a daily register with overnight times, missing-punch highlights and day-only totals', async () => {
@@ -195,7 +239,7 @@ describe('Downloadable attendance registers', () => {
   it('produces real PDF pages with repeated headers and footers without extra blank pages', async () => {
     for (const [path, query, expectedPages] of [
       ['monthly', { ym: YM, report: 'summary', format: 'pdf' }, 1],
-      ['monthly', { ym: YM, report: 'detailed', format: 'pdf' }, 3],
+      ['monthly', { ym: YM, report: 'detailed', format: 'pdf' }, 6], // Five date groups, then all employee month totals.
       ['daily', { date: `${YM}-03`, format: 'pdf' }, 1],
     ]) {
       const response = await download(path, query);

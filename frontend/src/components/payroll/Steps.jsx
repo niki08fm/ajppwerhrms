@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, Lock, LockOpen, PauseCircle, Play, Plus, RotateCcw, Undo2, Users, Wallet } from 'lucide-react';
 import { toast } from 'sonner';
-import { DAY_STATUS_LABELS, LAST_REVIEW_STEP } from '@ajpwer/shared';
+import { DAY_STATUS_LABELS, firstOfMonth, istDate, LAST_REVIEW_STEP, lastOfMonth } from '@ajpwer/shared';
 import { api, ApiError, errorMessage } from '@/services/api';
 import { useLookups } from '@/hooks/useLookups';
 import { useSession } from '@/context/SessionContext';
@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
 import { Field, Input, MoneyInput, Segmented, Select } from '@/components/ui/form';
 import { Checkbox, Dialog, Drawer } from '@/components/ui/overlay';
-import { EmployeeAttendanceWorkspace } from '../attendance/EmployeeAttendanceWorkspace';
+import { CorrectionDrawer } from '../attendance/CorrectionDrawer';
 import { SettlementPanel } from '../../pages/people/SettlementStatement';
 import { heldMonthStatus, HoldDialog, ReleaseDialog } from './HoldDialogs';
 import { Reports } from './Reports';
@@ -94,6 +94,9 @@ export function StepFooter({ period, n, ym, onNext, label, blocked, blockedNote,
 export function StepAttendance({ ym, period, onNext }) {
   const { can } = useSession();
   const canViewAttendance = can('attendance.read');
+  const { data: lk } = useLookups();
+  const today = lk?.today ?? istDate(new Date());
+  const defaultDate = ym === today.slice(0, 7) ? today : ym < today.slice(0, 7) ? lastOfMonth(ym) : firstOfMonth(ym);
   const q = useQuery({
     queryKey: ['payroll-attendance', ym],
     queryFn: () => api.get(`/payroll/periods/${ym}/attendance`).then((r) => r.data),
@@ -112,7 +115,7 @@ export function StepAttendance({ ym, period, onNext }) {
           aria-label={`View attendance for ${r.employee.name}`}
           disabled={!canViewAttendance}
           className="flex flex-col items-start text-left enabled:hover:text-primary"
-          onClick={(ev) => { ev.stopPropagation(); setOpen({ id: r.employee.id }); }}
+          onClick={(ev) => { ev.stopPropagation(); setOpen({ id: r.employee.id, date: defaultDate }); }}
         >
           <span className="font-medium">{r.employee.name}</span>
           <span className="font-mono text-[12px] text-muted-foreground">{r.employee.code}</span>
@@ -157,7 +160,7 @@ export function StepAttendance({ ym, period, onNext }) {
         </div>
       )}
       <Card>
-        <CardHeader title={`Attendance — ${monthLabel(ym)}`} description={canViewAttendance ? 'Select an employee or a flagged day to view and correct attendance below. Submitting freezes attendance until this step is reopened.' : 'Attendance details require attendance access. Payroll totals are shown below.'} />
+        <CardHeader title={`Attendance — ${monthLabel(ym)}`} description={canViewAttendance ? 'Select an employee or a flagged day to view and correct attendance in the side panel. Submitting freezes attendance until this step is reopened.' : 'Attendance details require attendance access. Payroll totals are shown below.'} />
         {q.isLoading ? (
           <SkeletonRows rows={10} cols={10} />
         ) : q.isError ? (
@@ -187,21 +190,21 @@ export function StepAttendance({ ym, period, onNext }) {
               columns={cols}
               rows={rows}
               rowId={(r) => r.employee.id}
-              onRowClick={canViewAttendance ? (r) => setOpen({ id: r.employee.id }) : undefined}
+              onRowClick={canViewAttendance ? (r) => setOpen({ id: r.employee.id, date: defaultDate }) : undefined}
               rowClassName={(r) => open?.id === r.employee.id ? 'ring-1 ring-inset ring-primary/40' : undefined}
-              maxHeight={open && canViewAttendance ? '36vh' : '60vh'}
+              maxHeight="60vh"
             />
           </>
         )}
       </Card>
-      {open && canViewAttendance && (
-        <EmployeeAttendanceWorkspace
+      {open && canViewAttendance && open.date.slice(0, 7) === ym && (
+        <CorrectionDrawer
           key={`${ym}:${open.id}`}
           employeeId={open.id}
-          month={ym}
-          initialDay={open.date}
+          date={open.date}
+          open
           readOnly={frozen}
-          onClose={() => setOpen(null)}
+          onOpenChange={(value) => !value && setOpen(null)}
         />
       )}
       <StepFooter period={period} n={1} ym={ym} onNext={onNext} label="Submit attendance" note="Missing punch-outs pay half a day; short days pay nothing. Correct them above before submitting." />

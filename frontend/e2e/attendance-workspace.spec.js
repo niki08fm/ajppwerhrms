@@ -11,7 +11,11 @@ const employees = [
   { id: EMPLOYEE_A, code: 'AJTEST01', name: 'Example Anil', department, pay_group_id: group.id },
   { id: EMPLOYEE_B, code: 'AJTEST02', name: 'Example Bhavana', department, pay_group_id: group.id },
 ];
-const dates = Array.from({ length: 31 }, (_, index) => `${MONTH}-${String(index + 1).padStart(2, '0')}`);
+const monthDates = (ym) => {
+  const [year, month] = ym.split('-').map(Number);
+  return Array.from({ length: new Date(Date.UTC(year, month, 0)).getUTCDate() }, (_, index) => `${ym}-${String(index + 1).padStart(2, '0')}`);
+};
+const dates = monthDates(MONTH);
 
 function initialDay(date, employeeId) {
   const first = employeeId === EMPLOYEE_A;
@@ -30,7 +34,7 @@ function initialDay(date, employeeId) {
   };
 }
 
-async function mockAttendance(page, { readOnly = false, frozen = false, noExport = false, noAttendance = false, delayedDay = null, delayedMonthEmployee = null, staleFrozen = false } = {}) {
+async function mockAttendance(page, { readOnly = false, frozen = false, frozenPayroll = false, noExport = false, noAttendance = false, delayedDay = null, delayedMonthEmployee = null, delayedMonth = null, staleFrozen = false } = {}) {
   await page.addInitScript(() => localStorage.setItem('theme', 'light'));
   const state = { writes: [], previews: [], reads: [], downloads: [], unexpected: [], errors: [], overrides: new Map() };
   const day = (employeeId, date) => {
@@ -38,8 +42,8 @@ async function mockAttendance(page, { readOnly = false, frozen = false, noExport
     const override = state.overrides.get(`${employeeId}:${date}`);
     return override ? { ...original, ...override, overridden: true } : original;
   };
-  const summary = (employeeId) => {
-    const days = dates.filter((date) => date <= TODAY).map((date) => day(employeeId, date));
+  const summary = (employeeId, ym = MONTH) => {
+    const days = monthDates(ym).filter((date) => date <= TODAY).map((date) => day(employeeId, date));
     const paid = days.reduce((total, item) => total + item.day_value, 0);
     const shortfall = days.reduce((total, item) => total + item.shift_shortfall_min, 0);
     return {
@@ -53,10 +57,10 @@ async function mockAttendance(page, { readOnly = false, frozen = false, noExport
       off_days: 0, off_days_worked: 0, corrected: days.filter((item) => item.overridden).length,
     };
   };
-  const month = (employeeId) => ({
-    month: MONTH, ym: MONTH, today: TODAY, employee: employees.find((item) => item.id === employeeId),
-    days: dates.map((date) => day(employeeId, date)), sites: [site],
-    attendance_summary: summary(employeeId), totals: summary(employeeId), frozen: { frozen, reason: frozen ? 'Attendance is frozen by submitted payroll.' : null },
+  const month = (employeeId, ym = MONTH) => ({
+    month: ym, ym, today: TODAY, employee: employees.find((item) => item.id === employeeId),
+    days: monthDates(ym).map((date) => day(employeeId, date)), sites: [site],
+    attendance_summary: summary(employeeId, ym), totals: summary(employeeId, ym), frozen: { frozen, reason: frozen ? 'Attendance is frozen by submitted payroll.' : null },
   });
   const dayResponse = (employeeId, date) => {
     const effective = day(employeeId, date), original = initialDay(date, employeeId);
@@ -102,8 +106,9 @@ async function mockAttendance(page, { readOnly = false, frozen = false, noExport
       data = dayResponse(employeeId, date);
     } else if (/^\/employees\/[^/]+\/attendance$/.test(path)) {
       const employeeId = path.split('/')[2];
-      if (employeeId === delayedMonthEmployee) await new Promise((resolve) => setTimeout(resolve, 1200));
-      data = month(employeeId);
+      const ym = url.searchParams.get('month') ?? MONTH;
+      if (employeeId === delayedMonthEmployee || ym === delayedMonth) await new Promise((resolve) => setTimeout(resolve, 1200));
+      data = month(employeeId, ym);
     }
     else if (/^\/employees\/[^/]+$/.test(path)) {
       const employee = employees.find((item) => item.id === path.split('/')[2]);
@@ -112,7 +117,7 @@ async function mockAttendance(page, { readOnly = false, frozen = false, noExport
     else if (path.endsWith('/hold')) data = { current: null, history: [], open_months: [] };
     else if (path === '/advances-loans') data = { rows: [] };
     else if (path === '/payroll/periods') { data = [{ ym: MONTH, state: 'DRAFT' }]; meta = { suggested: MONTH }; }
-    else if (path === `/payroll/periods/${MONTH}`) data = { ym: MONTH, state: 'DRAFT', steps_submitted: frozen ? [1] : [], step_log: [] };
+    else if (path === `/payroll/periods/${MONTH}`) data = { ym: MONTH, state: 'DRAFT', steps_submitted: frozen || frozenPayroll ? [1] : [], step_log: [] };
     else if (path === `/payroll/periods/${MONTH}/attendance`) data = { rows: employees.map((employee) => ({ employee, ...summary(employee.id), attendance_summary: summary(employee.id), in_run: true, partial: false, overridden_days: summary(employee.id).corrected })), shortlist: [{ employee: employees[0], date: '2026-10-09', status: 'MISSING_PUNCH', worked_min: 0 }] };
     else if (path === '/attendance/overrides/preview' && method === 'POST') {
       state.previews.push(body);
@@ -151,6 +156,8 @@ async function mockAttendance(page, { readOnly = false, frozen = false, noExport
 const calendar = (page) => page.getByRole('region', { name: 'Month attendance calendar' });
 const selectedDay = (page) => page.getByRole('region', { name: 'Selected day attendance' });
 const correction = (page) => page.getByRole('region', { name: 'Correct attendance', exact: true });
+const attendanceDrawer = (page) => page.getByRole('dialog', { name: 'Attendance details', exact: true });
+const drawerMonthTotals = (page) => attendanceDrawer(page).getByRole('region', { name: 'Monthly attendance totals', exact: true });
 const dayButton = (page, dayNumber) => calendar(page).getByRole('button', { name: new RegExp(`, ${dayNumber} October 2026:`) });
 const clean = (state) => { expect(state.errors).toEqual([]); expect(state.unexpected).toEqual([]); };
 
@@ -174,34 +181,52 @@ test('profile calendar shows month totals and corrects the selected day without 
   clean(state);
 });
 
-test('daily register opens inline details first and changing employees clears an unsaved correction', async ({ page }) => {
+test('daily register opens the calendar above day details in a drawer and a new employee starts a clean correction', async ({ page }) => {
   const state = await mockAttendance(page);
   await page.goto(`/attendance?date=${TODAY}`);
   await page.getByRole('button', { name: /Example Anil/ }).first().click();
+  await expect(attendanceDrawer(page)).toBeVisible();
   await expect(calendar(page)).toBeVisible();
   await expect(selectedDay(page)).toContainText('Sunday, 11 October 2026');
+  await expect(drawerMonthTotals(page)).toContainText('35 min');
+  expect(await calendar(page).evaluate((element) => !!(element.compareDocumentPosition(document.querySelector('[aria-label="Selected day attendance"]')) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
   await correction(page).getByLabel('Correction reason').fill('Draft for Anil only');
+  await attendanceDrawer(page).getByRole('button', { name: 'Close', exact: true }).click();
   await page.getByRole('button', { name: /Example Bhavana/ }).first().click();
   await expect(correction(page).getByLabel('Correction reason')).toHaveValue('');
-  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(attendanceDrawer(page)).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`/attendance\\?date=${TODAY}$`));
   expect(state.writes).toEqual([]);
   clean(state);
 });
 
-test('switching employees never mixes the previous month calendar with the new employee day details', async ({ page }) => {
+test('reopening the drawer for another employee never displays the previous employee month or day details', async ({ page }) => {
   const state = await mockAttendance(page, { delayedMonthEmployee: EMPLOYEE_B });
   await page.goto('/attendance?date=2026-10-07');
   await page.getByRole('button', { name: 'Open attendance for Example Anil', exact: true }).click();
   await expect(calendar(page)).toBeVisible();
   await expect(selectedDay(page)).toContainText('8h 40m');
+  await attendanceDrawer(page).getByRole('button', { name: 'Close', exact: true }).click();
   await page.getByRole('button', { name: 'Open attendance for Example Bhavana', exact: true }).click();
   await expect(selectedDay(page)).toContainText('Example Bhavana');
   // Her day request finishes before her month. It must not inherit Anil's 8h40m day.
   expect(await selectedDay(page).innerText()).toContain('9h');
   expect(await selectedDay(page).innerText()).not.toContain('8h 40m');
   await expect(calendar(page)).toBeVisible();
-  await expect(page.locator('[aria-label="Monthly attendance totals"]')).toContainText('0 min');
+  await expect(drawerMonthTotals(page)).toContainText('0 min');
+  clean(state);
+});
+
+test('crossing a month in the drawer hides stale calendar cells and shows the selected month late-minute total', async ({ page }) => {
+  const state = await mockAttendance(page, { delayedMonth: '2026-09' });
+  await page.goto('/attendance?date=2026-10-01');
+  await page.getByRole('button', { name: 'Open attendance for Example Anil', exact: true }).click();
+  await expect(drawerMonthTotals(page)).toContainText('35 min');
+  await attendanceDrawer(page).getByRole('button', { name: 'Previous day', exact: true }).click();
+  await expect(selectedDay(page)).toContainText('Wednesday, 30 September 2026');
+  expect(await calendar(page).getByRole('button', { name: /October 2026/ }).count()).toBe(0);
+  await expect(calendar(page).getByRole('button', { name: /30 September 2026/ })).toBeVisible();
+  await expect(drawerMonthTotals(page)).toContainText('0 min');
   clean(state);
 });
 
@@ -234,7 +259,7 @@ test('a server rejection after payroll submission keeps the correction draft vis
   clean(state);
 });
 
-test('monthly register selects a missing punch-out in place and shows shortfall minutes rather than late days', async ({ page }) => {
+test('monthly register opens a selected day in a drawer with total late minutes below its calendar', async ({ page }) => {
   const state = await mockAttendance(page);
   await page.goto(`/attendance?tab=month&ym=${MONTH}`);
   const row = page.getByRole('row').filter({ has: page.getByRole('button', { name: /Example Anil/ }) });
@@ -243,15 +268,25 @@ test('monthly register selects a missing punch-out in place and shows shortfall 
   await row.getByRole('button', { name: /9 October 2026.*No out/ }).click();
   await expect(selectedDay(page)).toContainText('No punch-out');
   await expect(correction(page)).toBeVisible();
-  await expect(page.getByRole('dialog')).toHaveCount(0);
-  await page.screenshot({ path: '/tmp/attendance-month-inline.png', fullPage: true });
+  await expect(attendanceDrawer(page)).toBeVisible();
+  await expect(drawerMonthTotals(page)).toContainText('35 min');
+  const finalCalendarCellBox = await calendar(page).getByRole('button').last().boundingBox(), totalsBox = await drawerMonthTotals(page).boundingBox();
+  expect(totalsBox.y).toBeGreaterThanOrEqual(finalCalendarCellBox.y + finalCalendarCellBox.height);
+  await page.screenshot({ path: '/tmp/attendance-month-drawer.png', fullPage: true });
+  await dayButton(page, 7).click();
+  await correction(page).getByRole('radio', { name: 'Full day', exact: true }).click();
+  await correction(page).getByLabel('Correction reason').fill('Completed shift confirmed');
+  await correction(page).getByRole('button', { name: 'Save correction', exact: true }).click();
+  await expect(drawerMonthTotals(page)).toContainText('15 min');
+  expect(state.writes[0].body).toMatchObject({ employee_id: EMPLOYEE_A, work_date: '2026-10-07', mode: 'MARK', status: 'PRESENT' });
   clean(state);
 });
 
-test('payroll attendance opens the employee month and corrects a shortlisted day inside the payroll step', async ({ page }) => {
+test('payroll attendance opens the employee month and corrects a shortlisted day in its attendance drawer', async ({ page }) => {
   const state = await mockAttendance(page);
   await page.goto(`/payroll/${MONTH}?step=1`);
   await page.getByRole('button', { name: /Example Anil.*10-09/ }).click();
+  await expect(attendanceDrawer(page)).toBeVisible();
   await expect(calendar(page)).toBeVisible();
   await expect(selectedDay(page)).toContainText('Friday, 9 October 2026');
   await correction(page).getByRole('radio', { name: 'In and out times', exact: true }).click();
@@ -262,7 +297,21 @@ test('payroll attendance opens the employee month and corrects a shortlisted day
   await expect.poll(() => state.writes.length).toBe(1);
   expect(state.writes[0].body).toMatchObject({ employee_id: EMPLOYEE_A, work_date: '2026-10-09', mode: 'TIMES', in_min: 540, out_min: 1080 });
   await expect(page).toHaveURL(new RegExp(`/payroll/${MONTH}\\?step=1$`));
-  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(attendanceDrawer(page)).toBeVisible();
+  await expect(drawerMonthTotals(page)).toContainText('35 min');
+  clean(state);
+});
+
+test('submitted payroll keeps its attendance drawer read-only even if day metadata has not caught up', async ({ page }) => {
+  const state = await mockAttendance(page, { frozenPayroll: true });
+  await page.goto(`/payroll/${MONTH}?step=1`);
+  await page.getByRole('button', { name: 'View attendance for Example Anil', exact: true }).click();
+  await expect(attendanceDrawer(page)).toBeVisible();
+  await expect(calendar(page)).toBeVisible();
+  await expect(selectedDay(page)).toContainText('Example Anil');
+  await expect(attendanceDrawer(page).getByRole('button', { name: 'Save correction', exact: true })).toHaveCount(0);
+  await expect(attendanceDrawer(page).getByLabel('Correction reason')).toHaveCount(0);
+  expect(state.writes).toEqual([]);
   clean(state);
 });
 

@@ -8,6 +8,7 @@ import { attendanceSummary } from './attendance-summary.service.js';
 import { inView, liveFigures, minutesNow } from './dayview.service.js';
 import { monthRows } from './monthgrid.service.js';
 import { dayRegister } from './register.service.js';
+import { matrixDayCells, renderAttendanceMatrixPDF } from './attendance-matrix-pdf.service.js';
 
 const C = { ink: '092733', teal: '148B80', green: '21A86F', cyan: '25B7C7', pale: 'E8F5F2', line: 'D7E5E9', muted: '607784', red: 'BE383E', redBg: 'FCECEE', amber: '986318', amberBg: 'FFF3D7', grey: 'F3F7F9', white: 'FFFFFF' };
 const OUT = ['NOT_JOINED', 'EXITED'];
@@ -150,11 +151,10 @@ const SUMMARY_COLUMNS = [
   { label: 'Final LOP', width: 14, pdf: 46, key: 'lop_days', number: true, tone: 'lop' }, { label: 'Missing punches', width: 16, pdf: 48, key: 'missing_punch', number: true, tone: 'missing' },
   { label: 'OT hours', width: 14, pdf: 46, key: 'ot_hours', number: true }, { label: 'Late minutes', width: 16, pdf: 47, key: 'late_minutes', number: true },
 ];
-const DETAIL_COLUMNS = [
-  { label: 'Date', width: 16, pdf: 82, key: 'date' }, { label: 'Day', width: 8, pdf: 28, key: 'weekday' }, { label: 'Status', width: 20, pdf: 100, key: 'status' },
-  { label: 'IN', width: 16, pdf: 64, key: 'in' }, { label: 'OUT', width: 16, pdf: 64, key: 'out' }, { label: 'Worked', width: 14, pdf: 54, key: 'worked' },
-  { label: 'Notes', width: 52, pdf: 165, key: 'notes' }, { label: 'OT hours', width: 13, pdf: 45, key: 'ot_hours', number: true },
-  { label: 'Final LOP', width: 13, pdf: 45, key: 'lop', number: true, tone: 'lop' }, { label: 'Late minutes', width: 15, pdf: 50, key: 'late_minutes', number: true },
+const MATRIX_TOTAL_COLUMNS = [
+  ...SUMMARY_COLUMNS.filter((c) => ['working_days', 'present_days', 'absent_days', 'paid_leave_days', 'auto_leave_days'].includes(c.key)),
+  { label: 'Final paid days', width: 15, key: 'paid_days', number: true },
+  ...SUMMARY_COLUMNS.filter((c) => ['lop_days', 'ot_hours', 'late_minutes'].includes(c.key)),
 ];
 const DAILY_COLUMNS = [
   { label: 'Code', width: 12, pdf: 43, key: 'code' }, { label: 'Employee', width: 26, pdf: 103, key: 'name' }, { label: 'Department', width: 20, pdf: 70, key: 'department' },
@@ -172,7 +172,7 @@ function detailRow(day) {
 const reportNote = 'Late minutes = required shift hours not completed; arrival delay is separate. Absent days include applied and automatic leave before paid cover. Final LOP uses effective leave and off-day rules.';
 
 export async function renderAttendanceReport(report, format) {
-  return format === 'pdf' ? pdfReport(report) : xlsxReport(report);
+  return format === 'pdf' ? report.kind === 'detailed' ? renderAttendanceMatrixPDF(report) : pdfReport(report) : xlsxReport(report);
 }
 
 function fill(colour) { return { type: 'pattern', pattern: 'solid', fgColor: { argb: colour } }; }
@@ -228,7 +228,9 @@ async function xlsxReport(report) {
   book.creator = 'AJPWER Workforce';
   book.subject = `${report.title} | ${report.label}`;
   book.created = new Date();
-  if (report.kind === 'daily') {
+  if (report.kind === 'detailed') {
+    matrixSheet(book, report);
+  } else if (report.kind === 'daily') {
     const sheet = initSheet(book, 'Daily register', report, DAILY_COLUMNS);
     // Use day figures, not the employee's month totals, on a daily register.
     report.rows.forEach((r, i) => writeData(sheet, i + 7, DAILY_COLUMNS, { ...summaryRow(r), ...detailRow(r.details[0]) }));
@@ -239,20 +241,84 @@ async function xlsxReport(report) {
     const aggregate = { name: 'TOTAL', ot_hours: asHours(report.ot_min) };
     for (const c of SUMMARY_COLUMNS.filter((c) => c.number && c.key !== 'ot_hours')) aggregate[c.key] = total(report.rows, c.key);
     writeData(summary, report.rows.length + 7, SUMMARY_COLUMNS, aggregate, { totals: true });
-    if (report.kind === 'detailed') {
-      const details = initSheet(book, 'Daily details', report, DETAIL_COLUMNS);
-      details.autoFilter = undefined;
-      let row = 7;
-      for (const person of report.rows) {
-        titleRow(details, row++, `${person.employee.name} | ${person.employee.code} | ${person.employee.department?.name ?? ''} | Final LOP: ${person.summary.lop_days} days`, DETAIL_COLUMNS.length, C.teal, 12);
-        details.getRow(row - 1).eachCell((cell) => { cell.fill = fill(C.pale); cell.font.bold = true; });
-        for (const day of person.details) writeData(details, row++, DETAIL_COLUMNS, detailRow(day));
-        writeData(details, row++, DETAIL_COLUMNS, { date: 'MONTH TOTAL', status: `Present ${person.summary.present_days}d; absent ${person.summary.absent_days}d`, notes: `Working ${person.summary.working_days}d; paid leave ${person.summary.paid_leave_days}d; automatic ${person.summary.auto_leave_days}d; unpaid leave ${person.summary.unpaid_leave_days}d`, ot_hours: asHours(person.summary.ot_min), lop: person.summary.lop_days, late_minutes: person.summary.late_minutes }, { totals: true });
-        row++;
-      }
-    }
   }
   return Buffer.from(await book.xlsx.writeBuffer());
+}
+
+/** A single employee row, with three time/OT columns beneath every month date. */
+function matrixSheet(book, report) {
+  const dates = monthDates(report.period);
+  const identities = SUMMARY_COLUMNS.slice(0, 3);
+  const columns = [...identities, ...dates.flatMap(() => [{ label: 'IN', width: 12 }, { label: 'OUT', width: 12 }, { label: 'OT hours', width: 9, number: true }]), ...MATRIX_TOTAL_COLUMNS];
+  const sheet = initSheet(book, 'Monthly register', report, columns);
+  sheet.views = [{ state: 'frozen', xSplit: 3, ySplit: 7, topLeftCell: 'D8' }];
+  sheet.pageSetup.printTitlesRow = '1:7';
+  sheet.pageSetup.printTitlesColumn = 'A:C';
+  sheet.pageSetup.fitToPage = false;
+  sheet.pageSetup.fitToWidth = 0;
+  sheet.autoFilter = undefined;
+  sheet.getRow(6).values = [];
+  sheet.getRow(6).height = 27;
+  sheet.getRow(7).height = 35;
+  const header = (cell, value, background = C.teal) => {
+    cell.value = value;
+    cell.fill = fill(background);
+    cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: C.white } };
+    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    cell.border = { right: { style: 'thin', color: { argb: C.line } } };
+  };
+  identities.forEach((c, i) => { sheet.mergeCells(6, i + 1, 7, i + 1); header(sheet.getCell(6, i + 1), c.label); });
+  dates.forEach((date, i) => {
+    const start = 4 + i * 3;
+    const background = i % 2 ? C.teal : '126A75';
+    sheet.mergeCells(6, start, 6, start + 2);
+    header(sheet.getCell(6, start), `${dateLabel(date)} | ${weekday(date)}`, background);
+    ['IN', 'OUT', 'OT hours'].forEach((label, offset) => header(sheet.getCell(7, start + offset), label, background));
+  });
+  const totalsStart = 4 + dates.length * 3;
+  sheet.mergeCells(6, totalsStart, 6, columns.length);
+  header(sheet.getCell(6, totalsStart), 'MONTHLY ATTENDANCE TOTALS', '13754E');
+  MATRIX_TOTAL_COLUMNS.forEach((c, i) => header(sheet.getCell(7, totalsStart + i), c.label, '13754E'));
+  const colours = { working: 'EFF9F3', absent: C.redBg, leave: 'E5F5FC', off: C.grey, neutral: C.white, missing: C.amberBg };
+  for (const [i, person] of report.rows.entries()) {
+    const rowNo = i + 8;
+    const data = summaryRow(person);
+    writeData(sheet, rowNo, columns, data);
+    const byDate = new Map(person.details.map((d) => [d.date, d]));
+    for (const [dateIndex, date] of dates.entries()) {
+      const day = byDate.get(date) ?? { status: 'Future', status_key: 'FUTURE' };
+      const cells = matrixDayCells(day);
+      cells.forEach((entry, offset) => {
+        const cell = sheet.getCell(rowNo, 4 + dateIndex * 3 + offset);
+        cell.value = entry.value;
+        cell.fill = fill(colours[entry.tone] ?? C.white);
+        cell.font = { name: 'Calibri', size: 10, bold: entry.tone === 'missing' || entry.tone === 'absent', color: { argb: entry.tone === 'missing' ? C.amber : entry.tone === 'absent' ? C.red : C.ink } };
+        cell.alignment = { horizontal: offset === 2 ? 'right' : 'center', vertical: 'middle', wrapText: true };
+        cell.border = { bottom: { style: 'hair', color: { argb: C.line } }, ...(offset === 2 ? { right: { style: 'thin', color: { argb: C.line } } } : {}) };
+        if (offset === 2) cell.numFmt = '0.##';
+        if (entry.comment) cell.note = entry.comment;
+      });
+    }
+    MATRIX_TOTAL_COLUMNS.forEach((c, offset) => {
+      const cell = sheet.getCell(rowNo, totalsStart + offset);
+      cell.value = data[c.key] ?? 0;
+      cell.fill = fill(c.key === 'lop_days' && Number(data[c.key]) > 0 ? C.redBg : C.pale);
+      cell.font = { name: 'Calibri', size: 11, bold: true, color: { argb: c.key === 'lop_days' && Number(data[c.key]) > 0 ? C.red : C.teal } };
+      cell.numFmt = '0.##';
+      cell.alignment = { horizontal: 'right', vertical: 'middle' };
+    });
+    sheet.getRow(rowNo).height = Math.max(sheet.getRow(rowNo).height, 34);
+  }
+  const rowNo = report.rows.length + 8;
+  const aggregate = { name: 'TOTAL', ot_hours: asHours(report.ot_min) };
+  for (const c of MATRIX_TOTAL_COLUMNS.filter((c) => c.key !== 'ot_hours')) aggregate[c.key] = total(report.rows, c.key);
+  writeData(sheet, rowNo, columns, aggregate, { totals: true });
+  dates.forEach((date, index) => {
+    const values = report.rows.map((r) => r.details.find((d) => d.date === date)?.ot_min).filter((v) => v !== null && v !== undefined);
+    const cell = sheet.getCell(rowNo, 6 + index * 3);
+    cell.value = values.length ? asHours(values.reduce((n, min) => n + min, 0)) : '';
+    cell.numFmt = '0.##';
+  });
 }
 
 function pdfReport(report) {
@@ -317,31 +383,6 @@ function pdfReport(report) {
       if (report.kind === 'summary') for (const c of SUMMARY_COLUMNS.filter((c) => c.number && c.key !== 'ot_hours')) aggregate[c.key] = total(report.rows, c.key);
       if (y + 28 > page.bottom) { doc.addPage(); y = drawHeader(cols, head('continued')); }
       y = drawRow(cols, y, aggregate, 0, { totals: true, minHeight: 26 });
-    } else {
-      const cols = columnsFor(DETAIL_COLUMNS);
-      const personHead = (person, continued = false) => {
-        const top = head(continued ? 'continued' : '');
-        doc.font('Helvetica-Bold').fontSize(11).fillColor(`#${C.ink}`).text(`${person.employee.name} | ${person.employee.code}`, page.left, top, { width: 460, lineBreak: false });
-        doc.font('Helvetica').fontSize(9).fillColor(`#${C.muted}`).text(`${person.employee.department?.name ?? ''} | Employee final LOP ${person.summary.lop_days} days`, page.right - 305, top + 2, { width: 305, align: 'right', lineBreak: false });
-        return drawHeader(cols, top + 20);
-      };
-      for (const [employeeIndex, person] of report.rows.entries()) {
-        if (employeeIndex) doc.addPage();
-        y = personHead(person);
-        for (const [i, day] of person.details.entries()) {
-          const data = detailRow(day);
-          doc.font('Helvetica').fontSize(7.5);
-          const h = Math.max(12, ...cols.map((c) => doc.heightOfString(String(data[c.key] ?? ''), { width: c.span - 10 }) + 3));
-          if (y + h > page.bottom - 28) { doc.addPage(); y = personHead(person, true); }
-          y = drawRow(cols, y, data, i, { minHeight: 12, fontSize: 7.5, padding: 1.5 });
-        }
-        const totals = { date: 'MONTH TOTAL', status: `Present ${person.summary.present_days}d; absent ${person.summary.absent_days}d`, notes: `Working ${person.summary.working_days}d; paid leave ${person.summary.paid_leave_days}d; auto ${person.summary.auto_leave_days}d; unpaid ${person.summary.unpaid_leave_days}d`, ot_hours: asHours(person.summary.ot_min), lop: person.summary.lop_days, late_minutes: person.summary.late_minutes };
-        doc.font('Helvetica-Bold').fontSize(7.5);
-        const totalHeight = Math.max(26, ...cols.map((c) => doc.heightOfString(String(totals[c.key] ?? ''), { width: c.span - 10 }) + 6));
-        if (y + totalHeight > page.bottom) { doc.addPage(); y = personHead(person, true); }
-        y = drawRow(cols, y, totals, 0, { totals: true, minHeight: 26, fontSize: 7.5, padding: 3 });
-      }
-      if (!report.rows.length) doc.font('Helvetica').fontSize(11).fillColor(`#${C.muted}`).text('No employees match the selected period and filters.', page.left, y);
     }
     const pages = doc.bufferedPageRange();
     for (let i = pages.start; i < pages.start + pages.count; i++) {

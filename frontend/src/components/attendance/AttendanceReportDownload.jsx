@@ -63,7 +63,7 @@ export function AttendanceReportDownload({ period, monthly = false, filters = {}
               onChange={setReport}
               options={[
                 { value: 'summary', label: 'Monthly summary', description: 'Working, present and absent days, paid leave, final LOP, overtime and late minutes for each employee.', disabled: busy },
-                { value: 'detailed', label: 'Daily details for all employees', description: 'Every day of the month, with punch-in, punch-out, status and overtime. Missing punches are highlighted.', disabled: busy },
+                { value: 'detailed', label: 'Daily details for all employees', description: 'Employee rows and date columns, with IN, OUT and OT under each day and final attendance totals at the end. Missing punches are highlighted.', disabled: busy },
               ]}
             />
           )}

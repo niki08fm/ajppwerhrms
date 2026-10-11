@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
@@ -12,7 +12,7 @@ import { EmptyState, ErrorState, LockedNotice, SkeletonRows } from '@/components
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input, Select } from '@/components/ui/form';
-import { EmployeeAttendanceWorkspace } from './EmployeeAttendanceWorkspace';
+import { CorrectionDrawer } from './CorrectionDrawer';
 import { AttendanceReportDownload } from './AttendanceReportDownload';
 import { DeptAvatar } from './DeptAvatar';
 import { NumberPager } from './NumberPager';
@@ -71,8 +71,6 @@ export function MonthRegister() {
     setSp(next, { replace: true });
   };
   const [open, setOpen] = useState(null);
-  const detailsRef = useRef(null);
-  useEffect(() => { if (open) detailsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, [open]);
   useEffect(() => setOpen(null), [ym]);
 
   const month = useQuery({ queryKey: ['attendance-month', ym], queryFn: () => api.get('/attendance/month', { ym }).then((r) => r.data), placeholderData: keepPreviousData });
@@ -93,7 +91,7 @@ export function MonthRegister() {
     <div>
       <PageHeader
         title="Attendance"
-        description={`${monthName(ym)}. Select a person or day to review details and correct attendance below.`}
+        description={`${monthName(ym)}. Select a person or day to review details and correct attendance.`}
         meta={
           <div className="flex items-center gap-1.5">
             <Button variant="outline" size="icon" onClick={() => set({ ym: addMonths(ym, -1) })} aria-label="Previous month">
@@ -155,19 +153,19 @@ export function MonthRegister() {
             <b className="text-foreground num">{rows.length}</b> people
           </span>
           <span>
-            Present days <b className="text-foreground num">{sum('present_days')}</b>
+            Absent days <b className="text-destructive num">{sum('absent')}</b>
           </span>
           <span>
-            Absent days <b className="text-destructive num">{sum('absent_days')}</b>
+            No punch-out <b className="text-foreground num">{sum('missing_punch')}</b>
           </span>
           <span>
-            Final LOP <b className="text-destructive num">{sum('lop_days')}</b>
+            Late minutes <b className="text-foreground num">{sum('late_minutes')} min</b>
           </span>
           <span>
             Overtime <b className="text-foreground num">{mins(sum('ot_min'))}</b>
           </span>
           <span>
-            Late minutes <b className="text-foreground num">{sum('late_minutes')} min</b>
+            Corrected by HR <b className="text-foreground num">{sum('corrected')}</b>
           </span>
         </div>
       )}
@@ -196,8 +194,8 @@ export function MonthRegister() {
                         </th>
                       );
                     })}
-                    {['Working', 'Present', 'Absent', 'Paid leave', 'Paid', 'LOP', 'OT', 'Late minutes'].map((h) => (
-                      <th key={h} title={h === 'Paid leave' ? 'Applied and automatic paid leave' : undefined} className="sticky top-0 z-10 min-w-[48px] bg-card px-1 text-center text-[11px] font-semibold text-muted-foreground">
+                    {['Paid', 'LOP', 'OT', 'Late minutes'].map((h) => (
+                      <th key={h} className="sticky top-0 z-10 min-w-[48px] bg-card px-1 text-center text-[11px] font-semibold text-muted-foreground">
                         {h}
                       </th>
                     ))}
@@ -236,10 +234,6 @@ export function MonthRegister() {
                           </td>
                         );
                       })}
-                      <td className="text-center num">{totalsOf(r).working_days ?? '—'}</td>
-                      <td className="text-center num">{totalsOf(r).present_days ?? '—'}</td>
-                      <td className={cn('text-center num', totalsOf(r).absent_days ? 'text-destructive' : 'text-muted-foreground/60')}>{totalsOf(r).absent_days || '—'}</td>
-                      <td className="text-center num" title="Applied and automatic paid leave">{((totalsOf(r).paid_leave_days ?? 0) + (totalsOf(r).auto_leave_days ?? 0)) || '—'}</td>
                       <td className="text-center font-semibold num">{totalsOf(r).paid_days ?? r.totals.paid}</td>
                       <td className={cn('text-center num', totalsOf(r).lop_days ? 'text-destructive' : 'text-muted-foreground/60')}>{totalsOf(r).lop_days || '—'}</td>
                       <td className={cn('text-center num', totalsOf(r).ot_min ? '' : 'text-muted-foreground/60')}>{totalsOf(r).ot_min ? mins(totalsOf(r).ot_min) : '—'}</td>
@@ -255,9 +249,7 @@ export function MonthRegister() {
       </Card>
 
       {open && (
-        <section ref={detailsRef} aria-label="Employee attendance details" className="mt-5 scroll-mt-24">
-          <EmployeeAttendanceWorkspace employeeId={open.id} month={ym} initialDay={open.date} readOnly={!can('attendance.write')} onClose={() => setOpen(null)} />
-        </section>
+        <CorrectionDrawer employeeId={open.id} date={open.date} open readOnly={!can('attendance.write')} onOpenChange={(value) => { if (!value) setOpen(null); }} />
       )}
     </div>
   );

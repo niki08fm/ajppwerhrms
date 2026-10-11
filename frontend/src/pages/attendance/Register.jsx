@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Eye, Wrench } from 'lucide-react';
@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Field, Input, Segmented } from '@/components/ui/form';
 import { Dialog } from '@/components/ui/overlay';
-import { EmployeeAttendanceWorkspace } from '@/components/attendance/EmployeeAttendanceWorkspace';
+import { CorrectionDrawer } from '@/components/attendance/CorrectionDrawer';
 import { AttendanceReportDownload } from '@/components/attendance/AttendanceReportDownload';
 import { DayPicker } from '@/components/attendance/DayPicker';
 import { TONE, deptColour, fullDate, viewsFor } from '@/components/attendance/dayVocab';
@@ -55,8 +55,6 @@ function DailyRegister() {
   const [open, setOpen] = useState(null);
   const [selected, setSelected] = useState(new Set());
   const [bulk, setBulk] = useState(false);
-  const detailsRef = useRef(null);
-  useEffect(() => { if (open) detailsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, [open]);
   useEffect(() => { setOpen(null); setSelected(new Set()); }, [date]);
   const siteName = (id) => lk?.sites.find((s) => s.id === id)?.name ?? id;
   const dept = (id) => lk?.departments.find((x) => x.id === id);
@@ -143,7 +141,7 @@ function DailyRegister() {
     <div>
       <PageHeader
         title="Attendance"
-        description={`${fullDate(date)}. Select a person to review their month and correct a day here.`}
+        description={`${fullDate(date)}. Select a person to review their month and correct a day.`}
         meta={
           <div className="flex flex-wrap items-center gap-1.5">
             <Button variant="outline" size="icon" onClick={() => setDate(addDays(date, -1))} aria-label="Previous day">
@@ -253,9 +251,7 @@ function DailyRegister() {
         />
       </Card>
       {open && (
-        <section ref={detailsRef} aria-label="Employee attendance details" className="mt-5 scroll-mt-24">
-          <EmployeeAttendanceWorkspace employeeId={open.id} month={date.slice(0, 7)} initialDay={open.date} readOnly={!canCorrect} onClose={() => setOpen(null)} />
-        </section>
+        <CorrectionDrawer employeeId={open.id} date={open.date} open readOnly={!canCorrect} onOpenChange={(value) => { if (!value) setOpen(null); }} />
       )}
       {bulk && <BulkCorrect ids={[...selected]} date={date} onClose={() => setBulk(false)} onDone={() => setSelected(new Set())} />}
     </div>
