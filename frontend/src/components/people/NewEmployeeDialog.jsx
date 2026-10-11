@@ -61,6 +61,7 @@ export function NewEmployeeDialog({ open, onOpenChange }) {
     onSuccess: (r) => {
       toast.success(`Added as ${r.data.code}`);
       qc.invalidateQueries({ queryKey: ['people'] });
+      qc.invalidateQueries({ queryKey: ['departments'] });
       onOpenChange(false);
       nav(`/people/${r.data.id}?tab=onboarding`);
     },

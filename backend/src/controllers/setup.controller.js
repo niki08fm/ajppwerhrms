@@ -3,7 +3,6 @@ import { Prisma } from '@prisma/client';
 import {
   addDays,
   CALENDAR_METHODS,
-  departmentSchema,
   holidaySchema,
   istDate,
   parsePolicyRules,
@@ -19,6 +18,7 @@ import {
   SEED_TAX_REGIMES,
   STATUTORY_MINIMUM_RATES,
   structureCreateSchema,
+  uuid,
   ymOf,
 } from '@ajpwer/shared';
 import { calendarDivisor, salaryPreview, findOverlaps, validateStructure, workingDaysInMonth } from '../calculations/index.js';
@@ -29,6 +29,7 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { prisma } from '../config/db.js';
 import { holidaysBetween, ptSlabs, ratesOn, regimesOn, toAttachedPolicy, toComponentDefs } from '../services/rules.service.js';
 import { randomUUID } from 'node:crypto';
+import { addDepartment, changeDepartment, listDepartmentSettings, removeDepartment } from '../services/department.service.js';
 
 const today = () => istDate(new Date());
 
@@ -581,19 +582,21 @@ export const deleteHoliday = asyncHandler(async (req, res) => {
 });
 
 export const listDepartments = asyncHandler(async (_req, res) => {
-  const rows = await prisma.department.findMany({
-    where: { deleted_at: null },
-    orderBy: { name: 'asc' },
-    include: { _count: { select: { employees: { where: { deleted_at: null, status: { in: ['ACTIVE', 'NOTICE'] } } } } } },
-  });
-  res.json({ data: rows.map((d) => ({ id: d.id, name: d.name, colour: d.colour, headcount: d._count.employees })) });
+  res.json({ data: await listDepartmentSettings(prisma) });
 });
 
 export const createDepartment = asyncHandler(async (req, res) => {
-  const b = departmentSchema.parse(req.body);
-  const d = await prisma.department.create({ data: b });
-  await auditReq(req, { action: 'department.create', entity_type: 'department', entity_id: d.id, detail: b });
+  const d = await addDepartment(prisma, req.body, who(req));
   res.status(201).json({ data: d });
+});
+
+export const updateDepartment = asyncHandler(async (req, res) => {
+  const d = await changeDepartment(prisma, uuid.parse(req.params.id), req.body, who(req));
+  res.json({ data: d });
+});
+
+export const deleteDepartment = asyncHandler(async (req, res) => {
+  res.json({ data: await removeDepartment(prisma, uuid.parse(req.params.id), who(req)) });
 });
 
 export const getCompany = asyncHandler(async (_req, res) => {

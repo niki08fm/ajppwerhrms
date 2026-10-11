@@ -14,15 +14,15 @@ import { axis, CHART, grid, tooltipStyle } from '@/components/charts';
 import { Chip, EmptyState, ErrorState, SkeletonBlock } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
-import { Input } from '@/components/ui/form';
-import { Dialog } from '@/components/ui/overlay';
+import { Input, Segmented } from '@/components/ui/form';
+import { Dialog, TabsContent, TabsList, TabsRoot } from '@/components/ui/overlay';
 import { PasswordOnceDialog, ResetPasswordDialog, SiteFormDialog } from '@/components/sites/SiteForm';
 import SiteWageInsights from '@/components/sites/SiteWageInsights';
 import SiteLiveSummary from '@/components/sites/SiteLiveSummary';
 
 const shortDay = (date) => new Date(`${date}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' });
 const departmentKey = (department) => department.id ?? 'unassigned';
-const departmentColour = (department, index) => department.colour ? `var(--${department.colour})` : CHART[index % CHART.length];
+const departmentColour = (department, index) => /^#(?:[\da-f]{3}|[\da-f]{4}|[\da-f]{6}|[\da-f]{8})$/i.test(department.colour ?? '') ? department.colour : /^chart-[1-5]$/.test(department.colour) ? `var(--${department.colour})` : CHART[index % CHART.length];
 const monthRange = (month, today) => ({ from: firstOfMonth(month), to: month === today.slice(0, 7) ? today : lastOfMonth(month) });
 
 /** Daily bars stay readable for longer periods by grouping weeks or months. */
@@ -54,13 +54,14 @@ export default function SiteDetail() {
   const [custom, setCustom] = useState(range);
   const [rangeError, setRangeError] = useState('');
   const [attendanceMetric, setAttendanceMetric] = useState('people');
+  const [mainView, setMainView] = useState('overview');
+  const [currentView, setCurrentView] = useState('people');
   const [department, setDepartment] = useState(null);
   const [peopleSearch, setPeopleSearch] = useState('');
-  const [peopleOpen, setPeopleOpen] = useState(false);
-  const peopleSection = useRef(null);
   const lastLoaded = useRef(null);
   const { can } = useSession();
   const wageAccess = can('payroll.read');
+  const view = mainView === 'wages' && !wageAccess ? 'overview' : mainView;
   const q = useQuery({
     queryKey: ['site-day', id, 'insights', range.from, range.to, wageAccess],
     queryFn: () => api.get(`/sites/${id}/insights`, range).then((r) => r.data),
@@ -87,8 +88,9 @@ export default function SiteDetail() {
   };
   const openPeople = (nextDepartment = department) => {
     setDepartment(nextDepartment);
-    setPeopleOpen(true);
-    requestAnimationFrame(() => peopleSection.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    setPeopleSearch('');
+    setCurrentView('people');
+    setMainView('overview');
   };
   if (q.data && !q.isPlaceholderData) lastLoaded.current = { id, wageAccess, data: q.data };
   const d = q.data ?? (lastLoaded.current?.id === id && lastLoaded.current?.wageAccess === wageAccess ? lastLoaded.current.data : null);
@@ -99,6 +101,29 @@ export default function SiteDetail() {
   const people = d.on_site_now.filter((person) => (department === null || (person.department_id ?? 'unassigned') === department) && [person.name, person.code, person.department, person.designation].some((value) => String(value ?? '').toLowerCase().includes(peopleSearch.trim().toLowerCase())));
   const attendance = attendanceBars(d.attendance);
   const overtime = attendanceMetric === 'overtime';
+  const periodControls = (
+    <Card className="px-5 py-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div><h2 className="font-display text-[18px] font-semibold">{view === 'wages' ? 'Wages period' : 'Attendance period'}</h2><p className="mt-0.5 text-[13px] text-muted-foreground">{periodLabel}{q.isPlaceholderData && <span className="ml-2 font-medium text-primary">Updating selected period…</span>}{q.isError && <span className="ml-2 font-medium">Showing the last loaded period</span>}</p></div>
+        <div className="flex items-center gap-1">
+          <Button variant="outline" size="icon" aria-label="Previous month" onClick={() => selectMonth(addMonths(range.from.slice(0, 7), -1))}><ChevronLeft /></Button>
+          <Input type="month" value={range.from.slice(0, 7)} max={today.slice(0, 7)} aria-label={view === 'wages' ? 'Wages month' : 'Attendance month'} onChange={(event) => selectMonth(event.target.value)} className="w-40" />
+          <Button variant="outline" size="icon" aria-label="Next month" disabled={range.from.slice(0, 7) >= today.slice(0, 7)} onClick={() => selectMonth(addMonths(range.from.slice(0, 7), 1))}><ChevronRight /></Button>
+        </div>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {[['this-month', 'This month'], ['last-month', 'Last month'], ['last-seven', 'Last 7 days'], ['custom', 'Custom']].map(([key, label]) => <Button key={key} size="sm" variant={preset === key ? 'secondary' : 'ghost'} aria-pressed={preset === key} onClick={() => key === 'custom' ? (setPreset('custom'), setCustom(range), setRangeError('')) : selectRange(key === 'last-seven' ? { from: addDays(today, -6), to: today } : monthRange(key === 'last-month' ? addMonths(today.slice(0, 7), -1) : today.slice(0, 7), today), key)}>{label}</Button>)}
+      </div>
+      {preset === 'custom' && <div className="mt-3 border-t pt-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="flex flex-col gap-1 text-[12px] text-muted-foreground">From<Input type="date" aria-label="Period from" value={custom.from} max={today} className="w-40" onChange={(event) => { setCustom({ ...custom, from: event.target.value }); setRangeError(''); }} /></label>
+          <label className="flex flex-col gap-1 text-[12px] text-muted-foreground">To<Input type="date" aria-label="Period to" value={custom.to} max={today} className="w-40" onChange={(event) => { setCustom({ ...custom, to: event.target.value }); setRangeError(''); }} /></label>
+          <Button size="sm" onClick={applyCustom}>Apply period</Button>
+        </div>
+        {rangeError && <p className="mt-2 text-[13px] text-destructive" role="alert">{rangeError}</p>}
+      </div>}
+    </Card>
+  );
   return (
     <div className="flex flex-col gap-5">
       <PageHeader
@@ -116,91 +141,71 @@ export default function SiteDetail() {
       />
       {editing && <SiteFormDialog site={d.site} onClose={() => setEditing(false)} />}
 
-      <SiteLiveSummary today={d.today} date={d.date} fetching={q.isFetching} failed={q.isError} updatedAt={q.dataUpdatedAt} onViewPeople={() => openPeople(null)} />
-
-      <Card className="px-5 py-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div><h2 className="font-display text-[18px] font-semibold">{wageAccess ? 'Attendance and wages' : 'Attendance period'}</h2><p className="mt-0.5 text-[13px] text-muted-foreground">{periodLabel}{q.isPlaceholderData && <span className="ml-2 font-medium text-primary">Updating selected period…</span>}{q.isError && <span className="ml-2 font-medium">Showing the last loaded period</span>}</p></div>
-          <div className="flex items-center gap-1">
-            <Button variant="outline" size="icon" aria-label="Previous month" onClick={() => selectMonth(addMonths(range.from.slice(0, 7), -1))}><ChevronLeft /></Button>
-            <Input type="month" value={range.from.slice(0, 7)} max={today.slice(0, 7)} aria-label="Attendance month" onChange={(event) => selectMonth(event.target.value)} className="w-40" />
-            <Button variant="outline" size="icon" aria-label="Next month" disabled={range.from.slice(0, 7) >= today.slice(0, 7)} onClick={() => selectMonth(addMonths(range.from.slice(0, 7), 1))}><ChevronRight /></Button>
-          </div>
-        </div>
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {[['this-month', 'This month'], ['last-month', 'Last month'], ['last-seven', 'Last 7 days'], ['custom', 'Custom']].map(([key, label]) => <Button key={key} size="sm" variant={preset === key ? 'secondary' : 'ghost'} aria-pressed={preset === key} onClick={() => key === 'custom' ? (setPreset('custom'), setCustom(range), setRangeError('')) : selectRange(key === 'last-seven' ? { from: addDays(today, -6), to: today } : monthRange(key === 'last-month' ? addMonths(today.slice(0, 7), -1) : today.slice(0, 7), today), key)}>{label}</Button>)}
-        </div>
-        {preset === 'custom' && <div className="mt-3 border-t pt-3">
-          <div className="flex flex-wrap items-end gap-3">
-            <label className="flex flex-col gap-1 text-[12px] text-muted-foreground">From<Input type="date" aria-label="Period from" value={custom.from} max={today} className="w-40" onChange={(event) => { setCustom({ ...custom, from: event.target.value }); setRangeError(''); }} /></label>
-            <label className="flex flex-col gap-1 text-[12px] text-muted-foreground">To<Input type="date" aria-label="Period to" value={custom.to} max={today} className="w-40" onChange={(event) => { setCustom({ ...custom, to: event.target.value }); setRangeError(''); }} /></label>
-            <Button size="sm" onClick={applyCustom}>Apply period</Button>
-          </div>
-          {rangeError && <p className="mt-2 text-[13px] text-destructive" role="alert">{rangeError}</p>}
-        </div>}
-      </Card>
-
-      {q.isError && <Card><ErrorState error={q.error} compact onRetry={() => q.refetch()} /></Card>}
-
-      <div className="grid items-stretch gap-4 lg:grid-cols-[1.4fr_1fr]">
-        <Card className="flex min-w-0 flex-col">
-          <CardHeader title={overtime ? 'Overtime worked' : 'Attendance'} description={periodLabel} actions={<div className="flex rounded-md bg-muted p-0.5"><Button size="sm" variant={overtime ? 'ghost' : 'outline'} aria-pressed={!overtime} onClick={() => setAttendanceMetric('people')}>People</Button><Button size="sm" variant={overtime ? 'outline' : 'ghost'} aria-pressed={overtime} onClick={() => setAttendanceMetric('overtime')}>OT hours</Button></div>} />
-          <div className="flex flex-1 flex-col px-4 py-5">
-            <div className="mb-4 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[13px] text-muted-foreground">
-              {overtime ? <span><span className="num text-[22px] font-semibold text-foreground">{mins(d.period.ot_min)}</span> overtime in this period</span> : <><span><span className="num text-[22px] font-semibold text-foreground">{d.period.people}</span> people</span><span><span className="num font-medium text-foreground">{d.period.person_days}</span> attendance days</span></>}
+      <TabsRoot value={view} onValueChange={setMainView} className="space-y-4">
+        <TabsList tabs={[{ value: 'overview', label: 'Overview' }, { value: 'attendance', label: 'Attendance' }, ...(wageAccess ? [{ value: 'wages', label: 'Wages' }] : [])]} />
+        {q.isError && <Card><ErrorState error={q.error} compact onRetry={() => q.refetch()} /></Card>}
+        <TabsContent value="overview" className="space-y-4" aria-label="Overview">
+          <SiteLiveSummary today={d.today} date={d.date} fetching={q.isFetching} failed={q.isError} updatedAt={q.dataUpdatedAt} onViewPeople={() => openPeople(null)} />
+          <Card className="min-w-0 overflow-hidden" role="region" aria-label="Current people and departments">
+            <CardHeader
+              title={currentView === 'people' ? 'People on site now' : 'Departments on site'}
+              description={currentView === 'people' ? 'Current headcount and punch-in times.' : 'Current headcount. Select a department to see people.'}
+              actions={<Segmented label="Current site view" value={currentView} onChange={setCurrentView} options={[{ value: 'people', label: 'People' }, { value: 'departments', label: 'Departments' }]} />}
+            />
+            {currentView === 'people' ? <>
+              <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+                <div className="flex items-center gap-2 text-[13px] text-muted-foreground"><span>{people.length} people{selectedDepartment ? ` · ${selectedDepartment.name}` : ''}</span>{department !== null && <Button size="sm" variant="ghost" onClick={() => setDepartment(null)}>All departments</Button>}</div>
+                <div className="relative w-full sm:w-72"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input aria-label="Search people on site" value={peopleSearch} onChange={(event) => setPeopleSearch(event.target.value)} placeholder="Search name, code or department" className="pl-9" /></div>
+              </div>
+              {people.length ? <ul className="grid max-h-72 overflow-y-auto sm:grid-cols-2" aria-label="People on site">
+                {people.map((person) => <li key={person.id} className="flex min-w-0 items-center justify-between gap-3 border-t px-5 py-3 text-[14px]"><div className="min-w-0"><PersonLink id={person.id} name={person.name} code={person.code} /><p className="mt-0.5 truncate text-[12px] text-muted-foreground">{[person.department || 'No department', person.designation].filter(Boolean).join(' · ')}</p></div><span className="shrink-0 text-[12px] text-muted-foreground">In <span className="num text-foreground">{istTime(person.since)}</span></span></li>)}
+              </ul> : <p className="border-t px-5 py-8 text-center text-[13px] text-muted-foreground">{d.on_site_now.length ? 'No people match these filters.' : 'No one is currently punched in at this site.'}</p>}
+            </> : d.departments.some((item) => item.count > 0) ? <div className="grid items-center gap-4 px-5 py-4 md:grid-cols-[minmax(220px,0.8fr)_minmax(0,1.2fr)]">
+              <div className="relative mx-auto h-60 w-full max-w-[300px]" role="img" aria-label={`Department headcount: ${d.today.on_site_now} people on site now`}>
+                <ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={d.departments} dataKey="count" nameKey="name" innerRadius={72} outerRadius={98} paddingAngle={d.departments.length > 1 ? 2 : 0} stroke="var(--card)" isAnimationActive={false} onClick={(item) => openPeople(departmentKey(item))}>
+                  {d.departments.map((item, index) => <Cell key={departmentKey(item)} fill={departmentColour(item, index)} opacity={department === null || department === departmentKey(item) ? 1 : 0.35} className="cursor-pointer" />)}
+                </Pie><Tooltip {...tooltipStyle} formatter={(value) => [value, 'People on site']} /></PieChart></ResponsiveContainer>
+                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center"><span className="num text-3xl font-semibold">{d.today.on_site_now}</span><span className="mt-1 text-[12px] text-muted-foreground">on site now</span></div>
+              </div>
+              <ul className="max-h-60 space-y-1 overflow-y-auto text-[13px]">
+                {d.departments.map((item, index) => <li key={departmentKey(item)}><button type="button" aria-label={`${item.name}: ${item.count} people on site`} aria-pressed={department === departmentKey(item)} onClick={() => openPeople(departmentKey(item))} className={cn('flex w-full items-center gap-2 rounded-md px-2 py-2 text-left transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring', department === departmentKey(item) && 'bg-accent')}><span className="size-2.5 shrink-0 rounded-sm" style={{ background: departmentColour(item, index) }} /><span className="min-w-0 flex-1 break-words">{item.name}</span><span className="num font-semibold">{item.count}</span></button></li>)}
+              </ul>
+            </div> : <EmptyState icon={<Users className="size-6" />} title="No one on site now" body="Department headcounts appear when people punch in." />}
+          </Card>
+          <details className="rounded-lg border bg-card text-card-foreground shadow-sm">
+            <summary className="flex cursor-pointer list-none items-center gap-2 px-5 py-4 text-[14px] font-medium focus-visible:outline-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden"><Settings2 className="size-4 text-muted-foreground" /> Site settings <ChevronDown className="ml-auto size-4 text-muted-foreground" /></summary>
+            <div className="border-t p-4"><TabletLogin site={d.site} manage={can('sites.manage')} /><p className="mt-3 text-[12px] text-muted-foreground">Punch boundary: {d.site.radius_m} m from <span className="num">{d.site.lat.toFixed(6)}, {d.site.lng.toFixed(6)}</span>. Login is available from any location; attendance punches require the site boundary.</p></div>
+          </details>
+        </TabsContent>
+        <TabsContent value="attendance" className="space-y-4" aria-label="Attendance">
+          {periodControls}
+          <Card className="min-w-0">
+            <CardHeader title={overtime ? 'Overtime worked' : 'Attendance'} description={periodLabel} actions={<div className="flex rounded-md bg-muted p-0.5"><Button size="sm" variant={overtime ? 'ghost' : 'outline'} aria-pressed={!overtime} onClick={() => setAttendanceMetric('people')}>People</Button><Button size="sm" variant={overtime ? 'outline' : 'ghost'} aria-pressed={overtime} onClick={() => setAttendanceMetric('overtime')}>OT hours</Button></div>} />
+            <div className="flex flex-1 flex-col px-4 py-5">
+              <div className="mb-4 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[13px] text-muted-foreground">
+                {overtime ? <span><span className="num text-[22px] font-semibold text-foreground">{mins(d.period.ot_min)}</span> overtime in this period</span> : <><span><span className="num text-[22px] font-semibold text-foreground">{d.period.people}</span> people</span><span><span className="num font-medium text-foreground">{d.period.person_days}</span> attendance days</span></>}
+              </div>
+              <div className="relative min-h-[220px] flex-1" role="img" aria-label={overtime ? `Overtime hours from ${periodLabel}` : `Attendance from ${periodLabel}`}>
+                <ResponsiveContainer width="100%" height={230}>
+                  <BarChart data={attendance.data} margin={{ top: 8, right: 6, bottom: 0, left: -18 }} accessibilityLayer>
+                    <CartesianGrid {...grid} />
+                    <XAxis dataKey="date" {...axis} tickFormatter={shortDay} minTickGap={24} interval="preserveStartEnd" />
+                    <YAxis {...axis} allowDecimals={overtime || attendance.grouping !== 'day'} domain={[0, 'auto']} />
+                    <Tooltip {...tooltipStyle} cursor={{ fill: 'var(--muted)' }} labelFormatter={(_label, payload) => payload?.[0]?.payload?.date ? dateSpan(payload[0].payload.date, payload[0].payload.to) : ''} formatter={(value) => [overtime ? `${value} h` : value, overtime ? 'Overtime' : attendance.grouping === 'day' ? 'People in' : 'Average people per day']} />
+                    <Bar dataKey={overtime ? 'ot_hours' : 'people'} fill={overtime ? CHART[2] : CHART[0]} radius={[4, 4, 0, 0]} maxBarSize={32} isAnimationActive={false} />
+                  </BarChart>
+                </ResponsiveContainer>
+                {!attendance.data.some((day) => (overtime ? day.ot_hours : day.people) > 0) && <div className="pointer-events-none absolute inset-0 flex items-center justify-center"><span className="rounded-md bg-card/95 px-3 py-2 text-[13px] text-muted-foreground">{overtime ? 'No overtime recorded in this period' : 'No attendance recorded in this period'}</span></div>}
+              </div>
+              <p className="mt-3 text-[12px] text-muted-foreground">{overtime ? `Recorded overtime${attendance.grouping === 'day' ? ' each day' : ` by ${attendance.grouping}`}.` : attendance.grouping === 'day' ? 'People who punched in each day.' : `Average daily attendance by ${attendance.grouping}.`}</p>
             </div>
-            <div className="relative min-h-[220px] flex-1" role="img" aria-label={overtime ? `Overtime hours from ${periodLabel}` : `Attendance from ${periodLabel}`}>
-              <ResponsiveContainer width="100%" height={230}>
-                <BarChart data={attendance.data} margin={{ top: 8, right: 6, bottom: 0, left: -18 }} accessibilityLayer>
-                  <CartesianGrid {...grid} />
-                  <XAxis dataKey="date" {...axis} tickFormatter={shortDay} minTickGap={24} interval="preserveStartEnd" />
-                  <YAxis {...axis} allowDecimals={overtime || attendance.grouping !== 'day'} domain={[0, 'auto']} />
-                  <Tooltip {...tooltipStyle} cursor={{ fill: 'var(--muted)' }} labelFormatter={(_label, payload) => payload?.[0]?.payload?.date ? dateSpan(payload[0].payload.date, payload[0].payload.to) : ''} formatter={(value) => [overtime ? `${value} h` : value, overtime ? 'Overtime' : attendance.grouping === 'day' ? 'People in' : 'Average people per day']} />
-                  <Bar dataKey={overtime ? 'ot_hours' : 'people'} fill={overtime ? CHART[2] : CHART[0]} radius={[4, 4, 0, 0]} maxBarSize={32} isAnimationActive={false} />
-                </BarChart>
-              </ResponsiveContainer>
-              {!attendance.data.some((day) => (overtime ? day.ot_hours : day.people) > 0) && <div className="pointer-events-none absolute inset-0 flex items-center justify-center"><span className="rounded-md bg-card/95 px-3 py-2 text-[13px] text-muted-foreground">{overtime ? 'No overtime recorded in this period' : 'No attendance recorded in this period'}</span></div>}
-            </div>
-            <p className="mt-3 text-[12px] text-muted-foreground">{overtime ? `Recorded overtime${attendance.grouping === 'day' ? ' each day' : ` by ${attendance.grouping}`}.` : attendance.grouping === 'day' ? 'People who punched in each day.' : `Average daily attendance by ${attendance.grouping}.`}</p>
-          </div>
-        </Card>
-        <Card className="flex min-w-0 flex-col">
-          <CardHeader title="Departments on site" description="Current headcount. Select a department to see people." actions={<Button size="sm" variant="ghost" onClick={() => openPeople(null)}>View people</Button>} />
-          {d.departments.some((item) => item.count > 0) ? <div className="flex flex-1 flex-col items-center justify-center gap-2 px-5 pb-5 pt-3">
-            <div className="relative h-48 w-full max-w-[250px]" role="img" aria-label={`Department headcount: ${d.today.on_site_now} people on site now`}>
-              <ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={d.departments} dataKey="count" nameKey="name" innerRadius={59} outerRadius={82} paddingAngle={d.departments.length > 1 ? 2 : 0} stroke="var(--card)" isAnimationActive={false} onClick={(item) => openPeople(department === departmentKey(item) ? null : departmentKey(item))}>
-                {d.departments.map((item, index) => <Cell key={departmentKey(item)} fill={departmentColour(item, index)} opacity={department === null || department === departmentKey(item) ? 1 : 0.35} className="cursor-pointer" />)}
-              </Pie><Tooltip {...tooltipStyle} formatter={(value) => [value, 'People on site']} /></PieChart></ResponsiveContainer>
-              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center"><span className="num text-3xl font-semibold">{d.today.on_site_now}</span><span className="mt-1 text-[12px] text-muted-foreground">on site now</span></div>
-            </div>
-            <ul className="max-h-36 w-full space-y-1 overflow-y-auto text-[13px]">
-              {d.departments.map((item, index) => <li key={departmentKey(item)}><button type="button" aria-label={`${item.name}: ${item.count} people on site`} aria-pressed={department === departmentKey(item)} onClick={() => openPeople(department === departmentKey(item) ? null : departmentKey(item))} className={cn('flex w-full items-center gap-2 rounded-md px-2 py-2 text-left transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring', department === departmentKey(item) && 'bg-accent')}><span className="size-2.5 shrink-0 rounded-sm" style={{ background: departmentColour(item, index) }} /><span className="min-w-0 flex-1 break-words">{item.name}</span><span className="num font-semibold">{item.count}</span></button></li>)}
-            </ul>
-          </div> : <div className="flex flex-1 items-center justify-center"><EmptyState icon={<Users className="size-6" />} title="No one on site now" body="Department headcounts appear when people punch in." /></div>}
-        </Card>
-      </div>
-
-      {wageAccess && d.costs && <SiteWageInsights costs={d.costs} period={d.period} />}
-
-      <div ref={peopleSection} className="scroll-mt-5"><Card>
-        <details open={peopleOpen} onToggle={(event) => setPeopleOpen(event.currentTarget.open)}>
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-5 py-4 focus-visible:outline-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden"><div><h2 className="font-display text-[18px] font-semibold">People on site now <span className="ml-1 num text-[14px] text-muted-foreground">{d.today.on_site_now}</span></h2><p className="mt-0.5 text-[13px] text-muted-foreground">Names, departments and punch-in times.</p></div><ChevronDown className={cn('size-4 shrink-0 text-muted-foreground transition-transform', peopleOpen && 'rotate-180')} /></summary>
-          <div className="border-t">
-            <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
-              <div className="flex items-center gap-2 text-[13px] text-muted-foreground"><span>{people.length} people{selectedDepartment ? ` · ${selectedDepartment.name}` : ''}</span>{department !== null && <Button size="sm" variant="ghost" onClick={() => setDepartment(null)}>All departments</Button>}</div>
-              <div className="relative w-full sm:w-72"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input aria-label="Search people on site" value={peopleSearch} onChange={(event) => setPeopleSearch(event.target.value)} placeholder="Search name, code or department" className="pl-9" /></div>
-            </div>
-            {people.length ? <ul className="grid max-h-80 overflow-y-auto sm:grid-cols-2" aria-label="People on site">
-              {people.map((person) => <li key={person.id} className="flex min-w-0 items-center justify-between gap-3 border-t px-5 py-3 text-[14px]"><div className="min-w-0"><PersonLink id={person.id} name={person.name} code={person.code} /><p className="mt-0.5 truncate text-[12px] text-muted-foreground">{[person.department || 'No department', person.designation].filter(Boolean).join(' · ')}</p></div><span className="shrink-0 text-[12px] text-muted-foreground">In <span className="num text-foreground">{istTime(person.since)}</span></span></li>)}
-            </ul> : <p className="border-t px-5 py-8 text-center text-[13px] text-muted-foreground">{d.on_site_now.length ? 'No people match these filters.' : 'No one is currently punched in at this site.'}</p>}
-          </div>
-        </details>
-      </Card></div>
-
-      <details className="rounded-lg border bg-card text-card-foreground shadow-sm">
-        <summary className="flex cursor-pointer list-none items-center gap-2 px-5 py-4 text-[14px] font-medium focus-visible:outline-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden"><Settings2 className="size-4 text-muted-foreground" /> Site settings <ChevronDown className="ml-auto size-4 text-muted-foreground" /></summary>
-        <div className="border-t p-4"><TabletLogin site={d.site} manage={can('sites.manage')} /><p className="mt-3 text-[12px] text-muted-foreground">Punch boundary: {d.site.radius_m} m from <span className="num">{d.site.lat.toFixed(6)}, {d.site.lng.toFixed(6)}</span>. Login is available from any location; attendance punches require the site boundary.</p></div>
-      </details>
+          </Card>
+        </TabsContent>
+        {wageAccess && <TabsContent value="wages" className="space-y-4" aria-label="Wages">
+          {periodControls}
+          {d.costs ? <SiteWageInsights costs={d.costs} period={d.period} /> : <Card><EmptyState title="Wages unavailable" body="Wage details are unavailable for this period." /></Card>}
+        </TabsContent>}
+      </TabsRoot>
     </div>
   );
 }

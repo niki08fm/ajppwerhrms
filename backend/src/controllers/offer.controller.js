@@ -6,6 +6,7 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { prisma } from '../config/db.js';
 import { markTask, nextEmployeeCode, onboardingView } from '../services/employee.service.js';
 import { resolveMonthlyGross } from '../services/salary.service.js';
+import { assertDepartmentAssignable } from '../services/department.service.js';
 
 const today = () => istDate(new Date());
 
@@ -76,6 +77,7 @@ export const createOffer = asyncHandler(async (req, res) => {
   const { actor, ip } = who(req);
   const company = await prisma.company.findFirst();
   const out = await prisma.$transaction(async (tx) => {
+    const dept = await assertDepartmentAssignable(tx, b.department_id);
     const code = await nextEmployeeCode(tx);
     const e = await tx.employee.create({
       data: {
@@ -108,7 +110,6 @@ export const createOffer = asyncHandler(async (req, res) => {
         valid_till: toDbDate(b.valid_till),
       },
     });
-    const dept = await tx.department.findUnique({ where: { id: b.department_id } });
     await tx.letter.create({
       data: {
         employee_id: e.id,

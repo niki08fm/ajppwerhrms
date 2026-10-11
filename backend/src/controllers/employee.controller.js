@@ -39,6 +39,7 @@ import { payContext } from '../services/payroll.service.js';
 import { ratesOn, regimesOn, salaryOn, structureComponents, holidaysBetween } from '../services/rules.service.js';
 import { ctcBasisOf, deleteSalary, editSalary, insertSalary, previewSalary, resolveMonthlyGross, salaryHistoryProtection } from '../services/salary.service.js';
 import { upsertSettlement } from '../services/settlement.service.js';
+import { assertDepartmentAssignable } from '../services/department.service.js';
 
 const today = () => istDate(new Date());
 
@@ -202,6 +203,7 @@ export const createEmployee = asyncHandler(async (req, res) => {
   });
   const { actor, ip } = who(req);
   const created = await prisma.$transaction(async (tx) => {
+    await assertDepartmentAssignable(tx, b.department_id);
     const code = await nextEmployeeCode(tx);
     const e = await tx.employee.create({
       data: {
@@ -399,6 +401,7 @@ export const updateEmployee = asyncHandler(async (req, res) => {
   const { actor, ip } = who(req);
   await prisma.$transaction(async (tx) => {
     // Guard the concurrency check inside the transaction too.
+    if (core.department_id !== undefined) await assertDepartmentAssignable(tx, core.department_id);
     const n1 = await tx.employee.updateMany({ where: { id: e.id, updated_at: e.updated_at ?? undefined }, data: data });
     if (n1.count === 0) throw new AppError('STALE_UPDATE', 'Someone else changed this person since you opened the form. Reload and try again.', 409);
     const changes = diff(e, core);

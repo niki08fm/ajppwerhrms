@@ -36,6 +36,8 @@ setupRouter.post('/holidays', requirePerm('setup.write'), setupController.create
 setupRouter.delete('/holidays/:id', requirePerm('setup.write'), setupController.deleteHoliday);
 setupRouter.get('/departments', requirePerm('people.read'), setupController.listDepartments);
 setupRouter.post('/departments', requirePerm('setup.write'), setupController.createDepartment);
+setupRouter.patch('/departments/:id', requirePerm('setup.write'), setupController.updateDepartment);
+setupRouter.delete('/departments/:id', requirePerm('setup.write'), setupController.deleteDepartment);
 setupRouter.get('/company', requirePerm('setup.read'), setupController.getCompany);
 setupRouter.patch('/company', requirePerm('setup.write'), setupController.updateCompany);
 setupRouter.get('/calendar-methods', requirePerm('setup.read'), setupController.listCalendarMethods);

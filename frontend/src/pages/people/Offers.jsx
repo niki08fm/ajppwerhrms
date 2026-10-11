@@ -29,6 +29,7 @@ export default function Offers() {
     onSuccess: (_d, v) => {
       qc.invalidateQueries({ queryKey: ['offers'] });
       qc.invalidateQueries({ queryKey: ['people'] });
+      qc.invalidateQueries({ queryKey: ['departments'] });
       refreshEmployeePay(qc, v.employee_id);
       setTab(v.next);
       toast.success(v.next === 'ACCEPTED' ? 'Marked accepted' : 'Onboarding started: the salary record now runs from the joining date.');
@@ -173,6 +174,7 @@ function IssueOfferDialog({ onClose }) {
     onSuccess: async (r) => {
       toast.success(`Offer ${r.data.ref} issued. The letter's figures are frozen.`);
       qc.invalidateQueries({ queryKey: ['offers'] });
+      qc.invalidateQueries({ queryKey: ['departments'] });
       refreshEmployeePay(qc, r.data.employee_id);
       onClose();
       try {

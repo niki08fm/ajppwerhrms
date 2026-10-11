@@ -90,6 +90,7 @@ const NAV = [
 ];
 
 const SETTINGS = [
+  { to: '/setup/departments', label: 'Departments', icon: <Users />, permission: 'people.read' },
   { to: '/setup/pay-groups', label: 'Pay groups', icon: <Workflow /> },
   { to: '/setup/structures', label: 'Salary structures', icon: <Layers /> },
   { to: '/setup/policies', label: 'Policies', icon: <Scale /> },
@@ -154,11 +155,13 @@ function NavItem({ it, collapsed, onNavigate, badge }) {
 }
 
 function Sidebar({ onNavigate, collapsed, onToggleCollapsed }) {
+  const { can } = useSession();
+  const settings = SETTINGS.filter((item) => !item.permission || can(item.permission));
   const { data } = useQuery({ queryKey: ['dashboard', 'people'], queryFn: () => api.get('/dashboard/people').then((r) => r.data), staleTime: 60_000 });
   const pending = data?.approvals.total ?? (data?.approvals.face ?? 0) + (data?.approvals.leave ?? 0);
   const { pathname } = useLocation();
   const nav = useNavigate();
-  const inSettings = SETTINGS.some((x) => pathname.startsWith(x.to));
+  const inSettings = settings.some((x) => pathname.startsWith(x.to));
   const [settingsOpen, setSettingsOpen] = useState(() => remember('nav.settings', false));
   const showSettings = settingsOpen || inSettings;
   return (
@@ -235,7 +238,7 @@ function Sidebar({ onNavigate, collapsed, onToggleCollapsed }) {
           </button>
           {showSettings && (
             <ul className={cn('mt-0.5 flex flex-col gap-0.5', !collapsed && 'ml-3 border-l border-sidebar-border pl-2')}>
-              {SETTINGS.map((it) => (
+              {settings.map((it) => (
                 <li key={it.to}>
                   <NavItem it={it} collapsed={collapsed} onNavigate={onNavigate} />
                 </li>

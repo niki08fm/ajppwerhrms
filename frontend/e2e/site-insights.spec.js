@@ -50,8 +50,11 @@ const COSTS = {
 };
 
 /** Fictional names, attendance and payroll. These tests never reset or mutate the imported employee database. */
-async function mockSites(page, { empty = false, costs = true, manage = true } = {}) {
+async function mockSites(page, { empty = false, costs = true, manage = true, legacyColour = null } = {}) {
   const state = { reads: [], writes: [], unexpected: [], errors: [] };
+  const withDepartmentColour = (row) => legacyColour && (row.department_id ?? row.id) === 'electrical' ? { ...row, colour: legacyColour } : row;
+  const departments = DEPARTMENTS.map(withDepartmentColour);
+  const people = PEOPLE.map(withDepartmentColour);
   await page.clock.setFixedTime(new Date(`${TODAY}T06:30:00.000Z`));
   page.on('pageerror', (error) => state.errors.push(error.message));
   await page.route('**/api/v1/**', async (route) => {
@@ -60,7 +63,7 @@ async function mockSites(page, { empty = false, costs = true, manage = true } = 
     else state.writes.push({ path, method: req.method(), body: req.postDataJSON() });
     let data;
     if (path === '/auth/me') data = { id: 'hr-test', name: 'HR Admin', role: 'HR Admin', email: 'hr@example.test', permissions: ['sites.read', 'people.read', ...(costs ? ['payroll.read'] : []), ...(manage ? ['sites.manage'] : [])] };
-    else if (path === '/lookups') data = { today: TODAY, sites: [SITE, OTHER_SITE], departments: DEPARTMENTS, projects: [SITE.project], pay_groups: [], structures: [], pt_states: ['Telangana'], states: ['Telangana', 'Andhra Pradesh'] };
+    else if (path === '/lookups') data = { today: TODAY, sites: [SITE, OTHER_SITE], departments, projects: [SITE.project], pay_groups: [], structures: [], pt_states: ['Telangana'], states: ['Telangana', 'Andhra Pradesh'] };
     else if (path === '/dashboard/people') data = { approvals: { total: 0 } };
     else if (path === '/sites') data = [SITE, OTHER_SITE].map((site, i) => ({
       ...site, today: { punched_in: empty ? 0 : i ? 18 : 42, on_site_now: empty ? 0 : i ? 12 : 32, worked_min: empty ? 0 : i ? 5400 : 19200 },
@@ -69,11 +72,11 @@ async function mockSites(page, { empty = false, costs = true, manage = true } = 
     else if (path === `/sites/${SITE.id}/insights`) {
       const from = url.searchParams.get('from') || '2026-10-01', to = url.searchParams.get('to') || TODAY;
       const date = url.searchParams.get('date') || TODAY;
-      const wages = empty ? { ...COSTS, normal_wages: 0, ot_wages: 0, other_wages: 0, total_wages: 0, ot_min: 0, departments: [], trend: [], uncosted_people: 0, uncosted_min: 0, months: [], source: 'estimate' } : COSTS;
+      const wages = empty ? { ...COSTS, normal_wages: 0, ot_wages: 0, other_wages: 0, total_wages: 0, ot_min: 0, departments: [], trend: [], uncosted_people: 0, uncosted_min: 0, months: [], source: 'estimate' } : { ...COSTS, departments: WAGE_DEPARTMENTS.map(withDepartmentColour) };
       data = {
         site: SITE, date,
         today: empty ? { punched_in: 0, on_site_now: 0, signed_out: 0, late_in: 0, early_out: 0, worked_min: 0, ot_min: 0 } : { punched_in: 42, on_site_now: 32, signed_out: 10, late_in: 3, early_out: 1, worked_min: 19200, ot_min: 210 },
-        on_site_now: empty ? [] : PEOPLE, departments: empty ? [] : DEPARTMENTS,
+        on_site_now: empty ? [] : people, departments: empty ? [] : departments,
         attendance: empty ? [] : ATTENDANCE,
         period: { from, to, people: empty ? 0 : 46, person_days: empty ? 0 : 395, worked_min: empty ? 0 : 114000, ot_min: empty ? 0 : 2730 },
         costs: costs ? wages : null,
@@ -81,7 +84,7 @@ async function mockSites(page, { empty = false, costs = true, manage = true } = 
     } else if (path === `/sites/${SITE.id}/day`) data = {
       site: SITE, date: TODAY,
       today: { punched_in: empty ? 0 : 42, on_site_now: empty ? 0 : 32, worked_min: empty ? 0 : 19200, avg_min: empty ? 0 : 457 },
-      on_site_now: empty ? [] : PEOPLE, people_per_day: ATTENDANCE.map((day) => ({ date: day.date, present: day.punched_in })),
+      on_site_now: empty ? [] : people, people_per_day: ATTENDANCE.map((day) => ({ date: day.date, present: day.punched_in })),
       department_mix: [], arrivals_by_hour: [], movement: [], punches: [],
     };
     else {
@@ -98,6 +101,12 @@ const clean = (state) => {
   expect(state.unexpected).toEqual([]);
   expect(state.writes).toEqual([]);
 };
+
+async function view(page, name) {
+  await page.getByRole('tab', { name, exact: true }).click();
+  await expect(page.getByRole('tab', { name, exact: true })).toHaveAttribute('aria-selected', 'true');
+  return page.getByRole('tabpanel', { name, exact: true });
+}
 
 test('HR site directory emphasizes current people and attendance without loading networks', async ({ page }) => {
   const state = await mockSites(page);
@@ -117,51 +126,84 @@ test('HR site directory emphasizes current people and attendance without loading
   await expect(page.getByRole('heading', { name: 'No sites match', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Clear search', exact: true }).click();
   await alpha.click();
-  await expect(page.getByRole('heading', { name: SITE.name, exact: true })).toBeVisible();
-  await expect.poll(() => state.reads.some(({ path }) => path.endsWith('/insights'))).toBe(true);
+  await expect(page.getByRole('tab', { name: 'Overview', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('list', { name: 'People on site', exact: true }).getByRole('listitem')).toHaveCount(32);
+  await expect(page.getByRole('region', { name: 'Wage cost', exact: true })).toHaveCount(0);
   clean(state);
 });
 
-test('site wages visualize normal pay, overtime and the departments consuming the wages', async ({ page }) => {
+test('site Overview stays compact and period screens open only from their tabs', async ({ page }) => {
   const state = await mockSites(page);
   await page.goto(`/sites/${SITE.id}`);
+  const overview = page.getByRole('tabpanel', { name: 'Overview', exact: true });
+  await expect(overview).toBeVisible();
+  await expect(overview.getByRole('list', { name: 'People on site', exact: true }).getByRole('listitem')).toHaveCount(32);
+  await expect(page.getByLabel('Attendance month', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Wage cost', exact: true })).toHaveCount(0);
+  const main = page.locator('main');
+  expect(await main.evaluate((element) => element.scrollHeight <= element.clientHeight + 24)).toBe(true);
+  const reads = state.reads.filter(({ path }) => path.endsWith('/insights')).length;
+  const attendance = await view(page, 'Attendance');
+  await expect(attendance.getByLabel('Attendance month', { exact: true })).toBeVisible();
+  await expect(attendance.getByRole('list', { name: 'People on site', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Wage cost', exact: true })).toHaveCount(0);
+  await view(page, 'Wages');
+  await expect(page.getByRole('region', { name: 'Wage cost', exact: true })).toBeVisible();
+  await expect(page.getByRole('list', { name: 'People on site', exact: true })).toHaveCount(0);
+  await view(page, 'Overview');
+  await expect(overview.getByRole('list', { name: 'People on site', exact: true }).getByRole('listitem')).toHaveCount(32);
+  expect(state.reads.filter(({ path }) => path.endsWith('/insights'))).toHaveLength(reads);
+  await page.screenshot({ path: '/tmp/site-compact-desktop-overview.png' });
+  clean(state);
+});
+
+test('site Wages opens one visualization at a time and exposes accurate department figures', async ({ page }) => {
+  const state = await mockSites(page);
+  await page.goto(`/sites/${SITE.id}`);
+  await view(page, 'Wages');
   const wages = page.getByRole('region', { name: 'Wage cost', exact: true });
-  await expect(wages).toBeVisible();
   await expect(wages).toContainText('₹1,58,000');
   await expect(wages).toContainText('₹1,44,000');
   await expect(wages).toContainText('₹10,500');
   await expect(wages).toContainText('Payroll + estimates');
-  await expect(wages.getByRole('img', { name: 'Stacked bar chart of normal wages and OT wages over time', exact: true })).toBeVisible();
+  await expect(wages.getByRole('table')).toHaveCount(0);
+  const wageView = wages.getByRole('radiogroup', { name: 'Wage view', exact: true });
+  await expect(wageView.getByRole('radio', { name: 'Trend', exact: true })).toHaveAttribute('aria-checked', 'true');
+  await expect(wages.getByRole('img', { name: 'Department wages, highest first', exact: true })).toHaveCount(0);
+  await wageView.getByRole('radio', { name: 'Departments', exact: true }).click();
+  await expect(wages.getByRole('img', { name: 'Department wages, highest first', exact: true })).toBeVisible();
+  await expect(wages.getByRole('table')).toHaveCount(0);
+  await wages.getByRole('button', { name: 'Show figures', exact: true }).click();
   const table = wages.getByRole('table');
   await expect(table.getByRole('row').nth(1)).toHaveText(/Electrical20.*₹72,000.*₹7,000.*₹2,000.*₹81,000/);
   await expect(table.getByRole('row').nth(2)).toHaveText(/Civil14.*₹45,000.*₹2,500.*₹1,000.*₹48,500/);
   await expect(table.getByRole('row').nth(3)).toHaveText(/Mechanical12.*₹27,000.*₹1,000.*₹500.*₹28,500/);
-  const ranking = wages.getByRole('radiogroup', { name: 'Department ranking', exact: true });
-  await ranking.getByRole('radio', { name: 'OT wages', exact: true }).click();
+  const metric = wages.getByRole('combobox', { name: 'Department metric', exact: true });
+  await metric.selectOption('ot_wages');
   const otWageChart = wages.getByRole('img', { name: 'Department OT wages, highest first', exact: true });
   await expect(otWageChart).toBeVisible();
-  // OT wages shows one OT series rather than the entire salary stack.
   await expect(otWageChart.locator('.recharts-bar')).toHaveCount(1);
-  await ranking.getByRole('radio', { name: 'OT hours', exact: true }).click();
-  await expect(ranking.getByRole('radio', { name: 'OT hours', exact: true })).toHaveAttribute('aria-checked', 'true');
+  await metric.selectOption('ot_min');
   await expect(wages.getByRole('img', { name: 'Department overtime hours, highest first', exact: true })).toBeVisible();
   await expect(table.getByRole('row').nth(1)).toContainText('Civil');
-  await ranking.getByRole('radio', { name: 'Total wages', exact: true }).click();
+  await metric.selectOption('total_wages');
   await expect(table.getByRole('row').nth(1)).toContainText('Electrical');
+  await wages.getByRole('button', { name: 'Hide figures', exact: true }).click();
+  await expect(table).toHaveCount(0);
+  await wageView.getByRole('radio', { name: 'Trend', exact: true }).click();
+  await expect(wages.getByRole('img', { name: 'Department wages, highest first', exact: true })).toHaveCount(0);
   await expect(wages).toContainText('1 person has work without a salary calculation');
-  await expect.poll(() => wages.getByRole('img', { name: 'Department wages, highest first', exact: true }).locator('.recharts-bar-rectangle path').evaluateAll((paths) => Math.max(0, ...paths.map((path) => path.getBBox().width)))).toBeGreaterThan(500);
-  await wages.scrollIntoViewIfNeeded();
-  await page.screenshot({ path: '/tmp/site-insights-desktop-wages.png', fullPage: true });
   await page.locator('main').evaluate((element) => { element.scrollTop = 0; });
-  await page.screenshot({ path: '/tmp/site-insights-desktop.png', fullPage: true });
+  await page.screenshot({ path: '/tmp/site-compact-desktop-wages.png' });
   clean(state);
 });
 
-test('site period controls query selected dates and reject invalid custom ranges', async ({ page }) => {
+test('site period selection is shared by Attendance and Wages and rejects invalid ranges', async ({ page }) => {
   const state = await mockSites(page);
   const reads = () => state.reads.filter(({ path }) => path.endsWith('/insights'));
   await page.goto(`/sites/${SITE.id}`);
-  await expect(page.getByRole('heading', { name: 'Attendance and wages', exact: true })).toBeVisible();
+  await view(page, 'Attendance');
+  await expect(page.getByLabel('Attendance month', { exact: true })).toBeVisible();
   await expect.poll(() => reads().at(-1)?.query).toEqual({ from: '2026-10-01', to: TODAY });
   await page.getByRole('button', { name: 'Last month', exact: true }).click();
   await expect.poll(() => reads().at(-1)?.query).toEqual({ from: '2026-09-01', to: '2026-09-30' });
@@ -188,49 +230,74 @@ test('site period controls query selected dates and reject invalid custom ranges
   await page.getByLabel('Period to', { exact: true }).fill('2026-10-07');
   await page.getByRole('button', { name: 'Apply period', exact: true }).click();
   await expect.poll(() => reads().at(-1)?.query).toEqual({ from: '2026-09-25', to: '2026-10-07' });
+  await view(page, 'Wages');
   await expect(page.getByRole('region', { name: 'Wage cost', exact: true })).toContainText('25 Sep – 7 Oct 2026');
+  await view(page, 'Attendance');
+  await expect(page.getByLabel('Period from', { exact: true })).toHaveValue('2026-09-25');
   clean(state);
 });
 
-test('department visualization filters current people and attendance switches to overtime bars', async ({ page }) => {
+test('Overview department visualization filters current people and Attendance switches to OT', async ({ page }) => {
   const state = await mockSites(page);
   await page.goto(`/sites/${SITE.id}`);
-  await expect(page.getByRole('img', { name: 'Department headcount: 32 people on site now', exact: true })).toBeVisible();
-  const electrical = page.getByRole('button', { name: 'Electrical: 14 people on site', exact: true });
+  const overview = page.getByRole('tabpanel', { name: 'Overview', exact: true });
+  await overview.getByRole('radio', { name: 'Departments', exact: true }).click();
+  await expect(overview.getByRole('img', { name: 'Department headcount: 32 people on site now', exact: true })).toBeVisible();
+  const electrical = overview.getByRole('button', { name: 'Electrical: 14 people on site', exact: true });
   await electrical.click();
-  await expect(electrical).toHaveAttribute('aria-pressed', 'true');
-  const people = page.getByRole('list', { name: 'People on site', exact: true });
+  const people = overview.getByRole('list', { name: 'People on site', exact: true });
   await expect(people.getByRole('listitem')).toHaveCount(14);
   await expect(people).toContainText('Example Electrical 1');
   await expect(people).not.toContainText('Example Civil');
-  await page.getByLabel('Search people on site', { exact: true }).fill('ELE003');
+  await overview.getByLabel('Search people on site', { exact: true }).fill('ELE003');
   await expect(people.getByRole('listitem')).toHaveCount(1);
   await expect(people).toContainText('Example Electrical 3');
-  await page.getByLabel('Search people on site', { exact: true }).fill('');
-  await page.getByRole('button', { name: 'All departments', exact: true }).click();
+  await overview.getByLabel('Search people on site', { exact: true }).fill('');
+  await overview.getByRole('button', { name: 'All departments', exact: true }).click();
   await expect(people.getByRole('listitem')).toHaveCount(32);
-  await page.getByRole('button', { name: 'OT hours', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Overtime worked', exact: true })).toBeVisible();
-  await expect(page.getByRole('img', { name: /^Overtime hours from / })).toBeVisible();
-  await expect(page.locator('.recharts-line')).toHaveCount(0);
-  await page.getByRole('button', { name: 'People', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Attendance', exact: true })).toBeVisible();
+  const attendance = await view(page, 'Attendance');
+  await attendance.getByRole('button', { name: 'OT hours', exact: true }).click();
+  await expect(attendance.getByRole('heading', { name: 'Overtime worked', exact: true })).toBeVisible();
+  await expect(attendance.getByRole('img', { name: /^Overtime hours from / })).toBeVisible();
+  await expect(attendance.locator('.recharts-line')).toHaveCount(0);
+  await attendance.getByRole('button', { name: 'People', exact: true }).click();
+  await expect(attendance.getByRole('heading', { name: 'Attendance', exact: true })).toBeVisible();
   clean(state);
 });
 
-test('site cost access follows payroll permission while attendance remains available', async ({ page }) => {
+test('department custom colours stay consistent between current headcount and wage charts', async ({ page }) => {
+  const state = await mockSites(page, { legacyColour: '#5C4B99' });
+  await page.goto(`/sites/${SITE.id}`);
+  const overview = page.getByRole('tabpanel', { name: 'Overview', exact: true });
+  await overview.getByRole('radio', { name: 'Departments', exact: true }).click();
+  const donut = overview.getByRole('img', { name: 'Department headcount: 32 people on site now', exact: true });
+  const sector = donut.locator('path.recharts-sector[fill="#5C4B99"]');
+  await expect(sector).toHaveCount(1);
+  await expect(sector).toHaveCSS('fill', 'rgb(92, 75, 153)');
+  await view(page, 'Wages');
+  const wages = page.getByRole('region', { name: 'Wage cost', exact: true });
+  await wages.getByRole('radio', { name: 'Departments', exact: true }).click();
+  const departmentChart = wages.getByRole('img', { name: 'Department wages, highest first', exact: true });
+  const bar = departmentChart.locator('.recharts-bar-rectangle path[fill="#5C4B99"]');
+  await expect(bar).toHaveCount(1);
+  await expect(bar).toHaveCSS('fill', 'rgb(92, 75, 153)');
+  clean(state);
+});
+
+test('site cost access hides the Wages tab while current people and attendance remain available', async ({ page }) => {
   const state = await mockSites(page, { costs: false, manage: false });
   await page.goto(`/sites/${SITE.id}`);
-  await expect(page.getByRole('heading', { name: SITE.name, exact: true })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Wages', exact: true })).toHaveCount(0);
   await expect(page.getByRole('region', { name: 'Wage cost', exact: true })).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: 'Wage cost', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Edit site', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Reset password', exact: true })).toHaveCount(0);
-  await expect(page.getByText('On site now', { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole('list', { name: 'People on site', exact: true }).getByRole('listitem')).toHaveCount(32);
+  await view(page, 'Attendance');
+  await expect(page.getByLabel('Attendance month', { exact: true })).toBeVisible();
   clean(state);
 });
 
-test('site dashboard preserves edit project and keeps tablet login controls in settings', async ({ page }) => {
+test('site Overview preserves edit project and tablet login controls in settings', async ({ page }) => {
   const state = await mockSites(page);
   await page.goto(`/sites/${SITE.id}`);
   await page.getByRole('button', { name: 'Edit site', exact: true }).click();
@@ -251,37 +318,45 @@ test('site dashboard preserves edit project and keeps tablet login controls in s
   clean(state);
 });
 
-test('empty site attendance and costs display clear zero states', async ({ page }) => {
+test('empty current people, attendance and wages retain clear separate zero states', async ({ page }) => {
   const state = await mockSites(page, { empty: true });
   await page.goto(`/sites/${SITE.id}`);
+  await expect(page.getByRole('tabpanel', { name: 'Overview', exact: true })).toContainText('No one');
+  await view(page, 'Attendance');
+  await expect(page.getByText('No attendance recorded in this period', { exact: true })).toBeVisible();
+  await view(page, 'Wages');
   const wages = page.getByRole('region', { name: 'Wage cost', exact: true });
-  await expect(wages).toBeVisible();
   await expect(wages.getByRole('heading', { name: 'No allocated wages yet', exact: true })).toBeVisible();
+  await wages.getByRole('radio', { name: 'Departments', exact: true }).click();
   await expect(wages.getByRole('heading', { name: 'No department costs yet', exact: true })).toBeVisible();
   await expect(wages).not.toContainText('NaN');
   await expect(wages).not.toContainText('Infinity');
   clean(state);
 });
 
-test('site visuals fit a narrow phone and wage table scroll stays inside its card', async ({ page }) => {
+test('phone site tabs fit the viewport and optional wage figures scroll inside their card', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const state = await mockSites(page);
   await page.goto(`/sites/${SITE.id}`);
-  await expect(page.getByRole('region', { name: 'Wage cost', exact: true })).toBeVisible();
+  await expect(page.getByRole('list', { name: 'People on site', exact: true })).toBeVisible();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
-  const table = page.getByRole('region', { name: 'Wage cost', exact: true }).getByRole('table');
+  await page.screenshot({ path: '/tmp/site-compact-phone-overview.png' });
+  await view(page, 'Attendance');
+  await page.screenshot({ path: '/tmp/site-compact-phone-attendance.png' });
+  await view(page, 'Wages');
+  const wages = page.getByRole('region', { name: 'Wage cost', exact: true });
+  await expect(wages).toBeVisible();
+  await expect(wages.getByRole('table')).toHaveCount(0);
+  await wages.getByRole('radio', { name: 'Departments', exact: true }).click();
+  await wages.getByRole('button', { name: 'Show figures', exact: true }).click();
+  const table = wages.getByRole('table');
   expect(await table.evaluate((element) => {
     const scroller = element.parentElement;
     return getComputedStyle(scroller).overflowX === 'auto' && scroller.scrollWidth > scroller.clientWidth;
   })).toBe(true);
-  await page.screenshot({ path: '/tmp/site-insights-mobile.png', fullPage: true });
-  await page.getByRole('heading', { name: 'Attendance', exact: true }).scrollIntoViewIfNeeded();
-  await page.screenshot({ path: '/tmp/site-insights-mobile-attendance.png', fullPage: true });
-  const wages = page.getByRole('region', { name: 'Wage cost', exact: true });
-  await expect(wages.locator('.recharts-pie-sector path')).toHaveCount(3);
-  await wages.evaluate((element) => { element.scrollIntoView({ block: 'start' }); });
-  await page.screenshot({ path: '/tmp/site-insights-mobile-wages.png', fullPage: true });
-  await wages.getByRole('heading', { name: 'Wage mix', exact: true }).evaluate((element) => { element.scrollIntoView({ block: 'start' }); });
-  await page.screenshot({ path: '/tmp/site-insights-mobile-mix.png', fullPage: true });
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+  await wages.getByRole('button', { name: 'Hide figures', exact: true }).click();
+  await page.locator('main').evaluate((element) => { element.scrollTop = 0; });
+  await page.screenshot({ path: '/tmp/site-compact-phone-wages.png' });
   clean(state);
 });

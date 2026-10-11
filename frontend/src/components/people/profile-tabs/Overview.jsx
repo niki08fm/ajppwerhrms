@@ -247,6 +247,8 @@ export function EditDialog({ e, onClose }) {
       toast.success('Saved');
       qc.invalidateQueries({ queryKey: ['employee', e.id] });
       qc.invalidateQueries({ queryKey: ['people'] });
+      qc.invalidateQueries({ queryKey: ['departments'] });
+      qc.invalidateQueries({ queryKey: ['site-day'] });
       for (const key of ['timeline', 'employee-pay', 'employee-tax', 'emp-attendance', 'emp-leave']) qc.invalidateQueries({ queryKey: [key, e.id] });
       onClose();
     },

@@ -33,6 +33,7 @@ const Policies = lazy(() => import('./pages/setup/Policies'));
 const Statutory = lazy(() => import('./pages/setup/Statutory'));
 const Calendar = lazy(() => import('./pages/setup/Calendar'));
 const Projects = lazy(() => import('./pages/setup/Projects'));
+const Departments = lazy(() => import('./pages/setup/Departments'));
 const Audit = lazy(() => import('./pages/setup/Audit'));
 
 function Loading() {
@@ -133,6 +134,7 @@ export function App() {
                   <Route path="setup/statutory" element={<Statutory />} />
                   <Route path="setup/calendar" element={<Calendar />} />
                   <Route path="setup/projects" element={<Projects />} />
+                  <Route path="setup/departments" element={<Departments />} />
                   <Route path="audit" element={<Audit />} />
                   <Route path="*" element={<NotFound />} />
                 </Route>
