@@ -81,6 +81,7 @@ export function toComponentDefs(rows) {
       pay_month: c.pay_month,
       is_taxable: c.is_taxable,
       counts_as_wages: c.counts_as_wages,
+      counts_as_esi_wages: c.frequency === 'MONTHLY' && (c.counts_as_esi_wages ?? true),
       colour: c.colour,
     }))
     .sort((a, b) => a.seq - b.seq);

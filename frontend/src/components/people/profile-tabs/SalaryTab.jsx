@@ -192,9 +192,11 @@ export function SalaryTab({ e }) {
                       <div className="text-[12px] text-muted-foreground">
                         {!p
                           ? 'Salary required to check the ESI ceiling'
-                          : p.esi_within_ceiling
-                            ? `Eligible: gross within the ESI ceiling${p.esi.applicable ? ` · employee ${formatINR(p.esi.employee)} a month` : ''}`
-                            : 'Gross is above the ESI ceiling'}
+                          : (p.esi_wage ?? p.structure?.esi_base) === 0
+                            ? 'No monthly earnings selected as ESI wage'
+                            : p.esi_within_ceiling
+                              ? `ESI wage ${formatINR(p.esi_wage ?? p.structure?.esi_base ?? p.gross)} within the ceiling${p.esi.applicable ? ` · employee ${formatINR(p.esi.employee)} a month` : ''}`
+                              : 'ESI wage is above the ceiling'}
                         {st.esi_locked_until ? ` · covered till ${st.esi_locked_until}` : ''}
                       </div>
                     </div>

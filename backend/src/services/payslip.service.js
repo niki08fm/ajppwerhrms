@@ -1,8 +1,8 @@
 import { esiContributionPeriod, financialYearStart, firstOfMonth, lastOfMonth, maxDate, minDate, addMonths, ymOf } from '@ajpwer/shared';
-import { assemblePayslip, calendarDivisor, esiEligibility, pickPolicy, workingDaysInMonth } from '../calculations/index.js';
+import { assemblePayslip, calendarDivisor, esiEligibility, expandStructure, pickPolicy, usesCtc, workingDaysInMonth } from '../calculations/index.js';
 import { fromDbDate, n, toDbDate } from '../utils/dbDates.js';
 import { AppError } from '../utils/errors.js';
-import { salaryOn, structureComponents } from './rules.service.js';
+import { ratesOn, salaryOn, structureComponents } from './rules.service.js';
 import { ctcBasisOf } from './salary.service.js';
 
 /** Adhoc targets resolve at run time: a list of employees, a pay group, a department, or everyone. */
@@ -80,14 +80,30 @@ export async function computePayslip(db, e, ym, month, ctx, recoveries) {
   const divisor = calendarDivisor(rules.calendar_method, ym, working);
   const otPolicy = pickPolicy(rules.policies, 'OVERTIME', monthEnd);
 
-  // ESI: decided once per contribution block on fixed gross at the block start.
+  // ESI: decided once per contribution block on the selected fixed wages in
+  // the salary structure effective at its start. A later revision cannot
+  // change that period's entry decision.
   const block = esiContributionPeriod(firstOfMonth(ym));
-  const blockSalary = await salaryOn(db, e.id, maxDate(block.start, joined));
+  const eligibilityDate = maxDate(block.start, joined);
+  const blockSalary = await salaryOn(db, e.id, eligibilityDate);
+  const eligibilitySalary = blockSalary ?? salary;
+  const eligibilityComponents = eligibilitySalary.structure_id === salary.structure_id
+    ? components : await structureComponents(db, eligibilitySalary.structure_id);
+  // A gross agreement with % of CTC earnings needs the rates at entry to
+  // reconstruct those earnings. Later statutory rate changes must not move
+  // its contribution-period eligibility; CTC agreements keep their saved basis.
+  const eligibilityRates = eligibilitySalary.mode === 'GROSS' && usesCtc(eligibilityComponents)
+    ? await ratesOn(db, eligibilityDate) : ctx.rates;
+  const eligibilityWage = expandStructure(
+    eligibilityComponents,
+    eligibilitySalary.monthly_gross,
+    ctcBasisOf(eligibilitySalary, eligibilityComponents, e.statutory, eligibilityRates),
+  ).esi_base;
   const esi = esiEligibility(
     {
       esi_enabled: e.statutory.esi_enabled,
       date: firstOfMonth(ym),
-      fixed_gross_at_block_start: blockSalary?.monthly_gross ?? salary.monthly_gross,
+      fixed_gross_at_block_start: eligibilityWage,
       esi_locked_until: fromDbDate(e.statutory.esi_locked_until),
     },
     ctx.rates.esi,

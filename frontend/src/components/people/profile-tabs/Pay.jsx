@@ -176,7 +176,7 @@ export function PayTab({ e }) {
                 </label>
                 {!p.esi_within_ceiling && (
                   <p className="text-[13px] text-muted-foreground">
-                    Not offered: monthly gross {formatINR(p.gross)} is above the {formatINR(rates.esi.ceiling)} ESI ceiling.{' '}
+                    Not offered: ESI wage {formatINR(p.esi_wage ?? p.structure?.esi_base ?? p.gross)} is above the {formatINR(rates.esi.ceiling)} ceiling.{' '}
                     {st.esi_locked_until ? 'Contributions continue until the current period ends.' : ''}
                   </p>
                 )}

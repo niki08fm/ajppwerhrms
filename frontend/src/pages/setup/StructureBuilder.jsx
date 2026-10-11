@@ -29,6 +29,7 @@ const blank = (i, over = {}) => ({
   pay_month: null,
   is_taxable: true,
   counts_as_wages: false,
+  counts_as_esi_wages: true,
   colour: colourFor(i),
   ...over,
 });
@@ -38,7 +39,7 @@ const DEFAULT_ROWS = [
   blank(1, { name: 'HRA', of: 'PCT_BASIC', value: '40' }),
   blank(2, { name: 'DA', kind: 'FIXED', value: '0', counts_as_wages: true }),
 ];
-const DEFAULT_SPECIAL = { is_taxable: true, counts_as_wages: false };
+const DEFAULT_SPECIAL = { is_taxable: true, counts_as_wages: false, counts_as_esi_wages: true };
 
 const isBasicName = (name) => name.trim().toLowerCase() === 'basic';
 
@@ -54,6 +55,7 @@ function toComponent(r, i) {
     pay_month: r.frequency === 'YEARLY' ? (r.pay_month ?? 3) : null,
     is_taxable: r.is_taxable,
     counts_as_wages: r.frequency === 'MONTHLY' && r.counts_as_wages,
+    counts_as_esi_wages: r.frequency === 'MONTHLY' && r.counts_as_esi_wages !== false,
     colour: r.colour,
   };
 }
@@ -69,6 +71,7 @@ function specialComponent(s, seq) {
     pay_month: null,
     is_taxable: s.is_taxable,
     counts_as_wages: s.counts_as_wages,
+    counts_as_esi_wages: s.counts_as_esi_wages !== false,
     colour: colourFor(seq - 1),
   };
 }
@@ -131,11 +134,12 @@ export default function StructureBuilder() {
           pay_month: c.pay_month,
           is_taxable: c.is_taxable,
           counts_as_wages: c.counts_as_wages,
+          counts_as_esi_wages: c.frequency === 'MONTHLY' && c.counts_as_esi_wages !== false,
           colour: c.colour || colourFor(i),
         })),
     );
     const bal = s.components.find((c) => c.calc_type === 'BALANCE' && c.frequency === 'MONTHLY');
-    setSpecial(bal ? { is_taxable: bal.is_taxable, counts_as_wages: bal.counts_as_wages } : DEFAULT_SPECIAL);
+    setSpecial(bal ? { is_taxable: bal.is_taxable, counts_as_wages: bal.counts_as_wages, counts_as_esi_wages: bal.counts_as_esi_wages !== false } : DEFAULT_SPECIAL);
   }, [src.data]);
 
   const comps = [...rows.map(toComponent), specialComponent(special, rows.length + 1)];
@@ -201,7 +205,7 @@ export default function StructureBuilder() {
                 {(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Site staff 2027" />}
               </Field>
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[880px] text-[14px]">
+                <table className="w-full min-w-[960px] text-[14px]">
                   <thead className="text-left text-[13px] text-muted-foreground">
                     <tr>
                       <th className="py-1" />
@@ -212,6 +216,7 @@ export default function StructureBuilder() {
                       <th>Paid</th>
                       <th>Taxable</th>
                       <th title="Tick on Basic, and on a dearness allowance if you use one. It decides which components form the PF base, and nothing else.">PF wage*</th>
+                      <th title="Include this monthly earning in the ESI wage used for eligibility and contributions.">ESI wage</th>
                       <th />
                     </tr>
                   </thead>
@@ -294,6 +299,9 @@ export default function StructureBuilder() {
                           <td className="py-2.5">
                             <Switch checked={r.counts_as_wages} disabled={r.frequency === 'YEARLY'} onCheckedChange={(v) => set(i, { counts_as_wages: v })} label="Counts as PF wage" />
                           </td>
+                          <td className="py-2.5">
+                            <Switch checked={r.frequency === 'MONTHLY' && r.counts_as_esi_wages !== false} disabled={r.frequency === 'YEARLY'} onCheckedChange={(v) => set(i, { counts_as_esi_wages: v })} label={`${r.name || 'Component'} counts as ESI wage`} />
+                          </td>
                           <td className="py-1.5">
                             <Button size="icon" variant="ghost" onClick={() => setRows(rows.filter((_, j) => j !== i))} aria-label={`Remove ${r.name || 'component'}`}>
                               <Trash2 />
@@ -317,6 +325,9 @@ export default function StructureBuilder() {
                       <td className="py-2.5">
                         <Switch checked={special.counts_as_wages} onCheckedChange={(v) => setSpecial({ ...special, counts_as_wages: v })} label="Special Allowance counts as PF wage" />
                       </td>
+                      <td className="py-2.5">
+                        <Switch checked={special.counts_as_esi_wages !== false} onCheckedChange={(v) => setSpecial({ ...special, counts_as_esi_wages: v })} label="Special Allowance counts as ESI wage" />
+                      </td>
                       <td />
                     </tr>
                   </tbody>
@@ -326,8 +337,8 @@ export default function StructureBuilder() {
                 <Button variant="outline" size="sm" onClick={() => setRows([...rows, blank(rows.length)])}>
                   <Plus /> Add component
                 </Button>
-                <p className="max-w-md text-right text-[13px] text-muted-foreground">
-                  * PF wage: tick it on Basic, and on a dearness allowance if you use one. It decides which components form the PF base, and nothing else.
+                <p className="max-w-xl text-right text-[13px] text-muted-foreground">
+                  * PF wage: normally Basic and DA. ESI wage: selected monthly earnings determine eligibility and contributions; yearly components are excluded.
                 </p>
               </div>
             </CardBody>
@@ -426,7 +437,7 @@ export default function StructureBuilder() {
 
 /**
  * PF and ESI are not components anyone types in: they are worked out from the
- * statutory rates, the components switched on as PF wage, and gross. This says
+ * statutory rates and the components switched on as PF or ESI wage. This says
  * how, and where each part is set; the amounts are in the salary breakup.
  */
 function StatutoryCard({ rates }) {
@@ -441,8 +452,8 @@ function StatutoryCard({ rates }) {
         : '—',
       'Company contribution',
     ],
-    ['ESI — employee', esi ? `${esi.employee_pct}% of gross, while gross is ${formatINR(esi.ceiling)} or less` : '—', 'Deduction'],
-    ['ESI — company', esi ? `${esi.employer_pct}% of gross, only when the person is eligible (gross ${formatINR(esi.ceiling)} or less)` : '—', 'Company contribution'],
+    ['ESI — employee', esi ? `${esi.employee_pct}% of the selected ESI wage, while that wage is ${formatINR(esi.ceiling)} or less` : '—', 'Deduction'],
+    ['ESI — company', esi ? `${esi.employer_pct}% of the selected ESI wage, only when the person is eligible (ESI wage ${formatINR(esi.ceiling)} or less)` : '—', 'Company contribution'],
     ['Professional tax', "From the slabs for the person's work state", 'Deduction'],
     ['Income tax (TDS)', "From the person's tax regime and declarations", 'Deduction'],
   ];
@@ -485,8 +496,8 @@ function StatutoryCard({ rates }) {
             </p>
           </div>
           <div>
-            <div className="font-semibold text-foreground">What counts as PF wage</div>
-            <p className="text-muted-foreground">The PF wage switch on each component above — normally Basic and DA.</p>
+            <div className="font-semibold text-foreground">Which earnings count</div>
+            <p className="text-muted-foreground">Use each component's PF wage and ESI wage switches above. ESI includes monthly earnings by default.</p>
           </div>
           <div>
             <div className="font-semibold text-foreground">For one person</div>

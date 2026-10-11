@@ -232,7 +232,7 @@ export async function computeIssues(db, ym) {
         esi_enabled: true,
         rates: { pf: ctx.rates.pf, esi: ctx.rates.esi },
       });
-      if (sol.ambiguous) add(e, 'CTC_ESI_BAND', 'WARNING', 'The agreed CTC has two valid grosses either side of the ESI ceiling.', 'pay');
+      if (sol.ambiguous) add(e, 'CTC_ESI_BAND', 'WARNING', 'The agreed CTC has valid salary options with and without ESI.', 'pay');
     }
   }
   return { issues, run, population };
@@ -417,6 +417,7 @@ export async function executeRun(ym, actor, onProgress) {
                 pt_basis: r.pt_basis,
                 esi: ps.esi,
                 statutory_gross: r.statutory_gross,
+                esi_wage: r.esi_wage,
                 employee_statutory: r.employee_statutory,
                 recovery: r.recovery,
                 flags: r.flags,

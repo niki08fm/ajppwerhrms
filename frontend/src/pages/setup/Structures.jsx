@@ -71,6 +71,7 @@ export default function Structures() {
                       <th>Rule</th>
                       <th>Tax</th>
                       <th>PF base</th>
+                      <th>ESI wage</th>
                       <th className="text-right">At {formatINR(s.sample.gross)}</th>
                     </tr>
                   </thead>
@@ -86,6 +87,7 @@ export default function Structures() {
                           <td className="text-muted-foreground">{ruleOf(c)}</td>
                           <td>{c.is_taxable ? 'Taxable' : 'Exempt'}</td>
                           <td>{c.counts_as_wages ? <Chip tone="info">PF base</Chip> : ''}</td>
+                          <td>{c.frequency === 'MONTHLY' && c.counts_as_esi_wages !== false ? <Chip tone="info">ESI wage</Chip> : ''}</td>
                           <td className="text-right">
                             <Money value={amt} />
                           </td>

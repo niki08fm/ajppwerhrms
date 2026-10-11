@@ -185,11 +185,13 @@ export const salaryComponentSchema = z
     pay_month: z.number().int().min(1).max(12).nullable(),
     is_taxable: z.boolean(),
     counts_as_wages: z.boolean(),
+    counts_as_esi_wages: z.boolean().default(true),
     colour: z.string().max(40).default('chart-1'),
   })
   .strict()
   .refine((c) => c.max_amount === null || isPercentCalc(c.calc_type), { message: 'A maximum only applies to a percentage component.', path: ['max_amount'] })
-  .refine((c) => !isPercentCalc(c.calc_type) || c.calc_value <= 100, { message: 'A percentage cannot be more than 100.', path: ['calc_value'] });
+  .refine((c) => !isPercentCalc(c.calc_type) || c.calc_value <= 100, { message: 'A percentage cannot be more than 100.', path: ['calc_value'] })
+  .transform((c) => ({ ...c, counts_as_esi_wages: c.frequency === 'MONTHLY' && c.counts_as_esi_wages }));
 
 /**
  * Whatever is left of gross is the Special Allowance. A structure sent without
@@ -222,6 +224,7 @@ export const structureCreateSchema = z
           pay_month: null,
           is_taxable: true,
           counts_as_wages: false,
+          counts_as_esi_wages: true,
           colour: `chart-${((seq - 1) % 5) + 1}`,
         })),
       ),

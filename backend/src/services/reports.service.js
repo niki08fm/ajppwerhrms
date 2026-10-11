@@ -284,7 +284,7 @@ export async function buildReport(db, ym, key, opts) {
     case 'esi': {
       const rows = slips
         .filter((s) => s.esi_applicable)
-        .map((s) => ({ ...base(s), ip_number: meta(s).ids.esi_number ?? '', days: Number(s.paid_days), wages: meta(s).statutory_gross, employee: line(s, 'ESI'), employer: line(s, 'ER_ESI') }));
+        .map((s) => ({ ...base(s), ip_number: meta(s).ids.esi_number ?? '', days: Number(s.paid_days), wages: meta(s).esi_wage ?? meta(s).statutory_gross, employee: line(s, 'ESI'), employer: line(s, 'ER_ESI') }));
       const sum = (k) => rows.reduce((a, r) => a + r[k], 0);
       return {
         key,

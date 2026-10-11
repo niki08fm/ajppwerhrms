@@ -496,6 +496,8 @@ model SalaryComponent {
   is_taxable      Boolean         @default(true)
   /// Decides which components form the PF base, and nothing else
   counts_as_wages Boolean         @default(false)
+  /// Monthly earnings included in ESI wages; existing structures include all monthly earnings
+  counts_as_esi_wages Boolean     @default(true)
   colour          String          @default("chart-1")
   created_at      DateTime        @default(now()) @db.Timestamptz(6)
   updated_at      DateTime?       @updatedAt @db.Timestamptz(6)

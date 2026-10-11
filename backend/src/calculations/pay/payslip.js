@@ -10,7 +10,7 @@ import { expandStructure } from './structure.js';
 import { applyRecoveryCap } from './recovery.js';
 
 /** Stored on every payslip. Bump when a computation changes so old months stay explainable. */
-export const ENGINE_VERSION = '1.4.0';
+export const ENGINE_VERSION = '1.5.0';
 
 export class PayslipReconciliationError extends Error {
   constructor(message) {
@@ -35,11 +35,13 @@ export function assemblePayslip(input) {
   // 1. Monthly components, less LOP.
   let componentsEarned = 0;
   let pfBaseEarned = 0;
+  let esiBaseEarned = 0;
   let taxableRegular = 0;
   for (const c of full.monthly) {
     const earned = earnedAfterLop(c.amount, input.divisor, rule, att.lop_days, att.paid_days);
     componentsEarned += earned;
     if (c.counts_as_wages) pfBaseEarned += earned;
+    if (c.counts_as_esi_wages !== false) esiBaseEarned += earned;
     if (c.is_taxable) taxableRegular += c.amount;
     push({ kind: 'COMPONENT', code: c.name, name: c.name, full_amount: c.amount, amount: earned, is_taxable: c.is_taxable, counts_as_wages: c.counts_as_wages });
   }
@@ -114,13 +116,14 @@ export function assemblePayslip(input) {
   // 6. Gross.
   const salary_gross = componentsEarned + yearlyTotal + otAmount + offdayTotal + leaveTotal;
   const gross = salary_gross + adhocEarnings;
-  // ESI and PT are computed on salary earnings (components, overtime, off-day pay).
-  // Whether a taxable bonus also counts here is an open question with AJPWER (spec §6).
+  // PT retains its salary earnings base. ESI uses the structure's selected
+  // monthly earnings after LOP; overtime and off-day earnings remain included.
   const statutory_gross = componentsEarned + otAmount + offdayTotal;
+  const esi_wage = esiBaseEarned + otAmount + offdayTotal;
 
   // 7. Statutory deductions.
   const pf = computePf(pfBaseEarned, input.statutory, input.rates.pf);
-  const esi = computeEsi(input.statutory.esi_applicable, statutory_gross, input.rates.esi);
+  const esi = computeEsi(input.statutory.esi_applicable, esi_wage, input.rates.esi);
   const pt = computePt({ pt_applicable: input.statutory.pt_applicable, pt_state: input.statutory.pt_state, gender: input.employee.gender, gross: statutory_gross, month }, input.pt_slabs);
   const monthsInFy = Math.max(1, input.tax.months_in_fy);
   const projected = {
@@ -203,6 +206,7 @@ export function assemblePayslip(input) {
     adhoc_earnings: adhocEarnings,
     gross,
     statutory_gross,
+    esi_wage,
     employee_statutory,
     recoveries_total: recovery.total_recovered,
     adhoc_deductions,

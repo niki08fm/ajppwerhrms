@@ -598,15 +598,17 @@ export const updateStatutory = asyncHandler(async (req, res) => {
   if (b.decl_80d !== undefined) data.decl_80d = BigInt(b.decl_80d);
   if (b.decl_rent_monthly !== undefined) data.decl_rent_monthly = BigInt(b.decl_rent_monthly);
   if (b.pt_applicable === true) data.pt_exempt_reason = null;
-  // ESI can be switched on only for someone eligible: gross within the ceiling, or still
+  // ESI can be switched on only for someone eligible: selected wages within the ceiling, or still
   // covered for the current contribution period.
   if (b.esi_enabled === true && !before.esi_enabled) {
     const now = today();
     const sal = await salaryOn(prisma, e.id, now > fromDbDate(e.joined_on) ? now : fromDbDate(e.joined_on));
     const rates = await ratesOn(prisma, now);
     const covered = before.esi_locked_until && fromDbDate(before.esi_locked_until) >= now;
-    if (sal && sal.monthly_gross > rates.esi.ceiling && !covered) {
-      throw new AppError('VALIDATION', `${e.name} is not eligible for ESI: the gross is above the ${formatINR(rates.esi.ceiling)} ceiling.`, 422, 'esi_enabled');
+    const components = sal ? await structureComponents(prisma, sal.structure_id) : null;
+    const esiWage = sal ? expandStructure(components, sal.monthly_gross, ctcBasisOf(sal, components, before, rates)).esi_base : 0;
+    if (sal && esiWage > rates.esi.ceiling && !covered) {
+      throw new AppError('VALIDATION', `${e.name} is not eligible for ESI: the selected ESI wages are above the ${formatINR(rates.esi.ceiling)} ceiling.`, 422, 'esi_enabled');
     }
   }
   const { actor, ip } = who(req);

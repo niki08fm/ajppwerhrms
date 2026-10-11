@@ -5,14 +5,17 @@ import { expandStructure, usesCtc } from './structure.js';
 function costAt(gross, ctx, esiApplies, ctcBasis) {
   const s = expandStructure(ctx.components, gross, ctcBasis);
   const pf = computePf(s.pf_base, ctx.pf, ctx.rates.pf);
-  const esi = computeEsi(esiApplies, gross, ctx.rates.esi);
+  const eligible = s.esi_base <= ctx.rates.esi.ceiling;
+  const applicable = esiApplies ?? (ctx.esi_enabled && eligible);
+  const esi = computeEsi(applicable, s.esi_base, ctx.rates.esi);
   const employer_pf = pfEmployerCost(pf);
   const monthly_cost = s.gross + employer_pf + esi.employer;
   return {
     gross: s.gross,
     employer_pf,
     employer_esi: esi.employer,
-    esi_applies: esiApplies,
+    esi_applies: applicable,
+    esi_wage: s.esi_base,
     yearly_total: s.yearly_total,
     monthly_cost,
     annual_ctc: monthly_cost * 12 + s.yearly_total,
@@ -22,6 +25,7 @@ function costAt(gross, ctx, esiApplies, ctcBasis) {
 
 /**
  * Annual CTC for a monthly gross: 12 × (gross + employer PF 12% + employer ESI) + yearly components.
+ * ESI eligibility and contributions use the selected monthly ESI wage.
  * EDLI and PF admin charges are not part of CTC.
  * `forceEsi` lets the solver evaluate one side of the ceiling explicitly.
  *
@@ -32,9 +36,8 @@ function costAt(gross, ctx, esiApplies, ctcBasis) {
  * and yearly items feed back), so it settles in a handful of rounds.
  */
 export function ctcForGross(gross, ctx, forceEsi, agreedCtc, { round_annual_up = false } = {}) {
-  const esiApplies = forceEsi ?? (ctx.esi_enabled && gross <= ctx.rates.esi.ceiling);
   const at = (basis) => {
-    const cost = costAt(gross, ctx, esiApplies, basis);
+    const cost = costAt(gross, ctx, forceEsi, basis);
     return round_annual_up ? { ...cost, raw_annual_ctc: cost.annual_ctc, annual_ctc: Math.ceil(cost.annual_ctc / 100) * 100 } : cost;
   };
   if (agreedCtc !== undefined || !usesCtc(ctx.components)) return at(agreedCtc ?? 0);
@@ -81,7 +84,7 @@ function bisect(target, minGross, maxGross, ctc) {
  * A PF-counted remainder includes independently rounded components. Inspect
  * neighboring whole-rupee candidates around the bisection bracket as well.
  */
-function solveSide(target, minGross, maxGross, ctc, rangeCtc, componentCount, needsStableBasis) {
+function solveSide(target, minGross, maxGross, ctc, rangeCtc, componentCount, needsStableBasis, eligible = () => true) {
   const minRupees = Math.ceil(minGross / RUPEE);
   const maxRupees = Math.floor(maxGross / RUPEE);
   if (maxRupees < minRupees) return null;
@@ -92,7 +95,7 @@ function solveSide(target, minGross, maxGross, ctc, rangeCtc, componentCount, ne
   };
   const candidate = bisect(target, minRupees, maxRupees, at);
   const validGross = (s) => s.gross === s.breakdown.gross && (!needsStableBasis || s.breakdown.ctc_basis === s.breakdown.annual_ctc);
-  const qualifies = (s) => validGross(s) && s.breakdown.annual_ctc >= target;
+  const qualifies = (s) => validGross(s) && eligible(s) && s.breakdown.annual_ctc >= target;
   // Annual/salary rounding cannot make a target beyond this branch eligible.
   const inRange = target >= rangeCtc(minGross).annual_ctc && target <= rangeCtc(maxGross).annual_ctc;
 
@@ -122,7 +125,7 @@ function solveSide(target, minGross, maxGross, ctc, rangeCtc, componentCount, ne
 /**
  * Solve monthly gross from annual CTC.
  *
- * CTC is NOT monotonic in gross: at the ESI ceiling employer ESI switches off, so
+ * CTC is NOT monotonic in gross: at the selected ESI wage ceiling employer ESI switches off, so
  * a paise more of gross gives a lower CTC. A CTC in that band can have two valid
  * grosses. A single bisection over the whole range silently returns a wrong answer
  * there, so each side of the ceiling is solved separately. Candidate salaries
@@ -138,13 +141,45 @@ export function solveGrossFromCtc(annualCtc, ctx) {
   const ok = (s) => !!s && s.in_range && s.gross === s.breakdown.gross
     && (!needsStableBasis || s.breakdown.ctc_basis === s.breakdown.annual_ctc)
     && s.breakdown.annual_ctc >= annualCtc && s.breakdown.annual_ctc - annualCtc <= s.rounding_limit;
-  const side = (min, max, esi) => solveSide(annualCtc, min, max,
+  const side = (min, max, esi, eligible) => solveSide(annualCtc, min, max,
     (g) => ctcForGross(g, ctx, esi, undefined, { round_annual_up: true }),
-    (g) => ctcForGross(g, ctx, esi, annualCtc), ctx.components.length, usesCtc(ctx.components));
+    (g) => ctcForGross(g, ctx, esi, annualCtc), ctx.components.length, usesCtc(ctx.components), eligible);
 
   if (!ctx.esi_enabled) {
     const s = side(0, maxGross, false);
     return { gross: s.gross, breakdown: s.breakdown, rounding_limit: s.rounding_limit, ambiguous: false, alternative: null, approximate: !ok(s) };
+  }
+
+  // A selected ESI wage can be a percentage of gross, capped, based on CTC,
+  // or the remainder. The discontinuity is where that wage crosses the
+  // ceiling, which need not be at a ₹21,000 gross. Invert each forced cost
+  // curve independently, then validate its wage instead of clipping gross.
+  // Keep the existing endpoint checks when every monthly component counts,
+  // including legacy structures: those endpoint checks prevent rounding from
+  // granting coverage to a target beyond the eligible branch's raw cost.
+  const allMonthlySelected = ctx.components.filter((c) => c.frequency === 'MONTHLY').every((c) => c.counts_as_esi_wages !== false);
+  if (!allMonthlySelected) {
+    const wageEligible = (s, applies) => {
+      const within = s.breakdown.esi_wage <= ctx.rates.esi.ceiling;
+      // Test the original CTC basis too. Normalizing an agreement upwards must
+      // not turn an originally ineligible wage into an eligible one.
+      const original = expandStructure(ctx.components, s.gross, annualCtc).esi_base <= ctx.rates.esi.ceiling;
+      return applies ? within && original : !within;
+    };
+    const withEsi = side(0, maxGross, true, (s) => wageEligible(s, true));
+    const withoutEsi = side(0, maxGross, false, (s) => wageEligible(s, false));
+    const esiSide = withEsi && wageEligible(withEsi, true) && ok(withEsi) ? withEsi : null;
+    const plainSide = withoutEsi && wageEligible(withoutEsi, false) && ok(withoutEsi) ? withoutEsi : null;
+    if (esiSide && plainSide) {
+      return { gross: esiSide.gross, breakdown: esiSide.breakdown, rounding_limit: esiSide.rounding_limit,
+        ambiguous: true, alternative: { gross: plainSide.gross, breakdown: plainSide.breakdown, rounding_limit: plainSide.rounding_limit }, approximate: false };
+    }
+    const found = esiSide ?? plainSide;
+    if (found) return { gross: found.gross, breakdown: found.breakdown, rounding_limit: found.rounding_limit, ambiguous: false, alternative: null, approximate: false };
+    const candidates = [withEsi, withoutEsi].filter(Boolean);
+    candidates.sort((a, b) => Math.abs(a.breakdown.annual_ctc - annualCtc) - Math.abs(b.breakdown.annual_ctc - annualCtc));
+    const best = candidates[0] ?? { gross: 0, breakdown: ctcForGross(0, ctx, undefined, annualCtc) };
+    return { gross: best.gross, breakdown: best.breakdown, rounding_limit: best.rounding_limit ?? 0, ambiguous: false, alternative: null, approximate: true };
   }
 
   // 1. [0, ceiling] with ESI applied

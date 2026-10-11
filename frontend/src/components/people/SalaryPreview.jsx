@@ -84,7 +84,7 @@ export function SalaryPreviewPanel({ args, chosen, onChoose, compact }) {
         {args.mode === 'CTC'
           ? `A CTC of ${exactInr(annualCost)} a year is ${inr(p.ctc.monthly_cost)} a month. Less the employer's PF ${inr(p.ctc.employer_pf ?? 0)} and ESI ${inr(p.ctc.employer_esi ?? 0)}, the gross is ${inr(p.gross)} a month.`
           : `A gross of ${inr(p.gross * 12)} a year is ${inr(p.gross)} a month. With the employer's PF ${inr(p.ctc.employer_pf ?? 0)} and ESI ${inr(p.ctc.employer_esi ?? 0)} on top, the CTC is ${exactInr(annualCost)} a year.`}
-        {p.esi_within_ceiling === false ? p.esi?.applicable ? ' ESI coverage continues for the current contribution period.' : ' Not eligible for ESI: the gross is above the ceiling.' : ''}
+        {p.esi_within_ceiling === false ? p.esi?.applicable ? ' ESI coverage continues for the current contribution period.' : ' Not eligible for ESI: the selected ESI wage is above the ceiling.' : ''}
       </p>
       {!compact && (
         <>

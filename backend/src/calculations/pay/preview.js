@@ -24,13 +24,16 @@ export function salaryPreview(input) {
   // choice or rate change must not re-solve and replace its recorded gross.
   if (input.saved_gross !== undefined) gross = input.saved_gross;
 
-  let esi_eligible_gross = gross <= input.rates.esi.ceiling ? gross : null;
+  let esi_eligible_gross = null;
+  let esi_eligible_wage = null;
   if (input.mode === 'CTC') {
     // The editor can offer ESI even when the current without-ESI preview is
     // above the ceiling. This candidate is informational, not a flag change.
     const eligibleSolution = input.esi_enabled ? solution : solveGrossFromCtc(input.amount, { ...ctx, esi_enabled: true });
     const candidates = [eligibleSolution, eligibleSolution.alternative].filter(Boolean);
-    esi_eligible_gross = eligibleSolution.approximate ? null : candidates.find((candidate) => candidate.breakdown.esi_applies && candidate.gross <= input.rates.esi.ceiling)?.gross ?? null;
+    const candidate = eligibleSolution.approximate ? null : candidates.find((candidate) => candidate.breakdown.esi_applies && candidate.breakdown.esi_wage <= input.rates.esi.ceiling);
+    esi_eligible_gross = candidate?.gross ?? null;
+    esi_eligible_wage = candidate?.breakdown.esi_wage ?? null;
   }
   // Existing agreements keep their recorded CTC basis. New CTC calculations
   // run on the actual CTC of the rounded gross, including "% of CTC" items.
@@ -49,8 +52,13 @@ export function salaryPreview(input) {
     if (reason) solution = { ...solution, approximate: true, reason };
   }
   const pf = computePf(structure.pf_base, input.pf, input.rates.pf);
-  const esi_within_ceiling = gross <= input.rates.esi.ceiling;
-  const esi = computeEsi(input.esi_enabled && esi_within_ceiling, gross, input.rates.esi);
+  const esi_wage = structure.esi_base;
+  const esi_within_ceiling = esi_wage <= input.rates.esi.ceiling;
+  if (input.mode !== 'CTC') {
+    esi_eligible_gross = esi_within_ceiling ? gross : null;
+    esi_eligible_wage = esi_within_ceiling ? esi_wage : null;
+  }
+  const esi = computeEsi(input.esi_enabled && esi_within_ceiling, esi_wage, input.rates.esi);
   const month = input.month ?? 4;
   const pt = computePt({ ...input.pt, gross, month: month === 2 ? 3 : month }, input.pt_slabs);
   const pt_february = computePt({ ...input.pt, gross, month: 2 }, input.pt_slabs);
@@ -67,8 +75,10 @@ export function salaryPreview(input) {
     solution,
     pf,
     esi,
+    esi_wage,
     esi_within_ceiling,
     esi_eligible_gross,
+    esi_eligible_wage,
     pt,
     pt_february,
     tds_monthly,

@@ -1,6 +1,7 @@
 import { Money } from '@/components/bits';
 import { Chip } from '@/components/states';
 import { cn } from '@/utils';
+import { formatINR } from '@ajpwer/shared';
 import { hasPaise } from './SalaryDisplay';
 
 const NA = <span className="text-muted-foreground">—</span>;
@@ -50,11 +51,12 @@ function Total({ label, monthly, yearly, tone }) {
 export function SalaryBreakup({ p, rates, rules, capped, className }) {
   const pct = (v) => (v === undefined ? '' : ` (${v}%)`);
   const esiOn = p.esi.applicable;
-  const esiNote = !esiOn
+  const esiWage = p.esi_wage ?? p.structure.esi_base ?? p.gross;
+  const esiNote = esiWage === 0 ? 'No monthly earnings selected as ESI wage' : !esiOn
     ? p.esi_within_ceiling
       ? 'Switched off for this person'
-      : `Only when gross is ${rates?.esi?.ceiling ? `₹${(rates.esi.ceiling / 100).toLocaleString('en-IN')}` : 'at the ESI ceiling'} or less`
-    : undefined;
+      : `ESI wage ${formatINR(esiWage)} exceeds ${rates?.esi?.ceiling ? formatINR(rates.esi.ceiling) : 'the ESI ceiling'}`
+    : `On an ESI wage of ${formatINR(esiWage)}`;
   const yearlyItems = p.structure.yearly.reduce((s, c) => s + c.amount, 0);
 
   const contributions = p.ctc.employer_pf + p.ctc.employer_esi;
