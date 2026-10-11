@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Bar, BarChart, ResponsiveContainer, Tooltip, YAxis } from 'recharts';
-import { ArrowUpRight, Building2, Clock3, KeyRound, MapPin, Plus, Search, Users } from 'lucide-react';
+import { ArrowUpRight, Building2, Clock3, KeyRound, Loader2, MapPin, Plus, Search, Users } from 'lucide-react';
 import { api } from '@/services/api';
 import { useSession } from '@/context/SessionContext';
 import { mins } from '@/utils';
@@ -27,6 +27,8 @@ export default function Sites() {
   const currentPeople = sites.reduce((sum, site) => sum + site.today.on_site_now, 0);
   const occupiedSites = sites.filter((site) => site.today.on_site_now > 0).length;
   const workedMinutes = sites.reduce((sum, site) => sum + site.today.worked_min, 0);
+  const siteColours = new Map(sites.map((site, index) => [site.id, CHART[index % CHART.length]]));
+  const liveLabel = q.isFetching ? 'Updating' : q.isError ? 'Could not refresh' : 'Live';
   const attendancePeak = Math.max(1, ...sites.flatMap((site) => site.sparkline.map((day) => day.present)));
   const dayLabel = (date) => new Date(`${date}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
   return (
@@ -63,23 +65,23 @@ export default function Sites() {
         </Card>
       ) : (
         <>
-          <Card className="grid gap-5 px-5 py-5 sm:grid-cols-3 sm:gap-6">
-            <div className="flex items-center gap-3">
+          <Card className="grid items-center gap-5 px-5 py-5 sm:grid-cols-3 sm:gap-6">
+            <div className="flex items-center gap-3 rounded-lg border border-primary/15 bg-primary/8 p-3">
               <div className="rounded-lg bg-primary/10 p-3 text-primary"><Users className="size-5" /></div>
-              <div>
-                <div className="text-[12px] text-muted-foreground">On site now</div>
-                <div className="num text-3xl font-semibold leading-tight">{currentPeople} <span className="text-[13px] font-normal text-muted-foreground">people</span></div>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center justify-between gap-1 text-[12px] text-muted-foreground"><span>On site now</span><span className="inline-flex items-center gap-1 text-primary" role="status">{q.isFetching ? <Loader2 className="size-3 animate-spin" /> : !q.isError && <span className="size-1.5 rounded-full bg-primary" />}{liveLabel}</span></div>
+                <div className="num text-3xl font-semibold leading-tight text-primary">{currentPeople} <span className="text-[13px] font-normal text-muted-foreground">people</span></div>
               </div>
             </div>
             <div className="flex items-center gap-3 sm:border-l sm:pl-6">
-              <div className="rounded-lg bg-muted p-3 text-muted-foreground"><Building2 className="size-5" /></div>
+              <div className="rounded-lg bg-chart-2/10 p-3 text-chart-2"><Building2 className="size-5" /></div>
               <div>
                 <div className="text-[12px] text-muted-foreground">Sites with people now</div>
                 <div className="num text-2xl font-semibold leading-tight">{occupiedSites} <span className="text-[13px] font-normal text-muted-foreground">of {sites.length} sites</span></div>
               </div>
             </div>
             <div className="flex items-center gap-3 sm:border-l sm:pl-6">
-              <div className="rounded-lg bg-muted p-3 text-muted-foreground"><Clock3 className="size-5" /></div>
+              <div className="rounded-lg bg-chart-3/10 p-3 text-chart-3"><Clock3 className="size-5" /></div>
               <div>
                 <div className="text-[12px] text-muted-foreground">Completed hours today</div>
                 <div className="num text-2xl font-semibold leading-tight">{mins(workedMinutes)}</div>
@@ -103,7 +105,7 @@ export default function Sites() {
           ) : (
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {filtered.map((s) => (
-                <Card key={s.id} className="group flex min-w-0 flex-col overflow-hidden transition-shadow hover:shadow-md">
+                <Card key={s.id} className="group flex min-w-0 flex-col overflow-hidden border-t-2 transition-shadow hover:shadow-md" style={{ borderTopColor: siteColours.get(s.id) }}>
                   <Link to={`/sites/${s.id}`} aria-label={`Open ${s.name}`} className="flex-1 p-5 transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
@@ -112,9 +114,9 @@ export default function Sites() {
                       </div>
                       <ArrowUpRight className="mt-1 size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-primary" />
                     </div>
-                    <div className="mt-5 flex items-end justify-between gap-3">
+                    <div className="mt-5 flex items-end justify-between gap-3 rounded-lg border px-3 py-3" style={{ background: `color-mix(in srgb, ${siteColours.get(s.id)} 9%, var(--card))`, borderColor: `color-mix(in srgb, ${siteColours.get(s.id)} 22%, var(--border))` }}>
                       <div>
-                        <div className="num text-[38px] font-semibold leading-none text-primary">{s.today.on_site_now}</div>
+                        <div className="num text-[38px] font-semibold leading-none" style={{ color: `color-mix(in srgb, ${siteColours.get(s.id)} 60%, var(--foreground))` }}>{s.today.on_site_now}</div>
                         <div className="mt-1.5 text-[13px] text-muted-foreground">people on site now</div>
                       </div>
                       {!s.is_active ? <Chip tone="muted">Inactive</Chip> : !s.login_enabled ? <Chip tone="warning">Login disabled</Chip> : <Chip tone="success">Active</Chip>}
@@ -129,7 +131,7 @@ export default function Sites() {
                         <BarChart data={s.sparkline} margin={{ top: 2, right: 0, bottom: 0, left: 0 }} barCategoryGap="22%">
                           <YAxis hide domain={[0, attendancePeak]} />
                           <Tooltip {...tooltipStyle} labelFormatter={(_label, payload) => payload?.[0]?.payload?.date ? dayLabel(payload[0].payload.date) : ''} formatter={(value) => [value, 'People in']} cursor={{ fill: 'var(--muted)' }} />
-                          <Bar dataKey="present" fill={CHART[0]} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+                          <Bar dataKey="present" fill={siteColours.get(s.id)} radius={[3, 3, 0, 0]} isAnimationActive={false} />
                         </BarChart>
                       </ResponsiveContainer>
                       {!s.sparkline.some((day) => day.present > 0) && <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-[12px] text-muted-foreground">No attendance recorded</div>}

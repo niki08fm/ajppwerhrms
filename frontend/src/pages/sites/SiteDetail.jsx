@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, ChevronLeft, ChevronRight, KeyRound, Loader2, Pencil, Power, Search, Settings2, Users } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, KeyRound, Pencil, Power, Search, Settings2, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { Bar, BarChart, CartesianGrid, Pie, PieChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { addDays, addMonths, diffDays, firstOfMonth, isISODate, isYearMonth, istDate, lastOfMonth } from '@ajpwer/shared';
@@ -9,7 +9,7 @@ import { api, errorMessage } from '@/services/api';
 import { useSession } from '@/context/SessionContext';
 import { useLookups } from '@/hooks/useLookups';
 import { cn, dateSpan, istTime, mins } from '@/utils';
-import { Mono, PageHeader, PersonLink, Stat } from '@/components/bits';
+import { Mono, PageHeader, PersonLink } from '@/components/bits';
 import { axis, CHART, grid, tooltipStyle } from '@/components/charts';
 import { Chip, EmptyState, ErrorState, SkeletonBlock } from '@/components/states';
 import { Button } from '@/components/ui/button';
@@ -18,6 +18,7 @@ import { Input } from '@/components/ui/form';
 import { Dialog } from '@/components/ui/overlay';
 import { PasswordOnceDialog, ResetPasswordDialog, SiteFormDialog } from '@/components/sites/SiteForm';
 import SiteWageInsights from '@/components/sites/SiteWageInsights';
+import SiteLiveSummary from '@/components/sites/SiteLiveSummary';
 
 const shortDay = (date) => new Date(`${date}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' });
 const departmentKey = (department) => department.id ?? 'unassigned';
@@ -115,19 +116,7 @@ export default function SiteDetail() {
       />
       {editing && <SiteFormDialog site={d.site} onClose={() => setEditing(false)} />}
 
-      <div>
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-[13px]">
-          <div className="flex items-center gap-2"><span className="font-medium">Today</span><span className="text-muted-foreground">{dateSpan(d.date)}</span></div>
-          <div className="flex items-center gap-1.5 text-muted-foreground" role="status">{q.isFetching ? <><Loader2 className="size-3 animate-spin" /> Updating…</> : q.isError ? 'Could not refresh' : <><span className="size-2 rounded-full bg-primary" /> Live · updated {istTime(new Date(q.dataUpdatedAt).toISOString())}</>}</div>
-        </div>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-          <Stat label="On site now" value={d.today.on_site_now} sub="currently punched in" tone="success" />
-          <Stat label="In today" value={d.today.punched_in} sub="people who punched in" />
-          <Stat label="Signed out" value={d.today.signed_out} sub="people who punched out" />
-          <Stat label="Late in" value={d.today.late_in} sub="after their grace time" tone={d.today.late_in ? 'warning' : undefined} />
-          <div className="col-span-2 md:col-span-1"><Stat label="OT hours" value={mins(d.today.ot_min)} sub="recorded today" /></div>
-        </div>
-      </div>
+      <SiteLiveSummary today={d.today} date={d.date} fetching={q.isFetching} failed={q.isError} updatedAt={q.dataUpdatedAt} onViewPeople={() => openPeople(null)} />
 
       <Card className="px-5 py-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
