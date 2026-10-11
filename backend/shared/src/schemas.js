@@ -163,6 +163,15 @@ export const policyVersionSchema = z
   })
   .strict();
 
+export const policyVersionPatchSchema = z
+  .object({
+    valid_from: isoDate.optional(),
+    name: z.string().trim().min(1).max(100).optional(),
+    rules: z.unknown().optional(),
+  })
+  .strict()
+  .refine((body) => Object.keys(body).length > 0, 'Choose something to change.');
+
 export const salaryComponentSchema = z
   .object({
     seq: z.number().int().min(0),

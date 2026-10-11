@@ -1,6 +1,7 @@
 import { esiRatesSchema, parsePolicyRules, pfRatesSchema } from '@ajpwer/shared';
 import { AppError } from '../utils/errors.js';
 import { fromDbDate, n, toDbDate } from '../utils/dbDates.js';
+import { lockPolicyRulesRead } from './policy-history.service.js';
 
 /** The statutory rates row valid on a date: latest valid_from ≤ date. */
 export async function ratesOn(db, date) {
@@ -104,6 +105,7 @@ export function toAttachedPolicy(p) {
 }
 
 export async function payGroupRules(db, payGroupId) {
+  await lockPolicyRulesRead(db);
   const g = await db.payGroup.findUniqueOrThrow({
     where: { id: payGroupId },
     include: { shift: true, policies: { where: { deleted_at: null }, include: { policy: true } } },

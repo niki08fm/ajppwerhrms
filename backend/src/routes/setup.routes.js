@@ -8,7 +8,8 @@ setupRouter.get('/policies', requirePerm('setup.read'), setupController.listPoli
 setupRouter.get('/policies/:key/versions', requirePerm('setup.read'), setupController.listPolicyVersions);
 setupRouter.post('/policies', requirePerm('setup.write'), setupController.createPolicy);
 setupRouter.post('/policies/:key/versions', requirePerm('setup.write'), setupController.createPolicyVersion);
-setupRouter.all(['/policies/:id', '/policies/:key/versions/:v'], setupController.rejectPolicyEdit);
+setupRouter.patch('/policies/:key/versions/:version', requirePerm('setup.write'), setupController.updatePolicyVersion);
+setupRouter.delete('/policies/:key/versions/:version', requirePerm('setup.write'), setupController.deletePolicyVersion);
 setupRouter.get('/structures', requirePerm('setup.read'), setupController.listStructures);
 setupRouter.get('/structures/:id', requirePerm('setup.read'), setupController.getStructure);
 setupRouter.post('/structures/validate', requirePerm('setup.read'), setupController.validateStructureDraft);

@@ -12,6 +12,7 @@ import {
   POLICY_KIND_MISSING_WARNING,
   policyCreateSchema,
   policyVersionSchema,
+  policyVersionPatchSchema,
   ptSlabsReplaceSchema,
   shiftSchema,
   statutoryRatesCreateSchema,
@@ -30,6 +31,7 @@ import { prisma } from '../config/db.js';
 import { holidaysBetween, ptSlabs, ratesOn, regimesOn, toAttachedPolicy, toComponentDefs } from '../services/rules.service.js';
 import { randomUUID } from 'node:crypto';
 import { addDepartment, changeDepartment, listDepartmentSettings, removeDepartment } from '../services/department.service.js';
+import { editPolicyVersion, lockPolicyRulesRead, policyHistoryProtection, publishPolicyVersion, removePolicyVersion } from '../services/policy-history.service.js';
 
 const today = () => istDate(new Date());
 
@@ -37,7 +39,7 @@ const SAMPLE_GROSS = 24_000_00;
 
 // ─── Policies ────────────────────────────────────────────────────────────────
 
-function policyView(p) {
+function policyView(p, protection) {
   return {
     id: p.id,
     policy_key: p.policy_key,
@@ -51,6 +53,7 @@ function policyView(p) {
     created_by: p.created_by,
     created_at: p.created_at,
     pay_groups: p.pay_groups?.map((x) => x.pay_group) ?? [],
+    ...(protection ?? {}),
   };
 }
 
@@ -61,17 +64,19 @@ export const listPolicies = asyncHandler(async (req, res) => {
     include: { pay_groups: { where: { deleted_at: null }, include: { pay_group: { select: { id: true, name: true } } } } },
     orderBy: [{ kind: 'asc' }, { name: 'asc' }, { version: 'desc' }],
   });
-  res.json({ data: rows.map(policyView) });
+  const protection = await policyHistoryProtection(prisma, rows);
+  res.json({ data: rows.map((row) => policyView(row, protection.get(row.id))) });
 });
 
 export const listPolicyVersions = asyncHandler(async (req, res) => {
   const rows = await prisma.policy.findMany({
-    where: { policy_key: req.params.key, deleted_at: null },
+    where: { policy_key: uuid.parse(req.params.key), deleted_at: null },
     include: { pay_groups: { where: { deleted_at: null }, include: { pay_group: { select: { id: true, name: true } } } } },
     orderBy: { version: 'desc' },
   });
   if (!rows.length) throw notFound('That policy');
-  res.json({ data: rows.map(policyView) });
+  const protection = await policyHistoryProtection(prisma, rows);
+  res.json({ data: rows.map((row) => policyView(row, protection.get(row.id))) });
 });
 
 export const createPolicy = asyncHandler(async (req, res) => {
@@ -88,58 +93,29 @@ export const createPolicy = asyncHandler(async (req, res) => {
   res.status(201).json({ data: policyView(p) });
 });
 
-/**
- * Editing a policy is not permitted. Publishing a new version closes the current
- * one the day before, creates version n+1, and attaches it wherever the old one
- * was. Both stay attached; the engine picks by date.
- */
+/** Publish dated rules; frozen pay is checked before closing an older version. */
 export const createPolicyVersion = asyncHandler(async (req, res) => {
   const b = policyVersionSchema.parse(req.body);
-  const { actor, ip } = who(req);
-  const created = await prisma.$transaction(async (tx) => {
-    const versions = await tx.policy.findMany({ where: { policy_key: req.params.key, deleted_at: null }, orderBy: { version: 'desc' }, include: { pay_groups: { where: { deleted_at: null } } } });
-    if (!versions.length) throw notFound('That policy');
-    const latest = versions[0];
-    const rules = parsePolicyRules(latest.kind, b.rules);
-    if (b.valid_from <= fromDbDate(latest.valid_from)) {
-      throw new AppError('VALIDATION', `The new version must start after the current one (${fromDbDate(latest.valid_from)}).`, 422, 'valid_from');
-    }
-    if (latest.valid_to && fromDbDate(latest.valid_to) < addDays(b.valid_from, -1)) {
-      // leave a documented gap: the engine falls back to defaults and flags it
-    }
-    await tx.policy.update({ where: { id: latest.id }, data: { valid_to: toDbDate(addDays(b.valid_from, -1)) } });
-    const v = await tx.policy.create({
-      data: { policy_key: latest.policy_key, kind: latest.kind, name: b.name ?? latest.name, version: latest.version + 1, valid_from: toDbDate(b.valid_from), rules: rules, created_by: actor },
-    });
-    for (const link of latest.pay_groups) {
-      await tx.payGroupPolicy.create({ data: { pay_group_id: link.pay_group_id, policy_id: v.id } });
-    }
-    await audit(tx, {
-      actor,
-      ip,
-      action: 'policy.version',
-      entity_type: 'policy',
-      entity_id: v.id,
-      detail: {
-        policy_key: latest.policy_key,
-        from_version: latest.version,
-        to_version: v.version,
-        closed_on: addDays(b.valid_from, -1),
-        valid_from: b.valid_from,
-        old_rules: latest.rules,
-        new_rules: rules,
-        pay_groups: latest.pay_groups.map((x) => x.pay_group_id),
-      },
-    });
-    return v;
-  });
+  const key = uuid.parse(req.params.key);
+  const created = await prisma.$transaction((tx) => publishPolicyVersion(tx, key, b, who(req)));
   res.status(201).json({ data: policyView(created) });
 });
 
-export const rejectPolicyEdit = (req, _res, next) => {
-  if (req.method === 'PATCH' || req.method === 'PUT') return next(new AppError('FORBIDDEN', 'Policies are never edited. Publish a new version with an effective date instead.', 405));
-  next();
-};
+const policyVersionNumber = z.coerce.number().int().positive();
+export const updatePolicyVersion = asyncHandler(async (req, res) => {
+  const key = uuid.parse(req.params.key);
+  const version = policyVersionNumber.parse(req.params.version);
+  const body = policyVersionPatchSchema.parse(req.body);
+  const updated = await prisma.$transaction((tx) => editPolicyVersion(tx, key, version, body, who(req)));
+  res.json({ data: policyView(updated) });
+});
+
+export const deletePolicyVersion = asyncHandler(async (req, res) => {
+  const key = uuid.parse(req.params.key);
+  const version = policyVersionNumber.parse(req.params.version);
+  const deleted = await prisma.$transaction((tx) => removePolicyVersion(tx, key, version, who(req)));
+  res.json({ data: deleted });
+});
 
 // ─── Salary structures ───────────────────────────────────────────────────────
 
@@ -323,6 +299,7 @@ export const createPayGroup = asyncHandler(async (req, res) => {
   const b = payGroupSchema.parse(req.body);
   const { actor, ip } = who(req);
   const g = await prisma.$transaction(async (tx) => {
+    await lockPolicyRulesRead(tx);
     await validateGroupPolicies(tx, b.policy_ids);
     const created = await tx.payGroup.create({
       data: {
@@ -360,6 +337,7 @@ export const updatePayGroup = asyncHandler(async (req, res) => {
   const b = payGroupPatchSchema.parse(req.body);
   const { actor, ip } = who(req);
   await prisma.$transaction(async (tx) => {
+    await lockPolicyRulesRead(tx);
     const before = await tx.payGroup.findFirst({ where: { id: req.params.id, deleted_at: null }, include: { policies: { where: { deleted_at: null } } } });
     if (!before) throw notFound('That pay group');
     const { policy_ids, ...core } = b;

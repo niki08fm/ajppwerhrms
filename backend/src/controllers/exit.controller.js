@@ -27,6 +27,14 @@ function closedReason(p) {
   return null;
 }
 
+function assertProcessReady(result, checklist, body) {
+  const open = checklist.filter((task) => task.required && !task.done_at);
+  if (open.length) throw new AppError('BLOCKING_ISSUES', `Finish the exit checklist first: ${open.map((task) => task.label.toLowerCase()).join('; ')}.`, 409);
+  const noBank = result.clearance.find((item) => item.code === 'NO_BANK' && item.severity === 'BLOCKING');
+  if (noBank) throw new AppError('BLOCKING_ISSUES', noBank.message, 409);
+  if (body.paid_separately && result.net < 0) throw new AppError('VALIDATION', 'The net is recoverable from the employee, so there is nothing to pay separately. Process it through payroll and record the decision.', 422);
+}
+
 /**
  * Everything about someone's exit, on one screen: its details, the checklist with what is
  * ticked, the F&F and where it is processed, the months it can be processed in, and whether
@@ -153,19 +161,29 @@ export const processSettlement = asyncHandler(async (req, res) => {
   const before = await currentSettlement(prisma, e.id);
   if (before?.state === 'PAID') throw new AppError('CONFLICT', 'This F&F has been paid.', 409);
   if (before?.state === 'INCLUDED') throw new AppError('CONFLICT', 'This F&F is already processed. Take it back first to change the month or how it is paid.', 409);
-  const s = await upsertSettlement(prisma, e.id);
   const { result, checklist } = await computeSettlementFor(prisma, e.id, { paidSeparately: !!b.paid_separately });
-  const open = checklist.filter((t) => t.required && !t.done_at);
-  if (open.length) throw new AppError('BLOCKING_ISSUES', `Finish the exit checklist first: ${open.map((t) => t.label.toLowerCase()).join('; ')}.`, 409);
-  const noBank = result.clearance.find((c) => c.code === 'NO_BANK' && c.severity === 'BLOCKING');
-  if (noBank) throw new AppError('BLOCKING_ISSUES', noBank.message, 409);
-  if (b.paid_separately && result.net < 0) throw new AppError('VALIDATION', 'The net is recoverable from the employee, so there is nothing to pay separately. Process it through payroll and record the decision.', 422);
+  assertProcessReady(result, checklist, b);
   const p = await getPeriod(prisma, b.period_ym);
   const why = closedReason(p);
   if (why) throw new AppError('PERIOD_LOCKED', `${why}. Choose a later month, or reopen its F&F step (step 4) there.`, 409, 'period_ym');
   const { actor, ip } = who(req);
-  await prisma.$transaction(async (tx) => {
-    await tx.payrollPeriod.update({ where: { id: p.id }, data: { settlement_ids: [...new Set([...p.settlement_ids, s.id])] } });
+  const fresh = await prisma.$transaction(async (tx) => {
+    // Keep the same period-before-rules order as payroll and policy edits.
+    // The calculation's shared policy lock stays held through finalization.
+    await tx.$queryRaw`SELECT id FROM payroll_period WHERE id = ${p.id}::uuid FOR UPDATE`;
+    const period = await tx.payrollPeriod.findUniqueOrThrow({ where: { id: p.id } });
+    const reason = closedReason(period);
+    if (reason) throw new AppError('PERIOD_LOCKED', `${reason}. Choose a later month, or reopen its F&F step (step 4) there.`, 409, 'period_ym');
+    await tx.$queryRaw`SELECT id FROM employee WHERE id = ${e.id}::uuid FOR UPDATE`;
+    const employee = await tx.employee.findUniqueOrThrow({ where: { id: e.id } });
+    leaving(employee);
+    if (b.period_ym < ymOf(fromDbDate(employee.last_day))) throw new AppError('VALIDATION', 'Choose the month of the current last working day or a later month.', 422, 'period_ym');
+    const current = await currentSettlement(tx, e.id);
+    if (current?.state === 'PAID' || current?.state === 'INCLUDED') throw new AppError('CONFLICT', 'This F&F has already been processed or paid. Reload its exit screen.', 409);
+    const s = await upsertSettlement(tx, e.id);
+    const calculated = await computeSettlementFor(tx, e.id, { paidSeparately: !!b.paid_separately });
+    assertProcessReady(calculated.result, calculated.checklist, b);
+    await tx.payrollPeriod.update({ where: { id: period.id }, data: { settlement_ids: [...new Set([...period.settlement_ids, s.id])] } });
     await tx.settlement.update({
       where: { id: s.id },
       data: { state: 'INCLUDED', period_id: p.id, paid_separately: b.paid_separately ? { ...b.paid_separately, by: actor, at: new Date().toISOString() } : null },
@@ -178,16 +196,17 @@ export const processSettlement = asyncHandler(async (req, res) => {
     }
     // The F&F settles everything: a hold still standing ends with it.
     await tx.salaryHold.updateMany({ where: { employee_id: e.id, released_at: null, deleted_at: null }, data: { released_at: new Date(), released_by: actor, release_note: 'Settled with the F&F' } });
+    const settled = await upsertSettlement(tx, e.id);
     await audit(tx, {
       actor,
       ip,
       action: 'settlement.process',
       entity_type: 'settlement',
       entity_id: s.id,
-      detail: { employee_id: e.id, period: b.period_ym, paid_separately: b.paid_separately ?? null, net: result.net },
+      detail: { employee_id: e.id, period: b.period_ym, paid_separately: b.paid_separately ?? null, net: n(settled.net) },
     });
-  });
-  const fresh = await upsertSettlement(prisma, e.id);
+    return settled;
+  }, { timeout: 120_000 });
   res.json({ data: { state: 'INCLUDED', period_ym: b.period_ym, paid_separately: b.paid_separately ?? null, net: n(fresh.net) } });
 });
 

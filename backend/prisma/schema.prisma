@@ -441,7 +441,7 @@ model Shift {
 
 // ─── Rules ───────────────────────────────────────────────────────────────────
 
-/// Never edited. A new version closes the old one the day before and is attached wherever the old one was.
+/// Dated rules. Editing/deleting versions is audited and blocked where frozen payroll or settlements use them.
 model Policy {
   id         String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   policy_key String           @db.Uuid
