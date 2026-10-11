@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requirePerm } from '../middleware/auth.js';
 import * as siteController from '../controllers/site.controller.js';
+import { getSiteInsights } from '../controllers/site-insights.controller.js';
 
 export const sitesRouter = Router();
 
@@ -12,6 +13,7 @@ sitesRouter.post('/sites/:id/password', requirePerm('sites.manage'), siteControl
 sitesRouter.post('/sites/:id/reissue-login', requirePerm('sites.manage'), siteController.resetSitePassword);
 sitesRouter.post('/sites/:id/login-enabled', requirePerm('sites.manage'), siteController.setSiteLoginEnabled);
 sitesRouter.get('/sites/:id/day', requirePerm('attendance.read'), siteController.getSiteDay);
+sitesRouter.get('/sites/:id/insights', requirePerm('attendance.read'), getSiteInsights);
 sitesRouter.get('/sites-network', requirePerm('attendance.read'), siteController.getSitesNetwork);
 
 // ─── Projects ────────────────────────────────────────────────────────────────

@@ -78,7 +78,7 @@ export function PasswordOnceDialog({ creds, onClose }) {
           </Button>
         </div>
         <Notice>
-          The tablet signs in at <Mono>/tablet</Mono> and only works inside the site's boundary.
+          The tablet signs in at <Mono>/tablet</Mono> from any location. Attendance punches must be inside the site's boundary.
         </Notice>
       </div>
     </Dialog>

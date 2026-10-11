@@ -14,7 +14,7 @@ import {
   yearMonth,
   ymOf,
 } from '@ajpwer/shared';
-import { pairPunches, projectLabourCost } from '../calculations/index.js';
+import { OVERNIGHT_MAX_GAP_MIN, pairPunches, projectLabourCost } from '../calculations/index.js';
 import { audit, diff, who } from '../utils/audit.js';
 import { hashPassword } from '../services/auth.service.js';
 import { fromDbDate, n, toDbDate } from '../utils/dbDates.js';
@@ -77,19 +77,24 @@ const GEOFENCE_FIELDS = ['lat', 'lng', 'radius_m'];
 
 /** "On site now" is derived: the person's most recent punch is an IN, at this site. */
 async function onSiteNow(date) {
+  const now = new Date();
   const rows = await prisma.$queryRaw`
-    SELECT DISTINCT ON (employee_id) employee_id, site_id, direction::text AS direction, punched_at
-    FROM punch WHERE work_date >= ${toDbDate(addDays(date, -1))}::date
-    ORDER BY employee_id, punched_at DESC`;
+    SELECT DISTINCT ON (p.employee_id) p.employee_id, p.site_id, p.direction::text AS direction, p.punched_at
+    FROM punch p JOIN employee e ON e.id = p.employee_id
+    WHERE p.work_date >= ${toDbDate(addDays(date, -1))}::date
+      AND p.punched_at <= ${now} AND p.punched_at >= ${new Date(now.getTime() - OVERNIGHT_MAX_GAP_MIN * 60_000)}
+      AND e.deleted_at IS NULL AND e.status IN ('ACTIVE', 'NOTICE')
+    ORDER BY p.employee_id, p.punched_at DESC, p.created_at DESC, p.id DESC`;
   return rows.filter((r) => r.direction === 'IN');
 }
 
 export const listSites = asyncHandler(async (_req, res) => {
   const date = today();
+  const currentTime = new Date();
   const [sites, punches, now, aggs] = await Promise.all([
     prisma.site.findMany({ where: { deleted_at: null }, include: { project: { select: { id: true, code: true, name: true } } }, orderBy: { name: 'asc' } }),
     prisma.punch.findMany({
-      where: { work_date: toDbDate(date) },
+      where: { work_date: toDbDate(date), punched_at: { lte: currentTime } },
       select: { id: true, employee_id: true, punched_at: true, work_date: true, direction: true, site_id: true, method: true },
       orderBy: { punched_at: 'asc' },
     }),
@@ -99,6 +104,7 @@ export const listSites = asyncHandler(async (_req, res) => {
   const out = sites.map((s) => {
     const here = punches.filter((p) => p.site_id === s.id);
     const people = new Set(here.map((p) => p.employee_id));
+    const punchIns = new Set(here.filter((p) => p.direction === 'IN').map((p) => p.employee_id));
     // Hours here: intervals whose IN was at this site, per person across the day.
     let minutes = 0;
     const byEmp = new Map();
@@ -115,7 +121,7 @@ export const listSites = asyncHandler(async (_req, res) => {
     return {
       ...siteOut(s),
       project: s.project,
-      today: { punched_in: people.size, on_site_now: now.filter((r) => r.site_id === s.id).length, worked_min: minutes, avg_min: people.size ? Math.round(minutes / people.size) : 0 },
+      today: { punched_in: punchIns.size, on_site_now: now.filter((r) => r.site_id === s.id).length, worked_min: minutes, avg_min: punchIns.size ? Math.round(minutes / punchIns.size) : 0 },
       sparkline: spark,
     };
   });
