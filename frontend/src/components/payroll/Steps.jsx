@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { DAY_STATUS_LABELS, LAST_REVIEW_STEP } from '@ajpwer/shared';
 import { api, ApiError, errorMessage } from '@/services/api';
 import { useLookups } from '@/hooks/useLookups';
+import { useSession } from '@/context/SessionContext';
 import { cn, inr, longDate, mins, monthLabel, toPaise } from '@/utils';
 import { Money, PersonLink, Stat } from '@/components/bits';
 import { DataTable } from '@/components/data-table';
@@ -14,7 +15,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
 import { Field, Input, MoneyInput, Segmented, Select } from '@/components/ui/form';
 import { Checkbox, Dialog, Drawer } from '@/components/ui/overlay';
-import { CorrectionDrawer } from '../attendance/CorrectionDrawer';
+import { EmployeeAttendanceWorkspace } from '../attendance/EmployeeAttendanceWorkspace';
 import { SettlementPanel } from '../../pages/people/SettlementStatement';
 import { heldMonthStatus, HoldDialog, ReleaseDialog } from './HoldDialogs';
 import { Reports } from './Reports';
@@ -91,19 +92,42 @@ export function StepFooter({ period, n, ym, onNext, label, blocked, blockedNote,
 // ─── Step 1: attendance ─────────────────────────────────────────────────────
 
 export function StepAttendance({ ym, period, onNext }) {
+  const { can } = useSession();
+  const canViewAttendance = can('attendance.read');
   const q = useQuery({
     queryKey: ['payroll-attendance', ym],
     queryFn: () => api.get(`/payroll/periods/${ym}/attendance`).then((r) => r.data),
   });
   const [open, setOpen] = useState(null);
-  const frozen = period.steps_submitted.includes(1);
+  const frozen = period.state !== 'DRAFT' || period.steps_submitted.includes(1);
+  useEffect(() => setOpen(null), [ym]);
   const rows = q.data?.rows ?? [];
   const sum = (k) => Math.round(rows.reduce((a, r) => a + (Number(r[k]) || 0), 0) * 100) / 100;
   const cols = [
-    { id: 'name', header: 'Name', sticky: true, width: 200, cell: (r) => <PersonLink id={r.employee.id} name={r.employee.name} code={r.employee.code} tab="attendance" /> },
-    { id: 'p', header: 'Present', align: 'right', cell: (r) => r.present },
+    {
+      id: 'name', header: 'Name', sticky: true, width: 200,
+      cell: (r) => (
+        <button
+          type="button"
+          aria-label={`View attendance for ${r.employee.name}`}
+          disabled={!canViewAttendance}
+          className="flex flex-col items-start text-left enabled:hover:text-primary"
+          onClick={(ev) => { ev.stopPropagation(); setOpen({ id: r.employee.id }); }}
+        >
+          <span className="font-medium">{r.employee.name}</span>
+          <span className="font-mono text-[12px] text-muted-foreground">{r.employee.code}</span>
+        </button>
+      ),
+    },
+    { id: 'p', header: 'Present days', align: 'right', cell: (r) => r.attendance_summary?.present_days ?? r.present },
     { id: 'h', header: 'Half', align: 'right', cell: (r) => r.half_day },
-    { id: 'a', header: 'Absent', align: 'right', cell: (r) => (r.absent ? <span className="text-destructive">{r.absent}</span> : 0) },
+    {
+      id: 'a', header: 'Absent days', align: 'right',
+      cell: (r) => {
+        const absent = r.attendance_summary?.absent_days ?? r.absent;
+        return absent ? <span className="text-destructive" title="Scheduled days not worked, before paid leave covers absences">{absent}</span> : 0;
+      },
+    },
     {
       id: 'l',
       header: 'Paid leave',
@@ -117,6 +141,10 @@ export function StepAttendance({ ym, period, onNext }) {
     { id: 'lop', header: 'Loss of pay', align: 'right', cell: (r) => (r.partial ? <span title="Includes days outside employment">{r.lop_days} ({r.lop_in_window} in window)</span> : r.lop_days) },
     { id: 'c', header: 'Corrected', align: 'right', cell: (r) => r.overridden_days || '' },
     { id: 'run', header: '', cell: (r) => (!r.in_run ? <Chip tone="muted">Not in run</Chip> : r.partial ? <Chip tone="info">Part month</Chip> : null) },
+    {
+      id: 'late', header: 'Late minutes', align: 'right',
+      cell: (r) => <span title="Total minutes short of the required shift on completed days">{r.attendance_summary?.late_minutes ?? r.late_minutes ?? r.shift_shortfall_min ?? 0}</span>,
+    },
   ];
   return (
     <>
@@ -129,7 +157,7 @@ export function StepAttendance({ ym, period, onNext }) {
         </div>
       )}
       <Card>
-        <CardHeader title={`Attendance — ${monthLabel(ym)}`} description="The whole month for everyone in this payroll. Submitting freezes attendance: corrections stop until this step is reopened." />
+        <CardHeader title={`Attendance — ${monthLabel(ym)}`} description={canViewAttendance ? 'Select an employee or a flagged day to view and correct attendance below. Submitting freezes attendance until this step is reopened.' : 'Attendance details require attendance access. Payroll totals are shown below.'} />
         {q.isLoading ? (
           <SkeletonRows rows={10} cols={10} />
         ) : q.isError ? (
@@ -144,8 +172,9 @@ export function StepAttendance({ ym, period, onNext }) {
                   {q.data.shortlist.map((s) => (
                     <button
                       key={`${s.employee.id}${s.date}`}
+                      disabled={!canViewAttendance}
                       onClick={() => setOpen({ id: s.employee.id, date: s.date })}
-                      className="rounded-md border bg-card px-2 py-1 text-left text-[13px] hover:bg-accent"
+                      className="rounded-md border bg-card px-2 py-1 text-left text-[13px] enabled:hover:bg-accent"
                     >
                       <span className="font-medium">{s.employee.name}</span> · {s.date.slice(5)} ·{' '}
                       <span className={s.status === 'SHORT' ? 'text-destructive' : 'text-warning-foreground dark:text-warning'}>{DAY_STATUS_LABELS[s.status]}</span> {s.worked_min ? `(${mins(s.worked_min)})` : ''}
@@ -154,12 +183,28 @@ export function StepAttendance({ ym, period, onNext }) {
                 </div>
               </div>
             )}
-            <DataTable columns={cols} rows={rows} rowId={(r) => r.employee.id} maxHeight="60vh" />
+            <DataTable
+              columns={cols}
+              rows={rows}
+              rowId={(r) => r.employee.id}
+              onRowClick={canViewAttendance ? (r) => setOpen({ id: r.employee.id }) : undefined}
+              rowClassName={(r) => open?.id === r.employee.id ? 'ring-1 ring-inset ring-primary/40' : undefined}
+              maxHeight={open && canViewAttendance ? '36vh' : '60vh'}
+            />
           </>
         )}
       </Card>
+      {open && canViewAttendance && (
+        <EmployeeAttendanceWorkspace
+          key={`${ym}:${open.id}`}
+          employeeId={open.id}
+          month={ym}
+          initialDay={open.date}
+          readOnly={frozen}
+          onClose={() => setOpen(null)}
+        />
+      )}
       <StepFooter period={period} n={1} ym={ym} onNext={onNext} label="Submit attendance" note="Missing punch-outs pay half a day; short days pay nothing. Correct them above before submitting." />
-      {open && <CorrectionDrawer employeeId={open.id} date={open.date} open onOpenChange={(o) => !o && setOpen(null)} />}
     </>
   );
 }

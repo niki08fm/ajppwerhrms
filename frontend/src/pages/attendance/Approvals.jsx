@@ -446,13 +446,13 @@ function DayDecision({ it, allowed, onDecided, onOpenDay }) {
     return (
       <>
         <p className="m-0 text-[15px]">
-          {first(e.name)} did not punch out on {date}. At 2 AM the system punched them out and counted a full day with no overtime.
+          {first(e.name)} has an unmatched punch on {date}. This day is provisional until HR checks the real times.
         </p>
         <Facts
           items={[
             ['Punched in', `${hhmm(x.in_min)}${x.sites.length ? ` at ${x.sites.join(', ')}` : ''}`],
-            ['Auto punch-out', '02:00 the next morning'],
-            ['Counted now', 'Full day, no overtime'],
+            ['Recorded out', x.out_min == null ? 'Missing' : hhmm(x.out_min)],
+            ['Counted now', x.status === 'MISSING_PUNCH' ? 'Provisional half day, no overtime' : counted],
           ]}
         />
         {allowed && (
@@ -464,7 +464,7 @@ function DayDecision({ it, allowed, onDecided, onOpenDay }) {
               </Button>
               {btn('ABSENT', 'Absent')}
               {btn('HALF_DAY', 'Half day')}
-              {btn('PRESENT', 'Keep full day', 'default')}
+              {btn('PRESENT', 'Mark full day', 'default')}
             </div>
           </>
         )}

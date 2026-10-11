@@ -92,7 +92,9 @@ function Header({ e, go, onAction }) {
   // The month so far: days still to come are not counted as absences.
   const past = att.data?.days.filter((d) => d.date <= today && d.status !== 'NOT_JOINED' && d.status !== 'EXITED') ?? null;
   const paid = past ? Math.round(past.reduce((a, d) => a + d.day_value, 0) * 100) / 100 : null;
-  const late = past ? past.filter((d) => d.late_min > 0).length : 0;
+  const attendanceSummary = att.data?.attendance_summary;
+  const lateMinutes = attendanceSummary?.late_minutes ?? past?.reduce((total, d) => total + (d.shift_shortfall_min ?? 0), 0) ?? 0;
+  const lossOfPay = attendanceSummary?.lop_days ?? (past ? Math.round((past.length - paid) * 100) / 100 : 0);
   const running = money.data?.rows.filter((r) => r.employee.id === e.id && r.status === 'ACTIVE') ?? [];
   const due = running.reduce((a, r) => a + r.outstanding, 0);
   const shift = e.rules?.shift;
@@ -161,7 +163,7 @@ function Header({ e, go, onAction }) {
         <Fact
           label={month ? `${monthLabel(month).split(' ')[0]} so far` : 'This month'}
           value={past ? `${paid} days paid` : '—'}
-          sub={past ? `${Math.round((past.length - paid) * 100) / 100} LOP · ${late} late` : undefined}
+          sub={past ? `${lossOfPay} LOP · ${lateMinutes} late minutes` : undefined}
           onClick={() => go('attendance')}
         />
         <Fact label={pl ? pl.name : 'Leave'} value={pl && pl.balance !== null ? `${pl.balance} days left` : '—'} sub={pl ? `${pl.used_ytd + pl.auto_ytd} taken this leave year` : undefined} onClick={() => go('leave')} />

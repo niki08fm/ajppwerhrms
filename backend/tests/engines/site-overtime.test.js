@@ -23,6 +23,23 @@ describe('Recorded overtime attributed to the site where its interval occurred',
     expect(r.day.ot_min).toBe(30);
     expect(r.bySite).toEqual({ alpha: 25, beta: 5 });
   });
+  it.each([
+    ['00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000003'],
+    ['00000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000002'],
+  ])('pairs an equal-time handover independently of OUT/IN UUID order (%s / %s)', (outId, inId) => {
+    const alpha = interval('alpha', '09:00', '17:25');
+    const beta = interval('beta', '17:25', '17:50');
+    alpha[1].id = outId;
+    beta[0].id = inId;
+    // Incoming records may also arrive in a different order from their timestamps.
+    const r = calculate([beta[0], alpha[1], beta[1], alpha[0]]);
+    expect(r.day.status).toBe('PRESENT');
+    expect(r.day.worked_min).toBe(530);
+    expect(r.day.flags).not.toContain('UNMATCHED_IN');
+    expect(r.day.flags).not.toContain('ORPHAN_OUT');
+    expect(r.day.ot_min).toBe(30);
+    expect(r.bySite).toEqual({ alpha: 25, beta: 5 });
+  });
   it('applies the minimum OT threshold once to the combined day', () => {
     expect(calculate(interval('alpha', '09:00', '17:29')).bySite).toEqual({});
     expect(calculate([...interval('alpha', '09:00', '17:15'), ...interval('beta', '17:15', '17:30')]).bySite).toEqual({ alpha: 15, beta: 15 });

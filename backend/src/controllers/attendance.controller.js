@@ -178,7 +178,7 @@ export const getMonthRegister = asyncHandler(async (req, res) => {
 /** Everything the correction drawer needs for one person-day: the punches, what they make the day, and the rules it is judged by. */
 export const getDay = asyncHandler(async (req, res) => {
   const q = z.object({ employee_id: z.string().uuid(), date: isoDate }).parse(req.query);
-  const [row] = await dayRegister(prisma, q.date, [q.employee_id]);
+  const [row] = await dayRegister(prisma, q.date, [q.employee_id], today());
   const punches = await prisma.punch.findMany({
     where: { employee_id: q.employee_id, work_date: toDbDate(q.date) },
     include: { site: { select: { id: true, code: true, name: true } } },
@@ -209,6 +209,10 @@ export const getDay = asyncHandler(async (req, res) => {
       in_min: row?.in_min ?? null,
       out_min: row?.out_min ?? null,
       context: row?.context ?? null,
+      day: row?.day ?? null,
+      required_shift_min: row?.day.required_shift_min ?? 0,
+      shift_shortfall_min: row?.day.shift_shortfall_min ?? 0,
+      open_now: row?.open_now ?? false,
       frozen,
     },
   });
@@ -314,7 +318,8 @@ export const createOverride = asyncHandler(async (req, res) => {
 export const previewOverride = asyncHandler(async (req, res) => {
   const b = overridePreviewSchema.parse(req.body);
   const r = await dayFromTimes(prisma, b.employee_id, b.work_date, b);
-  res.json({ data: { ...r.values, early_min: r.early_min, due_out_min: r.due_out_min, in_min: r.in_min, out_min: r.out_min, kind: r.row.context.kind } });
+  res.json({ data: { ...r.values, early_min: r.early_min, due_out_min: r.due_out_min, in_min: r.in_min, out_min: r.out_min,
+    required_shift_min: r.row.computed.required_shift_min, shift_shortfall_min: r.row.computed.shift_shortfall_min, kind: r.row.context.kind } });
 });
 
 /** The same mark with one reason, applied to many days. */

@@ -4,6 +4,7 @@ import { fromDbDate, toDbDate } from '../utils/dbDates.js';
 import { toEnginePunch, travelMinutes } from './attendance.service.js';
 import { holidaysBetween, payGroupRulesCache } from './rules.service.js';
 import { pickPolicy } from '../calculations/index.js';
+import { requiredShiftMinutes, shiftShortfall } from './attendance-summary.service.js';
 
 /** HR's in and out as the day's only punches, so a corrected day is judged exactly as punches would be. */
 function hrPunches(date, t) {
@@ -74,12 +75,14 @@ export async function dayRegister(db, date, employeeIds, today, opts = {}) {
       shift_end_min: shiftEndOnWorkDate(rules.shift),
       shift_break_min: rules.shift.break_min,
     });
-    const computed = { status: day.status, day_value: day.day_value, worked_min: day.worked_min, ot_min: day.ot_min, late_min: day.late_min, early_min: day.early_min, due_out_min: day.due_out_min };
+    const computed = { status: day.status, day_value: day.day_value, worked_min: day.worked_min, ot_min: day.ot_min, late_min: day.late_min, early_min: day.early_min, due_out_min: day.due_out_min, required_shift_min: day.required_shift_min, shift_shortfall_min: day.shift_shortfall_min };
     const o = overrides.find((x) => x.employee_id === e.id);
     // A correction settles the day: it is no longer flagged as left early.
     const eff = o
-      ? { ...day, status: o.status, day_value: Number(o.day_value), worked_min: o.worked_min, ot_min: o.ot_min, late_min: o.late_min, early_min: 0, flags: [...day.flags, 'OVERRIDDEN'] }
+      ? { ...day, status: o.status, day_value: Number(o.day_value), worked_min: o.worked_min, ot_min: o.ot_min, late_min: o.late_min, early_min: 0, overridden: true, flags: [...day.flags, 'OVERRIDDEN'] }
       : day;
+    eff.required_shift_min = requiredShiftMinutes(eff);
+    eff.shift_shortfall_min = shiftShortfall(eff);
     const ins = ep.filter((p) => p.direction === 'IN');
     const outs = ep.filter((p) => p.direction === 'OUT');
     const lastPunch = ep[ep.length - 1];

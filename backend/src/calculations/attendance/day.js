@@ -1,4 +1,5 @@
 import { addDays, istDate, istMidnight } from '@ajpwer/shared';
+import { requiredShiftMinutes, shiftShortfall } from './summary.js';
 
 /** Under a policy with no half-day limit, PRESENT needs at least 92% of the standard day. A constant, not a policy. */
 export const PRESENT_TOLERANCE_PCT = 92;
@@ -11,7 +12,9 @@ const minutesBetween = (a, b) => Math.floor((b - a) / 60_000);
  * OUT with one open → pair; OUT with none open → orphan.
  */
 export function pairPunches(punches) {
-  const sorted = [...punches].sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
+  // At an instantaneous site handover, close the old session before opening the
+  // next one. Random punch IDs must not turn equal-time OUT/INs into missing pairs.
+  const sorted = [...punches].sort((a, b) => a.at - b.at || (a.direction === b.direction ? 0 : a.direction === 'OUT' ? -1 : 1) || a.id.localeCompare(b.id));
   const pairs = [];
   const orphan_outs = [];
   let open = null;
@@ -121,6 +124,10 @@ export function computeDay(input) {
     applied: null,
     leave_days: 0,
     auto_leave: 0,
+    standard_min: policies.attendance.standard_min,
+    shift_kind: input.is_holiday ? 'HOLIDAY' : input.is_weekly_off ? 'WEEKLY_OFF' : 'WORKING',
+    required_shift_min: 0,
+    shift_shortfall_min: 0,
     flags,
   };
 
@@ -171,9 +178,13 @@ export function computeDay(input) {
   const withTime = { ...base, late_min, early_min, due_out_min, ot_min };
   if (missing) return { ...withTime, status: 'MISSING_PUNCH', day_value: 0.5, ot_min: 0 };
   const fullDay = (rules.half_day_upto_min ?? null) !== null ? worked_min > rules.half_day_upto_min : worked_min * 100 >= rules.standard_min * PRESENT_TOLERANCE_PCT;
-  if (fullDay) return { ...withTime, status: 'PRESENT', day_value: 1 };
-  if (worked_min >= rules.half_day_min) return { ...withTime, status: 'HALF_DAY', day_value: 0.5 };
-  return { ...withTime, status: 'SHORT', day_value: 0 };
+  const complete = (status, day_value) => {
+    const result = { ...withTime, status, day_value };
+    return { ...result, required_shift_min: requiredShiftMinutes(result), shift_shortfall_min: shiftShortfall(result) };
+  };
+  if (fullDay) return complete('PRESENT', 1);
+  if (worked_min >= rules.half_day_min) return complete('HALF_DAY', 0.5);
+  return complete('SHORT', 0);
 }
 
 /** An open IN closed within this window by a punch after midnight belongs to the previous work date. */

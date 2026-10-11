@@ -7,6 +7,7 @@ const DATE = '2026-10-06';
 
 function registerDb(punches) {
   return {
+    $executeRaw: async () => 1,
     employee: { findMany: async () => [{
       id: 'worker', code: 'AJ001', name: 'Worker', pay_group_id: 'general',
       joined_on: toDbDate('2025-01-01'), last_day: null,

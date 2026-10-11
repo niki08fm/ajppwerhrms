@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, Wrench } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Eye, Wrench } from 'lucide-react';
 import { toast } from 'sonner';
-import { addDays, DAY_STATUSES, DAY_STATUS_LABELS } from '@ajpwer/shared';
-import { api, errorMessage, qs } from '@/services/api';
+import { addDays, DAY_STATUSES, DAY_STATUS_LABELS, istDate } from '@ajpwer/shared';
+import { api, errorMessage } from '@/services/api';
+import { useSession } from '@/context/SessionContext';
 import { useListParams } from '@/hooks';
 import { opts, useLookups } from '@/hooks/useLookups';
 import { cn, hhmm, longDate, mins } from '@/utils';
@@ -16,7 +17,8 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Field, Input, Segmented } from '@/components/ui/form';
 import { Dialog } from '@/components/ui/overlay';
-import { CorrectionDrawer } from '../../components/attendance/CorrectionDrawer';
+import { EmployeeAttendanceWorkspace } from '@/components/attendance/EmployeeAttendanceWorkspace';
+import { AttendanceReportDownload } from '@/components/attendance/AttendanceReportDownload';
 import { DayPicker } from '@/components/attendance/DayPicker';
 import { TONE, deptColour, fullDate, viewsFor } from '@/components/attendance/dayVocab';
 import { DeptAvatar } from '@/components/attendance/DeptAvatar';
@@ -33,8 +35,10 @@ export default function Register() {
 function DailyRegister() {
   const lp = useListParams({ sort: 'name' });
   const nav = useNavigate();
+  const { can } = useSession();
+  const canCorrect = can('attendance.write');
   const { data: lk } = useLookups();
-  const today = lk?.today ?? new Date().toISOString().slice(0, 10);
+  const today = lk?.today ?? istDate(new Date());
   const date = lp.searchParams.get('date') ?? today;
   const view = lp.searchParams.get('view') ?? '';
   const page = Math.max(1, Number(lp.searchParams.get('page') ?? 1));
@@ -51,6 +55,9 @@ function DailyRegister() {
   const [open, setOpen] = useState(null);
   const [selected, setSelected] = useState(new Set());
   const [bulk, setBulk] = useState(false);
+  const detailsRef = useRef(null);
+  useEffect(() => { if (open) detailsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, [open]);
+  useEffect(() => { setOpen(null); setSelected(new Set()); }, [date]);
   const siteName = (id) => lk?.sites.find((s) => s.id === id)?.name ?? id;
   const dept = (id) => lk?.departments.find((x) => x.id === id);
   const frozen = meta?.frozen;
@@ -75,7 +82,7 @@ function DailyRegister() {
       sticky: true,
       width: 230,
       cell: (r) => (
-        <span className="flex items-center gap-2.5">
+        <button type="button" disabled={list.isPlaceholderData} className="flex items-center gap-2.5 text-left disabled:cursor-wait" onClick={(event) => { event.stopPropagation(); setOpen({ id: r.employee.id, date }); }} aria-label={`Open attendance for ${r.employee.name}`}>
           <DeptAvatar name={r.employee.name} token={r.employee.department.colour ?? dept(r.employee.department.id)?.colour} />
           <span className="flex min-w-0 flex-col leading-tight">
             <span className="truncate font-medium">{r.employee.name}</span>
@@ -83,20 +90,19 @@ function DailyRegister() {
               <Mono>{r.employee.code}</Mono> · {r.employee.department.name}
             </span>
           </span>
-        </span>
+        </button>
       ),
     },
     { id: 'sites', header: 'Sites', cell: (r) => (r.day.sites.length ? r.day.sites.map(siteName).join(' → ') : <span className="text-muted-foreground/60">—</span>) },
     { id: 'in', header: 'In', sortKey: 'in', align: 'right', cell: (r) => hhmm(r.in_min) },
     { id: 'out', header: 'Out', align: 'right', cell: (r) => (r.open_now ? <Chip tone="info">On site</Chip> : r.day.status === 'MISSING_PUNCH' && !r.override ? <Chip tone="destructive">No punch-out</Chip> : hhmm(r.out_min)) },
     { id: 'worked', header: 'Worked', sortKey: 'worked', align: 'right', cell: (r) => quiet(r.live?.worked_min ?? r.day.worked_min, mins(r.live?.worked_min ?? r.day.worked_min)) },
-    { id: 'late', header: 'Late', sortKey: 'late', align: 'right', cell: (r) => quiet(r.day.late_min, mins(r.day.late_min), 'text-warning-foreground dark:text-warning') },
+    { id: 'late', header: 'Arrived late', sortKey: 'late', align: 'right', cell: (r) => quiet(r.day.late_min, mins(r.day.late_min), 'text-warning-foreground dark:text-warning') },
     {
       id: 'early',
-      header: 'Short',
-      sortKey: 'early',
+      header: 'Late minutes',
       align: 'right',
-      cell: (r) => quiet(!r.open_now && r.day.early_min, <span title={`Day ended ${hhmm(r.day.due_out_min)}`}>{mins(r.day.early_min)}</span>, 'text-destructive'),
+      cell: (r) => quiet(!r.open_now && r.day.shift_shortfall_min, <span title="Shortfall from the required shift">{r.day.shift_shortfall_min} min</span>, 'text-destructive'),
     },
     { id: 'ot', header: 'OT', sortKey: 'ot', align: 'right', cell: (r) => quiet(r.live?.ot_min ?? r.day.ot_min, mins(r.live?.ot_min ?? r.day.ot_min)) },
     {
@@ -112,12 +118,13 @@ function DailyRegister() {
         <Button
           size="sm"
           variant="ghost"
+          disabled={list.isPlaceholderData}
           onClick={(e) => {
             e.stopPropagation();
-            setOpen(r.employee.id);
+            setOpen({ id: r.employee.id, date });
           }}
         >
-          <Wrench /> Correct
+          {canCorrect ? <Wrench /> : <Eye />} {canCorrect ? 'Correct' : 'Details'}
         </Button>
       ),
     },
@@ -136,7 +143,7 @@ function DailyRegister() {
     <div>
       <PageHeader
         title="Attendance"
-        description={`${fullDate(date)}. Computed from the punch ledger; corrections are layered on top and never edit a punch.`}
+        description={`${fullDate(date)}. Select a person to review their month and correct a day here.`}
         meta={
           <div className="flex flex-wrap items-center gap-1.5">
             <Button variant="outline" size="icon" onClick={() => setDate(addDays(date, -1))} aria-label="Previous day">
@@ -202,15 +209,14 @@ function DailyRegister() {
           list="attendance"
           searchParams={lp.searchParams}
           onApplyView={(q) => nav(`/attendance?${q}`)}
-          exportPath={`/attendance${qs({ ...params, format: 'csv', limit: undefined, page: undefined })}`}
-          exportName={`attendance-${date}.csv`}
           total={meta?.total ?? 0}
         >
-          {selected.size > 0 && !frozen?.frozen && (
+          {selected.size > 0 && canCorrect && !frozen?.frozen && !list.isPlaceholderData && (
             <Button size="sm" onClick={() => setBulk(true)}>
               Correct {selected.size} days with one reason
             </Button>
           )}
+          <AttendanceReportDownload period={date} filters={params} total={meta?.total ?? 0} disabled={list.isLoading || list.isError || list.isPlaceholderData || !meta?.total} />
         </ListToolbar>
         {list.isLoading ? (
           <SkeletonRows rows={12} cols={9} />
@@ -229,8 +235,8 @@ function DailyRegister() {
             rowId={(r) => r.employee.id}
             sort={lp.sort}
             onSort={lp.toggleSort}
-            onRowClick={(r) => setOpen(r.employee.id)}
-            selectable={!frozen?.frozen}
+            onRowClick={list.isPlaceholderData ? undefined : (r) => setOpen({ id: r.employee.id, date })}
+            selectable={canCorrect && !frozen?.frozen && !list.isPlaceholderData}
             selected={selected}
             onSelectedChange={setSelected}
             fetching={list.isFetching && !list.isLoading}
@@ -246,7 +252,11 @@ function DailyRegister() {
           onLimit={(n) => lp.set({ limit: n === 20 ? null : String(n), page: null })}
         />
       </Card>
-      {open && <CorrectionDrawer employeeId={open} date={date} open onOpenChange={(o) => !o && setOpen(null)} />}
+      {open && (
+        <section ref={detailsRef} aria-label="Employee attendance details" className="mt-5 scroll-mt-24">
+          <EmployeeAttendanceWorkspace employeeId={open.id} month={date.slice(0, 7)} initialDay={open.date} readOnly={!canCorrect} onClose={() => setOpen(null)} />
+        </section>
+      )}
       {bulk && <BulkCorrect ids={[...selected]} date={date} onClose={() => setBulk(false)} onDone={() => setSelected(new Set())} />}
     </div>
   );
@@ -266,7 +276,7 @@ function BulkCorrect({ ids, date, onClose, onDone }) {
     onSuccess: (r) => {
       const failed = r.data.results.filter((x) => !x.ok);
       toast.success(`Marked ${r.data.applied} of ${ids.length}.${failed.length ? ` ${failed.length} skipped: ${failed[0].message}` : ''}`);
-      qc.invalidateQueries({ queryKey: ['register'] });
+      for (const key of ['register', 'attendance-day', 'emp-attendance', 'attendance-month', 'payroll-attendance', 'approvals', 'dashboard', 'site-day']) qc.invalidateQueries({ queryKey: [key] });
       onDone();
       onClose();
     },

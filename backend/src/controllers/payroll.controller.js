@@ -84,6 +84,14 @@ export const getAttendanceStep = asyncHandler(async (req, res) => {
       lop_in_window: t.lop_in_window,
       partial: t.partial,
       overridden_days: t.overridden_days,
+      attendance_summary: m.attendance_summary,
+      working_days: m.attendance_summary.working_days,
+      present_days: m.attendance_summary.present_days,
+      absent_days: m.attendance_summary.absent_days,
+      paid_leave_days: m.attendance_summary.paid_leave_days,
+      unpaid_leave_days: m.attendance_summary.unpaid_leave_days,
+      late_minutes: m.attendance_summary.late_minutes,
+      shift_shortfall_min: m.attendance_summary.shift_shortfall_min,
       needs_look: m.days.filter((d) => d.status === 'MISSING_PUNCH' || d.status === 'SHORT').map((d) => ({ date: d.date, status: d.status, worked_min: d.worked_min })),
     };
   });

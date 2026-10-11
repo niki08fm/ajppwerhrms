@@ -1,5 +1,6 @@
 import { daysInMonth } from '@ajpwer/shared';
 import { leaveMonth } from '../leave/index.js';
+import { attendanceSummary, requiredShiftMinutes, shiftShortfall } from './summary.js';
 
 const OFF_STATUSES = ['HOLIDAY', 'WEEKLY_OFF', 'HOLIDAY_WORKED', 'OFF_WORKED'];
 const SANDWICH_TRIGGERS = ['ABSENT', 'SHORT'];
@@ -33,6 +34,15 @@ export function computeMonth(input) {
       overridden: true,
     };
   });
+
+  // Retain physical attendance before leave allocation changes an absence to paid
+  // leave. These are reporting fields; payment continues to use the effective day.
+  for (const d of days) {
+    d.baseline_status = d.status;
+    d.work_day_value = d.status === 'ON_LEAVE' ? 0 : d.day_value;
+    d.required_shift_min = requiredShiftMinutes(d);
+    d.shift_shortfall_min = shiftShortfall(d);
+  }
 
   // 5a — leave: recorded leave is paid from its balance, and absences from the automatic type.
   // Before the off days, so an absence paid as leave does not trigger the sandwich rule.
@@ -106,12 +116,14 @@ export function computeMonth(input) {
   const lop_in_window = round2(Math.max(0, inWindow.length - windowValue));
   const count = (pred) => days.filter(pred).length;
   const working = (d) => WORKING_STATUSES.includes(d.status);
+  const summary = attendanceSummary(days);
 
   return {
     ym: input.ym,
     days,
     offday_work,
     leave,
+    attendance_summary: summary,
     totals: {
       days_in_month: dim,
       days_in_employment: inWindow.length,
@@ -139,6 +151,14 @@ export function computeMonth(input) {
       partial: inWindow.length < dim,
       sandwiched,
       overridden_days: count((d) => d.overridden),
+      working_days: summary.working_days,
+      present_days: summary.present_days,
+      absent_days: summary.absent_days,
+      raw_absent_days: summary.raw_absent_days,
+      paid_leave_days: summary.paid_leave_days,
+      unpaid_leave_days: summary.unpaid_leave_days,
+      late_minutes: summary.late_minutes,
+      shift_shortfall_min: summary.shift_shortfall_min,
     },
   };
 }

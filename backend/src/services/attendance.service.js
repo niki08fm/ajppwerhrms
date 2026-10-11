@@ -2,6 +2,7 @@ import { addDays, addMonths, dayName, firstOfMonth, istDate, lastOfMonth, maxDat
 import { computeDay, computeMonth, leaveYearOf, nextLeaveState, occasionPaidDates, pickPolicy, resolvePolicies, shiftEndOnWorkDate, usableFrom } from '../calculations/index.js';
 import { fromDbDate, toDbDate } from '../utils/dbDates.js';
 import { holidaysBetween, payGroupRulesCache } from './rules.service.js';
+import { attendanceSummary } from './attendance-summary.service.js';
 
 /** Days either side of a month examined so the sandwich rule can see across the boundary. */
 const CONTEXT_DAYS = 7;
@@ -291,6 +292,7 @@ export async function computeMonths(db, employees, ym, options = {}) {
       const plan = plans.get(e.id);
       const leave = plan ? leaveContext(plan, m, adjustments.get(e.id), opts.today) : null;
       const result = computeMonth({ ...c.input, leave });
+      result.attendance_summary = attendanceSummary(result.days, { today: minDate(lastOfMonth(m), opts.today) });
       if (plan && result.leave) plan.state = nextLeaveState(result.leave);
       if (m === ym) out.set(e.id, { employee_id: e.id, result, rules: c.rules, holidays: c.holidays });
     }

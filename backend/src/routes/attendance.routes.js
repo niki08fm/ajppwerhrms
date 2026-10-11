@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requirePerm } from '../middleware/auth.js';
 import * as attendanceController from '../controllers/attendance.controller.js';
+import * as attendanceReports from '../controllers/attendance-reports.controller.js';
 
 export const attendanceRouter = Router();
 
@@ -8,6 +9,8 @@ export const attendanceRouter = Router();
 attendanceRouter.get('/attendance', requirePerm('attendance.read'), attendanceController.getRegister);
 attendanceRouter.get('/attendance/day', requirePerm('attendance.read'), attendanceController.getDay);
 attendanceRouter.get('/attendance/month', requirePerm('attendance.read'), attendanceController.getMonthRegister);
+attendanceRouter.get('/attendance/reports/monthly', requirePerm('attendance.read', 'reports.export'), attendanceReports.monthlyAttendanceReport);
+attendanceRouter.get('/attendance/reports/daily', requirePerm('attendance.read', 'reports.export'), attendanceReports.dailyAttendanceReport);
 attendanceRouter.post('/attendance/overrides', requirePerm('attendance.write'), attendanceController.createOverride);
 attendanceRouter.post('/attendance/overrides/bulk', requirePerm('attendance.write'), attendanceController.createBulkOverrides);
 attendanceRouter.post('/attendance/overrides/preview', requirePerm('attendance.write'), attendanceController.previewOverride);

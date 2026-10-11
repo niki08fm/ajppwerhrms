@@ -679,7 +679,7 @@ export const getAttendance = asyncHandler(async (req, res) => {
   const e = await mustLoad(req.params.id);
   const m = await computeMonth1(prisma, e, month);
   const sites = await prisma.site.findMany({ select: { id: true, name: true, code: true } });
-  res.json({ data: { month, totals: m.result.totals, days: m.result.days, offday_work: m.result.offday_work, leave: m.result.leave, sites } });
+  res.json({ data: { month, today: today(), attendance_summary: m.result.attendance_summary, totals: m.result.totals, days: m.result.days, offday_work: m.result.offday_work, leave: m.result.leave, sites } });
 });
 
 export const getPayslipPreview = asyncHandler(async (req, res) => {
