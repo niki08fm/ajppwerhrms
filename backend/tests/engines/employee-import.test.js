@@ -33,6 +33,24 @@ function cell(book, row, field) {
 }
 
 describe('active employee report import', () => {
+  it('ignores source employee numbers only when assigning new system IDs is requested', async () => {
+    const book = workbook([{ code: '' }, { code: 'TP001' }, { code: 'TP001' }]);
+    const report = await readEmployeeReport(book, { ignoreEmployeeNumbers: true });
+    expect(report.errors).toEqual([]);
+    expect(report.records).toHaveLength(3);
+    expect(report.records.map((person) => person.source_row)).toEqual([2, 3, 4]);
+    expect(parseEmployeeReport(book).errors.length).toBeGreaterThan(0);
+  });
+
+  it('imports a report without employee numbers when new IDs will be assigned', () => {
+    const book = workbook([{}]);
+    book.worksheets[0].spliceColumns(1, 1);
+    const report = parseEmployeeReport(book, { ignoreEmployeeNumbers: true });
+    expect(report.errors).toEqual([]);
+    expect(report.records).toHaveLength(1);
+    expect(report.records[0].code).toBe('');
+  });
+
   it('imports only working rows and skips relieved, blank status, and incomplete trailing rows', () => {
     const report = parseEmployeeReport(workbook([
       {}, { status: 'Relieved' }, { status: '' },

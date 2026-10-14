@@ -163,6 +163,7 @@ const createSchema = employeeCoreSchema
     pt_state: z.string().min(1),
     tax_regime_code: z.enum(TAX_REGIMES).default('NEW'),
     pf_enabled: z.boolean().optional(),
+    eps_enabled: z.boolean().optional(),
     esi_enabled: z.boolean().optional(),
     identity: employeeIdentitySchema.optional(),
   })
@@ -198,6 +199,7 @@ export const createEmployee = asyncHandler(async (req, res) => {
     gender: b.gender,
     pt_state: b.pt_state,
     pf_enabled: b.pf_enabled ?? true,
+    eps_enabled: b.eps_enabled ?? true,
     esi_enabled: b.esi_enabled ?? true,
     chosen_gross: b.salary.chosen_gross,
   });
@@ -221,7 +223,7 @@ export const createEmployee = asyncHandler(async (req, res) => {
         joined_on: toDbDate(b.joined_on),
         status: b.status,
         activated_at: b.status === 'ACTIVE' ? new Date() : null,
-        statutory: { create: { pt_state: b.pt_state, tax_regime_code: b.tax_regime_code, pf_enabled: b.pf_enabled ?? true, esi_enabled: (b.esi_enabled ?? true) && preview.esi_within_ceiling } },
+        statutory: { create: { pt_state: b.pt_state, tax_regime_code: b.tax_regime_code, pf_enabled: b.pf_enabled ?? true, eps_enabled: b.eps_enabled ?? true, esi_enabled: (b.esi_enabled ?? true) && preview.esi_within_ceiling } },
         identity: { create: identityData(b.identity ?? {}) },
         salaries: {
           create: {
@@ -320,6 +322,7 @@ const previewSchema = z
     chosen_gross: z.number().int().optional(),
     /** What an offer is being worked out with, before the person has statutory settings of their own. */
     pf_enabled: z.boolean().optional(),
+    eps_enabled: z.boolean().optional(),
     esi_enabled: z.boolean().optional(),
   })
   .strict()
@@ -346,6 +349,7 @@ export const getSalaryPreview = asyncHandler(async (req, res) => {
     pt_state: b.pt_state ?? st?.pt_state ?? 'Andhra Pradesh',
     pt_applicable: st?.pt_applicable,
     pf_enabled: b.pf_enabled ?? st?.pf_enabled,
+    eps_enabled: b.eps_enabled ?? st?.eps_enabled,
     pf_restrict_to_ceiling: st?.pf_restrict_to_ceiling,
     vpf_pct: st ? Number(st.vpf_pct) : 0,
     esi_enabled: b.esi_enabled ?? st?.esi_enabled,
@@ -470,6 +474,7 @@ export const reviseSalary = asyncHandler(async (req, res) => {
     gender: e.gender,
     pt_state: st.pt_state,
     pf_enabled: st.pf_enabled,
+    eps_enabled: st.eps_enabled ?? true,
     pf_restrict_to_ceiling: st.pf_restrict_to_ceiling,
     vpf_pct: Number(st.vpf_pct),
     esi_enabled: st.esi_enabled,
@@ -515,7 +520,7 @@ export const updateSalaryRevision = asyncHandler(async (req, res) => {
   const st = e.statutory;
   const { monthly_gross, amount: normalizedAmount } = await resolveMonthlyGross(prisma, {
     mode: b.mode, amount: b.amount, structure_id: b.structure_id, date: b.valid_from,
-    gender: e.gender, pt_state: st.pt_state, pf_enabled: st.pf_enabled,
+    gender: e.gender, pt_state: st.pt_state, pf_enabled: st.pf_enabled, eps_enabled: st.eps_enabled ?? true,
     pf_restrict_to_ceiling: st.pf_restrict_to_ceiling, vpf_pct: Number(st.vpf_pct),
     esi_enabled: st.esi_enabled, chosen_gross: b.chosen_gross, requirePreview: false,
   });
@@ -561,7 +566,7 @@ export const restateSalary = asyncHandler(async (req, res) => {
   // Restating to CTC keeps "% of CTC" components exactly where they were: the agreed CTC is the figure they already ran on.
   const worked = ctcForGross(cur.monthly_gross, {
     components,
-    pf: { pf_enabled: st.pf_enabled, pf_restrict_to_ceiling: st.pf_restrict_to_ceiling, vpf_pct: Number(st.vpf_pct) },
+    pf: { pf_enabled: st.pf_enabled, eps_enabled: st.eps_enabled ?? true, pf_restrict_to_ceiling: st.pf_restrict_to_ceiling, vpf_pct: Number(st.vpf_pct) },
     esi_enabled: st.esi_enabled,
     rates: { pf: rates.pf, esi: rates.esi },
   });
@@ -646,6 +651,7 @@ export const getPay = asyncHandler(async (req, res) => {
     pt_state: st.pt_state,
     pt_applicable: st.pt_applicable,
     pf_enabled: st.pf_enabled,
+    eps_enabled: st.eps_enabled ?? true,
     pf_restrict_to_ceiling: st.pf_restrict_to_ceiling,
     vpf_pct: Number(st.vpf_pct),
     esi_enabled: st.esi_enabled,
@@ -873,7 +879,7 @@ export const createLetter = asyncHandler(async (req, res) => {
     ? await previewSalary(prisma, {
       mode: cur.mode, amount: cur.amount, structure_id: cur.structure_id, date, gender: e.gender,
       pt_state: e.statutory.pt_state, pt_applicable: e.statutory.pt_applicable,
-      pf_enabled: e.statutory.pf_enabled, pf_restrict_to_ceiling: e.statutory.pf_restrict_to_ceiling,
+      pf_enabled: e.statutory.pf_enabled, eps_enabled: e.statutory.eps_enabled ?? true, pf_restrict_to_ceiling: e.statutory.pf_restrict_to_ceiling,
       vpf_pct: Number(e.statutory.vpf_pct), esi_enabled: e.statutory.esi_enabled,
       saved_gross: cur.monthly_gross,
     })

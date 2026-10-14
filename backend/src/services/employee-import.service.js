@@ -77,7 +77,7 @@ export function normalizeReportDate(value, { date1904 = false } = {}) {
 }
 
 /** Parse the employee report in memory. Diagnostics contain row/field metadata, never personal values. */
-export function parseEmployeeReport(workbook) {
+export function parseEmployeeReport(workbook, { ignoreEmployeeNumbers = false } = {}) {
   const report = { records: [], total_rows: 0, active_rows: 0, skipped_rows: 0, warnings: [], errors: [] };
   const issue = (kind, row, field, message) => report[kind].push({ row, field, message });
   let sheet;
@@ -85,7 +85,7 @@ export function parseEmployeeReport(workbook) {
   for (const candidate of workbook.worksheets) {
     const headers = new Map();
     candidate.getRow(1).eachCell((cell, index) => headers.set(normalizeHeader(textOf(cell)), index));
-    if (headers.has(normalizeHeader(HEADERS.code)) && headers.has(normalizeHeader(HEADERS.status))) {
+    if (headers.has(normalizeHeader(HEADERS.status)) && headers.has(normalizeHeader(HEADERS.name)) && (ignoreEmployeeNumbers || headers.has(normalizeHeader(HEADERS.code)))) {
       sheet = candidate;
       columns = Object.fromEntries(Object.entries(HEADERS).map(([field, header]) => [field, headers.get(normalizeHeader(header))]));
       break;
@@ -96,6 +96,7 @@ export function parseEmployeeReport(workbook) {
     return report;
   }
   for (const field of ['code', 'name', 'joined_on', 'status', 'pf_details_available', 'esi_enabled', 'pt_state']) {
+    if (field === 'code' && ignoreEmployeeNumbers) continue;
     if (!columns[field]) issue('errors', 1, field, 'Required report column is missing.');
   }
   if (report.errors.length) return report;
@@ -117,8 +118,8 @@ export function parseEmployeeReport(workbook) {
     const error = (field, message) => issue('errors', rowNumber, field, message);
     const code = text('code', true);
     const name = text('name');
-    if (!code) error('code', 'Active employee code is required.');
-    else {
+    if (!ignoreEmployeeNumbers && !code) error('code', 'Active employee code is required.');
+    else if (!ignoreEmployeeNumbers) {
       const key = code.toUpperCase();
       if (seen.has(key)) error('code', 'Duplicate active employee code.');
       seen.add(key);
@@ -208,10 +209,10 @@ export function parseEmployeeReport(workbook) {
 }
 
 /** Accept a file path, XLSX buffer, or ExcelJS Workbook; never write the source report. */
-export async function readEmployeeReport(file) {
-  if (file instanceof ExcelJS.Workbook) return parseEmployeeReport(file);
+export async function readEmployeeReport(file, options) {
+  if (file instanceof ExcelJS.Workbook) return parseEmployeeReport(file, options);
   const workbook = new ExcelJS.Workbook();
   if (typeof file === 'string') await workbook.xlsx.readFile(file);
   else await workbook.xlsx.load(file);
-  return parseEmployeeReport(workbook);
+  return parseEmployeeReport(workbook, options);
 }

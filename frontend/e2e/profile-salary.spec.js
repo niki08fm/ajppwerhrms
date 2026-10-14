@@ -43,7 +43,10 @@ const initial = {
   can_edit: true,
   can_delete: true,
 };
-function preview(gross = 3_000_000) {
+function preview(gross = 3_000_000, statutory = {}) {
+  const pfEnabled = statutory.pf_enabled !== false;
+  const employerPf = pfEnabled ? 180_000 : 0;
+  const eps = pfEnabled && statutory.eps_enabled !== false ? 80_000 : 0;
   return {
     gross,
     take_home: gross - 200_000,
@@ -66,10 +69,10 @@ function preview(gross = 3_000_000) {
     },
     pf: {
       pf_wage: gross / 2,
-      employee: 180_000,
-      employer_total: 180_000,
-      employer_epf: 100_000,
-      eps: 80_000,
+      employee: employerPf,
+      employer_total: employerPf,
+      employer_epf: employerPf - eps,
+      eps,
       vpf: 0,
     },
     esi: { applicable: false, employee: 0, employer: 0 },
@@ -239,7 +242,7 @@ async function mockProfile(page, { noSalary = false, protectedRevision = false, 
       data = state.e.salary
         ? {
             salary: state.e.salary,
-            preview: preview(state.e.salary.monthly_gross),
+            preview: preview(state.e.salary.monthly_gross, state.e.statutory),
             rates,
           }
         : emptyPayObject
@@ -283,6 +286,7 @@ async function mockProfile(page, { noSalary = false, protectedRevision = false, 
     } else if (path.endsWith('/statutory') && method === 'PATCH') {
       const body = req.postDataJSON();
       state.requests.push({ method, path, body });
+      if (state.statutorySaveGate) await state.statutorySaveGate;
       state.e.statutory = { ...state.e.statutory, ...body };
       data = state.e.statutory;
     } else if (path === '/employees/employee-test') {
@@ -363,6 +367,76 @@ test('statutory settings remain usable without salary and show only the selected
   await expect(tab(page).getByRole('heading', { name: 'Old regime', exact: true })).toHaveCount(0);
   await tab(page).getByRole('radio', { name: 'Salary', exact: true }).click();
   await expect(tab(page).getByRole('button', { name: 'Add salary', exact: true })).toBeVisible();
+});
+
+test('EPS defaults on and saves only its selection without changing the employee PF deduction', async ({ page }) => {
+  const state = await mockProfile(page);
+  await page.goto('/people/employee-test?tab=salary&section=statutory');
+  const eps = tab(page).getByRole('switch', { name: 'Employee pension (EPS)', exact: true });
+  await expect(eps).toBeChecked();
+  await eps.click();
+  await expect(eps).not.toBeChecked();
+  expect(state.requests.filter((request) => request.path.endsWith('/statutory')).map((request) => request.body)).toEqual([{ eps_enabled: false }]);
+  await expect(tab(page)).toContainText('employer’s full PF contribution goes to EPF');
+
+  await tab(page).getByRole('radio', { name: 'Salary', exact: true }).click();
+  await expect(tab(page).getByRole('row', { name: /PF — company share/ })).toContainText('EPF ₹1,800');
+  await expect(tab(page).getByRole('row', { name: /PF — employee share/ })).toContainText('₹1,800');
+  expect(state.e.salary.amount).toBe(initial.amount);
+  await tab(page).getByRole('radio', { name: 'Statutory', exact: true }).click();
+  await eps.click();
+  await expect(eps).toBeChecked();
+  expect(state.requests.at(-1).body).toEqual({ eps_enabled: true });
+});
+
+test('EPS becomes available with PF and retains an explicit off selection across PF changes', async ({ page }) => {
+  const state = await mockProfile(page, { noSalary: true, emptyPayObject: true });
+  state.e.statutory.pf_enabled = false;
+  await page.goto('/people/employee-test?tab=salary&section=statutory');
+  const pf = tab(page).getByRole('switch', { name: 'PF', exact: true });
+  const eps = tab(page).getByRole('switch', { name: 'Employee pension (EPS)', exact: true });
+  await expect(eps).toBeDisabled();
+  await expect(eps).not.toBeChecked();
+  await pf.click();
+  await expect(eps).toBeEnabled();
+  await expect(eps).toBeChecked();
+  await eps.click();
+  await expect(eps).not.toBeChecked();
+  await pf.click();
+  await expect(eps).toBeDisabled();
+  await pf.click();
+  await expect(eps).toBeEnabled();
+  await expect(eps).not.toBeChecked();
+  expect(state.e.statutory.eps_enabled).toBe(false);
+  expect(state.requests.map((request) => request.body)).toEqual([
+    { pf_enabled: true }, { eps_enabled: false }, { pf_enabled: false }, { pf_enabled: true },
+  ]);
+});
+
+test('EPS cannot be changed while the statutory save is pending', async ({ page }) => {
+  const state = await mockProfile(page);
+  let releaseSave;
+  state.statutorySaveGate = new Promise((resolve) => { releaseSave = resolve; });
+  await page.goto('/people/employee-test?tab=salary&section=statutory');
+  const eps = tab(page).getByRole('switch', { name: 'Employee pension (EPS)', exact: true });
+  await eps.click();
+  await expect(eps).toBeDisabled();
+  await expect(tab(page).getByRole('switch', { name: 'PF', exact: true })).toBeDisabled();
+  expect(state.requests.map((request) => request.body)).toEqual([{ eps_enabled: false }]);
+  releaseSave();
+  await expect(eps).toBeEnabled();
+  await expect(eps).not.toBeChecked();
+});
+
+test('EPS remains visible and disabled for a read-only employee', async ({ page }) => {
+  const state = await mockProfile(page);
+  state.e.read_only = true;
+  await page.goto('/people/employee-test?tab=salary&section=statutory');
+  const eps = tab(page).getByRole('switch', { name: 'Employee pension (EPS)', exact: true });
+  await expect(eps).toBeChecked();
+  await expect(eps).toBeDisabled();
+  await expect(tab(page).getByRole('switch', { name: 'PF', exact: true })).toBeDisabled();
+  expect(state.requests).toHaveLength(0);
 });
 
 test('pay group changes independently while employee salary structure stays selected', async ({ page }) => {

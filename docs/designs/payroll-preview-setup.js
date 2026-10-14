@@ -74,7 +74,7 @@ export function previewSalary(state, input) {
   const breakup = salaryPreview({
     mode: input.mode ?? 'GROSS', amount: input.amount, components: input.components,
     ...(input.chosen_gross !== undefined ? { chosen_gross: input.chosen_gross } : {}),
-    pf: { pf_enabled: input.pf_enabled ?? statutory.pf_enabled ?? true, pf_restrict_to_ceiling: statutory.pf_restrict_to_ceiling ?? true, vpf_pct: statutory.vpf_pct ?? 0 },
+    pf: { pf_enabled: input.pf_enabled ?? statutory.pf_enabled ?? true, eps_enabled: input.eps_enabled ?? statutory.eps_enabled ?? true, pf_restrict_to_ceiling: statutory.pf_restrict_to_ceiling ?? true, vpf_pct: statutory.vpf_pct ?? 0 },
     esi_enabled: input.esi_enabled ?? statutory.esi_enabled ?? true,
     pt: { pt_applicable: statutory.pt_applicable ?? true, pt_state: ptState, gender: input.gender ?? 'MALE' },
     rates,

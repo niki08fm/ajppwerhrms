@@ -332,6 +332,7 @@ export const employeeUpdateSchema = employeeCoreSchema
 export const statutoryUpdateSchema = z
   .object({
     pf_enabled: z.boolean().optional(),
+    eps_enabled: z.boolean().optional(),
     pf_restrict_to_ceiling: z.boolean().optional(),
     vpf_pct: z.number().min(0).max(100).optional(),
     esi_enabled: z.boolean().optional(),
@@ -378,8 +379,9 @@ export const offerCreateSchema = z
     valid_till: isoDate,
     pt_state: z.string().min(1),
     chosen_gross: paise.optional(),
-    /** Whether the offer gives PF and ESI. ESI can only be on while the gross is within its ceiling. */
+    /** EPS defaults on with PF. ESI eligibility uses the structure's selected ESI wages. */
     pf_enabled: z.boolean().optional(),
+    eps_enabled: z.boolean().optional(),
     esi_enabled: z.boolean().optional(),
   })
   .strict();

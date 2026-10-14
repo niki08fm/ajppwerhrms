@@ -12,7 +12,7 @@ export async function previewSalary(db, r) {
     mode: r.mode,
     amount: r.amount,
     components,
-    pf: { pf_enabled: r.pf_enabled ?? true, pf_restrict_to_ceiling: r.pf_restrict_to_ceiling ?? true, vpf_pct: r.vpf_pct ?? 0 },
+    pf: { pf_enabled: r.pf_enabled ?? true, eps_enabled: r.eps_enabled ?? true, pf_restrict_to_ceiling: r.pf_restrict_to_ceiling ?? true, vpf_pct: r.vpf_pct ?? 0 },
     esi_enabled: r.esi_enabled ?? true,
     pt: { pt_applicable: r.pt_applicable ?? true, pt_state: r.pt_state, gender: r.gender },
     rates: { pf: rates.pf, esi: rates.esi },
@@ -84,7 +84,7 @@ export function ctcBasisOf(salary, components, st, rates) {
   if (salary.mode === 'CTC') return salary.amount;
   return ctcForGross(salary.monthly_gross, {
     components,
-    pf: { pf_enabled: st.pf_enabled, pf_restrict_to_ceiling: st.pf_restrict_to_ceiling, vpf_pct: Number(st.vpf_pct) },
+    pf: { pf_enabled: st.pf_enabled, eps_enabled: st.eps_enabled ?? true, pf_restrict_to_ceiling: st.pf_restrict_to_ceiling, vpf_pct: Number(st.vpf_pct) },
     esi_enabled: st.esi_enabled,
     rates,
   }).ctc_basis;

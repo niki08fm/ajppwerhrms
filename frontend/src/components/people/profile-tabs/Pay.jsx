@@ -122,8 +122,20 @@ export function PayTab({ e }) {
             <CardBody className="flex flex-col gap-3 text-[14px]">
               <label className="flex items-center justify-between">
                 PF on
-                <Switch checked={st.pf_enabled} disabled={ro} onCheckedChange={(v) => patch.mutate({ pf_enabled: v })} label="PF on" />
+                <Switch checked={st.pf_enabled} disabled={ro || patch.isPending} onCheckedChange={(v) => patch.mutate({ pf_enabled: v })} label="PF on" />
               </label>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div>Employee pension (EPS)</div>
+                  <p className="text-[12px] text-muted-foreground">When off, the employer’s full PF contribution goes to EPF.</p>
+                </div>
+                <Switch
+                  checked={st.pf_enabled && st.eps_enabled !== false}
+                  disabled={ro || patch.isPending || !st.pf_enabled}
+                  onCheckedChange={(v) => patch.mutate({ eps_enabled: v })}
+                  label="Employee pension (EPS)"
+                />
+              </div>
               <label className="flex items-center justify-between">
                 Restrict to the wage ceiling
                 <Switch checked={st.pf_restrict_to_ceiling} disabled={ro || !st.pf_enabled} onCheckedChange={(v) => patch.mutate({ pf_restrict_to_ceiling: v })} label="Restrict to ceiling" />

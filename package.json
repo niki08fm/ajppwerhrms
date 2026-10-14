@@ -24,6 +24,7 @@
     "db:seed": "npm run db:seed --workspace=@ajpwer/backend",
     "db:seed:setup": "npm run db:seed:setup --workspace=@ajpwer/backend",
     "db:import:employees": "npm run db:import:employees --workspace=@ajpwer/backend --",
+    "db:replace:payroll-employees": "npm run db:replace:payroll-employees --workspace=@ajpwer/backend --",
     "db:seed:load": "npm run db:seed:load --workspace=@ajpwer/backend",
     "db:reset": "npm run db:reset --workspace=@ajpwer/backend",
     "test:api": "npm run test:api --workspace=@ajpwer/backend",

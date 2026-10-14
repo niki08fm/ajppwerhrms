@@ -71,6 +71,7 @@ export const createOffer = asyncHandler(async (req, res) => {
     gender: b.gender,
     pt_state: b.pt_state,
     pf_enabled: b.pf_enabled ?? true,
+    eps_enabled: b.eps_enabled ?? true,
     esi_enabled: b.esi_enabled ?? true,
     chosen_gross: b.chosen_gross,
   });
@@ -91,7 +92,7 @@ export const createOffer = asyncHandler(async (req, res) => {
         pay_group_id: b.pay_group_id,
         joined_on: toDbDate(b.join_by),
         status: 'OFFER',
-        statutory: { create: { pt_state: b.pt_state, pf_enabled: b.pf_enabled ?? true, esi_enabled: (b.esi_enabled ?? true) && preview.esi_within_ceiling } },
+        statutory: { create: { pt_state: b.pt_state, pf_enabled: b.pf_enabled ?? true, eps_enabled: b.eps_enabled ?? true, esi_enabled: (b.esi_enabled ?? true) && preview.esi_within_ceiling } },
         identity: { create: {} },
       },
     });

@@ -17,6 +17,7 @@
     "db:seed": "node --env-file-if-exists=../.env prisma/seed.js",
     "db:seed:setup": "node --env-file-if-exists=../.env prisma/seed.js --setup-only",
     "db:import:employees": "node --env-file-if-exists=../.env scripts/import-employees.js",
+    "db:replace:payroll-employees": "node --env-file-if-exists=../.env scripts/replace-payroll-employees.js",
     "db:seed:load": "node --env-file-if-exists=../.env prisma/seed-load.js",
     "db:studio": "dotenv -e ../.env -- prisma studio",
     "jobs:retention": "node --env-file-if-exists=../.env src/jobs/retention.js",

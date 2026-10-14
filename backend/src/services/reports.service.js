@@ -247,7 +247,7 @@ export async function buildReport(db, ym, key, opts) {
             uan: meta(s).ids.uan ?? '',
             gross_wages: n(s.salary_gross),
             pf_wage: pfWage,
-            eps_wage: Math.min(pfWage, 15_000_00),
+            eps_wage: meta(s).eps_wage ?? Math.min(pfWage, 15_000_00),
             employee: line(s, 'PF') + line(s, 'VPF'),
             employer_epf: line(s, 'ER_EPF'),
             eps: line(s, 'ER_EPS'),

@@ -146,6 +146,20 @@ export function SalaryTab({ e }) {
                     </div>
                     <Switch checked={st.pf_enabled} disabled={ro || patch.isPending} onCheckedChange={(v) => patch.mutate({ pf_enabled: v })} label="PF" />
                   </div>
+                  <div className={line}>
+                    <div className="pl-3">
+                      <div className="text-[13px]">Employee pension (EPS)</div>
+                      <div className="text-[12px] text-muted-foreground">
+                        When off, the employer’s full PF contribution goes to EPF.
+                      </div>
+                    </div>
+                    <Switch
+                      checked={st.pf_enabled && st.eps_enabled !== false}
+                      disabled={ro || patch.isPending || !st.pf_enabled}
+                      onCheckedChange={(v) => patch.mutate({ eps_enabled: v })}
+                      label="Employee pension (EPS)"
+                    />
+                  </div>
                   {!st.pf_enabled && e.identity?.uan && <Notice tone="warning">PF is off although a UAN is on file. Keep a reason in the log.</Notice>}
                   {st.pf_enabled && (
                     <>

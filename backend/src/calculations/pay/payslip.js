@@ -10,7 +10,7 @@ import { expandStructure } from './structure.js';
 import { applyRecoveryCap } from './recovery.js';
 
 /** Stored on every payslip. Bump when a computation changes so old months stay explainable. */
-export const ENGINE_VERSION = '1.5.0';
+export const ENGINE_VERSION = '1.6.0';
 
 export class PayslipReconciliationError extends Error {
   constructor(message) {
@@ -217,6 +217,7 @@ export function assemblePayslip(input) {
     ctc_month: salary_gross + employer_total,
     pf_charges: pfChallanCharges(pf),
     pf_wage: pf.pf_wage,
+    eps_wage: pf.eps_wage,
     esi_applicable: esi.applicable,
     paid_days: att.paid_days,
     lop_days: att.lop_days,

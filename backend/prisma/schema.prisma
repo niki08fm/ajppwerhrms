@@ -692,6 +692,7 @@ model EmployeeStatutory {
   employee_id            String    @unique @db.Uuid
   employee               Employee  @relation(fields: [employee_id], references: [id])
   pf_enabled             Boolean   @default(true)
+  eps_enabled            Boolean   @default(true)
   pf_restrict_to_ceiling Boolean   @default(true)
   vpf_pct                Decimal   @default(0) @db.Decimal(9, 6)
   esi_enabled            Boolean   @default(true)

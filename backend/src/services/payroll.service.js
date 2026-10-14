@@ -228,7 +228,7 @@ export async function computeIssues(db, ym) {
       const ctx = ctxForBand;
       const sol = solveGrossFromCtc(p.salary.amount, {
         components,
-        pf: { pf_enabled: e.statutory.pf_enabled, pf_restrict_to_ceiling: e.statutory.pf_restrict_to_ceiling, vpf_pct: Number(e.statutory.vpf_pct) },
+        pf: { pf_enabled: e.statutory.pf_enabled, eps_enabled: e.statutory.eps_enabled ?? true, pf_restrict_to_ceiling: e.statutory.pf_restrict_to_ceiling, vpf_pct: Number(e.statutory.vpf_pct) },
         esi_enabled: true,
         rates: { pf: ctx.rates.pf, esi: ctx.rates.esi },
       });
@@ -418,6 +418,7 @@ export async function executeRun(ym, actor, onProgress) {
                 esi: ps.esi,
                 statutory_gross: r.statutory_gross,
                 esi_wage: r.esi_wage,
+                eps_wage: r.eps_wage,
                 employee_statutory: r.employee_statutory,
                 recovery: r.recovery,
                 flags: r.flags,

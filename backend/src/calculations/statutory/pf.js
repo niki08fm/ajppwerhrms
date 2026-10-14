@@ -1,6 +1,6 @@
 import { clampMin0, pct, roundRupee } from '@ajpwer/shared';
 
-const ZERO = { pf_wage: 0, employee: 0, vpf: 0, employer_total: 0, employer_epf: 0, eps: 0, edli: 0, admin: 0 };
+const ZERO = { pf_wage: 0, eps_wage: 0, employee: 0, vpf: 0, employer_total: 0, employer_epf: 0, eps: 0, edli: 0, admin: 0 };
 
 /**
  * Provident fund on earned component pay only.
@@ -11,6 +11,8 @@ const ZERO = { pf_wage: 0, employee: 0, vpf: 0, employer_total: 0, employer_epf:
  * The ceiling is the one limit: it caps the wage the percentage runs on, and so
  * the largest contribution is simply rate × ceiling (see pfMaxContribution).
  * With restrict-to-ceiling off, PF follows the full wage. PF rounds to the nearest rupee.
+ * EPS is on unless explicitly disabled. Turning it off moves the employer's
+ * pension share into EPF; it does not change the employee deduction or CTC.
  */
 export function computePf(pfBaseEarned, choice, rates) {
   if (!choice.pf_enabled || pfBaseEarned <= 0) return { ...ZERO };
@@ -19,14 +21,14 @@ export function computePf(pfBaseEarned, choice, rates) {
   const employee = roundRupee(pct(pf_wage, rates.employee_pct));
   const employer_total = roundRupee(pct(pf_wage, rates.employer_pct));
 
-  const epsWage = Math.min(pf_wage, rates.eps_wage_ceiling);
-  const eps = Math.min(roundRupee(pct(epsWage, rates.eps_pct)), employer_total);
+  const eps_wage = choice.eps_enabled === false ? 0 : Math.min(pf_wage, rates.eps_wage_ceiling);
+  const eps = Math.min(roundRupee(pct(eps_wage, rates.eps_pct)), employer_total);
   const employer_epf = clampMin0(employer_total - eps);
   const edli = roundRupee(pct(Math.min(pf_wage, rates.eps_wage_ceiling), rates.edli_pct));
   const admin = roundRupee(pct(pf_wage, rates.admin_pct));
   const vpf = choice.vpf_pct > 0 ? roundRupee(pct(pf_wage, choice.vpf_pct)) : 0;
 
-  return { pf_wage, employee, vpf, employer_total, employer_epf, eps, edli, admin };
+  return { pf_wage, eps_wage, employee, vpf, employer_total, employer_epf, eps, edli, admin };
 }
 
 /**

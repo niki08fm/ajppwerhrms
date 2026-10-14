@@ -124,6 +124,7 @@ export async function computePayslip(db, e, ym, month, ctx, recoveries) {
     overtime_rules: otPolicy?.rules ?? null,
     statutory: {
       pf_enabled: e.statutory.pf_enabled,
+      eps_enabled: e.statutory.eps_enabled ?? true,
       pf_restrict_to_ceiling: e.statutory.pf_restrict_to_ceiling,
       vpf_pct: Number(e.statutory.vpf_pct),
       esi_applicable: esi.applicable,
