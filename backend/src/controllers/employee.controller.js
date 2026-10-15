@@ -30,7 +30,8 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { filterOne, filterValues, keysetOrder, keysetWhere, page, parseList, toCSV } from '../utils/list.js';
 import { prisma } from '../config/db.js';
 import { computeMonth1, computeMonths } from '../services/attendance.service.js';
-import { employeeView, loadEmployee, markTask, nextEmployeeCode, rulesThatApply } from '../services/employee.service.js';
+import { asOfDate, employeeView, loadEmployee, markTask, nextEmployeeCode, rulesThatApply } from '../services/employee.service.js';
+import { issueLetter } from '../services/letter.service.js';
 import { invalidateFaceCache } from '../services/face.service.js';
 import { exitChecklist } from '../services/exit.service.js';
 import { leaveBalances } from '../services/leave.service.js';
@@ -607,7 +608,7 @@ export const updateStatutory = asyncHandler(async (req, res) => {
   // covered for the current contribution period.
   if (b.esi_enabled === true && !before.esi_enabled) {
     const now = today();
-    const sal = await salaryOn(prisma, e.id, now > fromDbDate(e.joined_on) ? now : fromDbDate(e.joined_on));
+    const sal = await salaryOn(prisma, e.id, asOfDate(e, now));
     const rates = await ratesOn(prisma, now);
     const covered = before.esi_locked_until && fromDbDate(before.esi_locked_until) >= now;
     const components = sal ? await structureComponents(prisma, sal.structure_id) : null;
@@ -629,7 +630,7 @@ export const updateStatutory = asyncHandler(async (req, res) => {
 /** Everything the pay and statutory tab shows, at full pay. */
 export const getPay = asyncHandler(async (req, res) => {
   const e = await mustLoad(req.params.id);
-  const date = today() > fromDbDate(e.joined_on) ? today() : fromDbDate(e.joined_on);
+  const date = asOfDate(e, today());
   const cur = await salaryOn(prisma, e.id, date);
   if (!cur) {
     let configuredRates = null;
@@ -665,7 +666,7 @@ export const getPay = asyncHandler(async (req, res) => {
 
 export const getTax = asyncHandler(async (req, res) => {
   const e = await mustLoad(req.params.id);
-  const date = today() > fromDbDate(e.joined_on) ? today() : fromDbDate(e.joined_on);
+  const date = asOfDate(e, today());
   const cur = await salaryOn(prisma, e.id, date);
   if (!cur) return res.json({ data: null });
   const components = await structureComponents(prisma, cur.structure_id);
@@ -872,47 +873,8 @@ export const createLetter = asyncHandler(async (req, res) => {
     const open = (await exitChecklist(prisma, e.id)).filter((t) => t.required && !t.done_at);
     if (open.length) throw new AppError('VALIDATION', `Finish the exit checklist first: ${open.map((t) => t.label.toLowerCase()).join('; ')}.`, 422);
   }
-  const company = await prisma.company.findFirst();
-  const date = today() > fromDbDate(e.joined_on) ? today() : fromDbDate(e.joined_on);
-  const cur = await salaryOn(prisma, e.id, kind === 'RELIEVING' || kind === 'EXPERIENCE' ? (fromDbDate(e.last_day) ?? date) : date);
-  const preview = cur
-    ? await previewSalary(prisma, {
-      mode: cur.mode, amount: cur.amount, structure_id: cur.structure_id, date, gender: e.gender,
-      pt_state: e.statutory.pt_state, pt_applicable: e.statutory.pt_applicable,
-      pf_enabled: e.statutory.pf_enabled, eps_enabled: e.statutory.eps_enabled ?? true, pf_restrict_to_ceiling: e.statutory.pf_restrict_to_ceiling,
-      vpf_pct: Number(e.statutory.vpf_pct), esi_enabled: e.statutory.esi_enabled,
-      saved_gross: cur.monthly_gross,
-    })
-    : null;
-  const count = await prisma.letter.count();
-  const ref = `AJPWER/${kind.slice(0, 3)}/${date.slice(0, 4)}/${String(count + 1).padStart(5, '0')}`;
-  const snapshot = {
-    company: company ? { name: company.name, address: company.address } : null,
-    employee: { code: e.code, name: e.name, designation: e.designation, department: e.department.name, joined_on: fromDbDate(e.joined_on), last_day: fromDbDate(e.last_day), address: e.address },
-    pay_group: e.pay_group.name,
-    salary:
-      cur && preview
-        ? {
-            mode: cur.mode,
-            amount: cur.amount,
-            monthly_gross: preview.gross,
-            annual_ctc: preview.ctc.annual_ctc,
-            components: preview.structure.monthly.map((c) => ({ name: c.name, amount: c.amount })),
-            yearly: preview.structure.yearly.map((c) => ({ name: c.name, amount: c.amount })),
-            employer_pf: preview.ctc.employer_pf,
-            employer_esi: preview.ctc.employer_esi,
-            take_home: preview.take_home,
-          }
-        : null,
-    generated_on: today(),
-  };
   const { actor, ip } = who(req);
-  const letter = await prisma.$transaction(async (tx) => {
-    const l = await tx.letter.create({ data: { employee_id: e.id, kind, ref, issued_on: issue ? toDbDate(today()) : null, snapshot: JSON.parse(JSON.stringify(snapshot)) } });
-    if (kind === 'JOINING' && issue) await markTask(tx, e.id, 'JOINING_LETTER', actor);
-    await audit(tx, { actor, ip, action: 'letter.issue', entity_type: 'employee', entity_id: e.id, detail: { kind, ref } });
-    return l;
-  });
+  const letter = await prisma.$transaction((tx) => issueLetter(tx, e, kind, { today: today(), issue, actor, ip }));
   res.status(201).json({ data: letter });
 });
 

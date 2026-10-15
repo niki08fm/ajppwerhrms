@@ -57,6 +57,7 @@ async function mockOffers(page, { existingOffer = false, letterFailure = false }
       state.status = 'ACCEPTED';
       data = { status: state.status };
     } else if (path === `/offers/${OFFER}/onboard` && method === 'POST') {
+      state.onboardBody = request.postDataJSON();
       state.status = 'ONBOARDING';
       state.salary = { id: 'test-initial-salary', mode: 'GROSS', amount: 3_000_000, monthly_gross: 3_000_000, valid_from: '2026-10-01', valid_to: null, structure_id: STRUCTURE.id, structure: STRUCTURE, reason: 'As offered (TEST/OFFER/061)', can_edit: true, can_delete: false };
       data = { status: state.status };
@@ -133,7 +134,12 @@ test('accepting and onboarding refresh a previously cached profile, pay and sala
 
   await page.getByRole('link', { name: 'Hiring and onboarding', exact: true }).click();
   await page.getByRole('tab', { name: /^Accepted/ }).click();
-  await page.getByRole('button', { name: 'Start onboarding', exact: true }).click();
+  await page.getByRole('button', { name: 'Onboard', exact: true }).click();
+  // The joining date is asked for (prefilled from the offer here); the joining letter is issued with it.
+  const onboard = page.getByRole('dialog', { name: 'Onboard Example Offered Employee', exact: true });
+  await expect(onboard.getByLabel(/^Joining date/)).toHaveValue('2026-10-01');
+  await onboard.getByRole('button', { name: 'Onboard and issue joining letter', exact: true }).click();
+  await expect.poll(() => state.onboardBody).toEqual({ joined_on: '2026-10-01' });
   // Starting onboarding opens the person's onboarding steps.
   await expect(page).toHaveURL(new RegExp(`/people/${EMPLOYEE}\\?tab=onboarding$`));
   await expect(page.getByRole('heading', { name: 'Onboarding', exact: true })).toBeVisible();

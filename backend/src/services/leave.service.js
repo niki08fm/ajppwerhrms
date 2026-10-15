@@ -58,8 +58,9 @@ export async function leaveCheck(db, employee, b) {
     if (!type.active) errors.push(`${type.name} is switched off in ${rules.name}'s leave policy.`);
     if (type.gender !== 'ALL' && type.gender !== employee.gender) errors.push(`${type.name} is for ${type.gender === 'FEMALE' ? 'women' : 'men'} only.`);
     const joined = fromDbDate(employee.joined_on);
-    const from = usableFrom(type, joined);
-    if (b.from_date < from) errors.push(`${type.name} can be taken from ${from}, after ${type.min_service_months} months of service.`);
+    const from = joined ? usableFrom(type, joined) : null;
+    if (!joined) errors.push(`${employee.name} has no joining date yet. Leave is recorded once onboarding starts.`);
+    else if (b.from_date < from) errors.push(`${type.name} can be taken from ${from}, after ${type.min_service_months} months of service.`);
   }
   if (errors.length || !type) return { type, errors, warnings: [], working_days: 0, balance: null };
 

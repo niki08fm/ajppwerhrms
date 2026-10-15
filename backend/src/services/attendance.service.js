@@ -123,7 +123,8 @@ async function classifyMonths(db, employees, ym, rulesFor) {
     const empPunches = punchesBy.get(e.id) ?? {};
     const empTravel = travel.get(e.id) ?? {};
     const empOverrides = overridesBy.get(e.id) ?? {};
-    const joined = fromDbDate(e.joined_on);
+    // No joining date yet (on offer or accepted): not joined on any day.
+    const joined = fromDbDate(e.joined_on) ?? '9999-12-31';
     const lastDay = fromDbDate(e.last_day);
     const policiesByDate = {};
 
@@ -211,7 +212,7 @@ async function leavePlans(db, employees, ym, opts) {
   const plans = new Map();
   for (const e of employees) {
     const rules = await opts.rulesFor(e.pay_group_id);
-    const joined = fromDbDate(e.joined_on);
+    const joined = fromDbDate(e.joined_on) ?? '9999-12-31';
     const lastDay = fromDbDate(e.last_day);
     const pol = leavePolicyFor(rules, ym, lastDay);
     if (!pol || ym < ymOf(joined) || (lastDay && ym > ymOf(lastDay))) continue;

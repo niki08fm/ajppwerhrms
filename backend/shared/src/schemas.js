@@ -375,7 +375,8 @@ export const offerCreateSchema = z
     structure_id: uuid,
     mode: z.enum(SALARY_MODES),
     amount: paise.min(1),
-    join_by: isoDate,
+    /** Optional: the joining date can be given when onboarding starts. */
+    join_by: isoDate.nullable().optional(),
     valid_till: isoDate,
     pt_state: z.string().min(1),
     chosen_gross: paise.optional(),
@@ -383,6 +384,17 @@ export const offerCreateSchema = z
     pf_enabled: z.boolean().optional(),
     eps_enabled: z.boolean().optional(),
     esi_enabled: z.boolean().optional(),
+  })
+  .strict();
+
+/** Revoke an open or accepted offer; the reason stays on record. */
+export const offerRevokeSchema = z.object({ reason: z.string().trim().min(3).max(200) }).strict();
+
+/** Start onboarding accepted candidates, one or many, from one joining date. */
+export const offerOnboardSchema = z
+  .object({
+    offer_ids: z.array(uuid).min(1).max(200),
+    joined_on: isoDate,
   })
   .strict();
 

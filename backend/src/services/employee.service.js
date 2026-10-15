@@ -80,8 +80,14 @@ export async function rulesThatApply(db, payGroupId, date, salaryStructureId = n
   };
 }
 
+/** The date a profile is worked out as of: today, or the joining date while it is still ahead (today when none is set yet). */
+export function asOfDate(e, today) {
+  const joined = fromDbDate(e.joined_on);
+  return joined && joined > today ? joined : today;
+}
+
 export async function employeeView(db, e, today, fullPii) {
-  const salary = await salaryOn(db, e.id, today > fromDbDate(e.joined_on) ? today : fromDbDate(e.joined_on));
+  const salary = await salaryOn(db, e.id, asOfDate(e, today));
   return {
     id: e.id,
     code: e.code,

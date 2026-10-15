@@ -152,7 +152,7 @@ function Header({ e, go, onAction }) {
         )}
       </div>
       <div className="grid grid-cols-2 gap-2.5 p-5 md:grid-cols-3 xl:grid-cols-6">
-        <Fact label="Joined" value={longDate(e.joined_on)} sub={tenure(e.joined_on, today)} onClick={() => go('overview')} />
+        <Fact label="Joined" value={e.joined_on ? longDate(e.joined_on) : 'Not set yet'} sub={tenure(e.joined_on, today)} onClick={() => go('overview')} />
         <Fact label="Pay group · shift" value={e.pay_group.name} sub={shift ? `${shift.name} ${hhmm(shift.start_min)}–${hhmm(shift.end_min)}` : undefined} onClick={() => go('salary')} />
         <Fact
           label="Monthly gross"

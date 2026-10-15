@@ -1,17 +1,42 @@
-import { istDate, offerCreateSchema } from '@ajpwer/shared';
+import { formatLongDate, istDate, offerCreateSchema, offerOnboardSchema, offerRevokeSchema } from '@ajpwer/shared';
 import { audit, who } from '../utils/audit.js';
 import { fromDbDate, n, toDbDate } from '../utils/dbDates.js';
 import { AppError, notFound } from '../utils/errors.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { prisma } from '../config/db.js';
-import { markTask, nextEmployeeCode, onboardingView } from '../services/employee.service.js';
+import { loadEmployee, markTask, nextEmployeeCode, onboardingView } from '../services/employee.service.js';
+import { issueLetter } from '../services/letter.service.js';
 import { resolveMonthlyGross } from '../services/salary.service.js';
 import { assertDepartmentAssignable } from '../services/department.service.js';
 
 const today = () => istDate(new Date());
 
-/** The hiring pipeline, three tabs by status. */
+const offerOut = (o) =>
+  o
+    ? {
+        id: o.id,
+        ref: o.ref,
+        mode: o.mode,
+        amount: n(o.amount),
+        monthly_gross: n(o.monthly_gross),
+        structure_id: o.structure_id,
+        issued_on: fromDbDate(o.issued_on),
+        join_by: fromDbDate(o.join_by),
+        valid_till: fromDbDate(o.valid_till),
+        accepted_on: fromDbDate(o.accepted_on),
+        revoked_on: fromDbDate(o.revoked_on),
+        revoke_reason: o.revoke_reason,
+        revoked_by: o.revoked_by,
+      }
+    : null;
+
+/** The hiring pipeline by status: on offer, accepted, onboarding, and offers revoked. */
 export const listOffers = asyncHandler(async (_req, res) => {
+  const revoked = await prisma.offer.findMany({
+    where: { deleted_at: null, revoked_on: { not: null } },
+    include: { employee: { include: { department: { select: { id: true, name: true } }, pay_group: { select: { id: true, name: true } } } } },
+    orderBy: { revoked_on: 'desc' },
+  });
   const people = await prisma.employee.findMany({
     where: { deleted_at: null, status: { in: ['OFFER', 'ACCEPTED', 'ONBOARDING'] } },
     include: {
@@ -35,23 +60,22 @@ export const listOffers = asyncHandler(async (_req, res) => {
         pay_group: p.pay_group,
         status: p.status,
         joined_on: fromDbDate(p.joined_on),
-        offer: o
-          ? {
-              id: o.id,
-              ref: o.ref,
-              mode: o.mode,
-              amount: n(o.amount),
-              monthly_gross: n(o.monthly_gross),
-              structure_id: o.structure_id,
-              issued_on: fromDbDate(o.issued_on),
-              join_by: fromDbDate(o.join_by),
-              valid_till: fromDbDate(o.valid_till),
-              accepted_on: fromDbDate(o.accepted_on),
-            }
-          : null,
+        offer: offerOut(o),
         onboarding: onboardingView(p.onboarding_tasks),
       };
-    }),
+    }).concat(revoked.map((o) => ({
+      id: o.employee.id,
+      code: o.employee.code,
+      name: o.employee.name,
+      phone: o.employee.phone,
+      designation: o.employee.designation,
+      department: o.employee.department,
+      pay_group: o.employee.pay_group,
+      status: 'REVOKED',
+      joined_on: fromDbDate(o.employee.joined_on),
+      offer: offerOut(o),
+      onboarding: null,
+    }))),
   });
 });
 
@@ -67,7 +91,7 @@ export const createOffer = asyncHandler(async (req, res) => {
     mode: b.mode,
     amount: b.amount,
     structure_id: b.structure_id,
-    date: b.join_by,
+    date: b.join_by ?? today(),
     gender: b.gender,
     pt_state: b.pt_state,
     pf_enabled: b.pf_enabled ?? true,
@@ -90,7 +114,7 @@ export const createOffer = asyncHandler(async (req, res) => {
         department_id: b.department_id,
         designation: b.designation,
         pay_group_id: b.pay_group_id,
-        joined_on: toDbDate(b.join_by),
+        joined_on: b.join_by ? toDbDate(b.join_by) : null,
         status: 'OFFER',
         statutory: { create: { pt_state: b.pt_state, pf_enabled: b.pf_enabled ?? true, eps_enabled: b.eps_enabled ?? true, esi_enabled: (b.esi_enabled ?? true) && preview.esi_within_ceiling } },
         identity: { create: {} },
@@ -107,7 +131,7 @@ export const createOffer = asyncHandler(async (req, res) => {
         monthly_gross: BigInt(monthly_gross),
         structure_id: b.structure_id,
         issued_on: toDbDate(today()),
-        join_by: toDbDate(b.join_by),
+        join_by: b.join_by ? toDbDate(b.join_by) : null,
         valid_till: toDbDate(b.valid_till),
       },
     });
@@ -120,8 +144,8 @@ export const createOffer = asyncHandler(async (req, res) => {
         snapshot: JSON.parse(
           JSON.stringify({
             company: company ? { name: company.name, address: company.address } : null,
-            employee: { code, name: b.name, designation: b.designation, department: dept?.name, joined_on: b.join_by },
-            offer: { ref, mode: b.mode, amount: normalizedAmount, join_by: b.join_by, valid_till: b.valid_till },
+            employee: { code, name: b.name, designation: b.designation, department: dept?.name, joined_on: b.join_by ?? null },
+            offer: { ref, mode: b.mode, amount: normalizedAmount, join_by: b.join_by ?? null, valid_till: b.valid_till },
             pay_group: group.name,
             salary: {
               mode: b.mode,
@@ -148,6 +172,7 @@ export const createOffer = asyncHandler(async (req, res) => {
 export const acceptOffer = asyncHandler(async (req, res) => {
   const offer = await prisma.offer.findUnique({ where: { id: req.params.id }, include: { employee: true } });
   if (!offer) throw notFound('That offer');
+  if (offer.revoked_on) throw new AppError('INVALID_TRANSITION', `The offer to ${offer.employee.name} was revoked on ${fromDbDate(offer.revoked_on)}.`, 409);
   if (offer.employee.status !== 'OFFER') throw new AppError('INVALID_TRANSITION', `${offer.employee.name} is ${offer.employee.status}, not on offer.`, 409);
   const { actor, ip } = who(req);
   await prisma.$transaction(async (tx) => {
@@ -158,28 +183,78 @@ export const acceptOffer = asyncHandler(async (req, res) => {
   res.json({ data: { status: 'ACCEPTED' } });
 });
 
-/** Start onboarding: the salary record effective from the joining date, and the checklist. */
-export const startOnboarding = asyncHandler(async (req, res) => {
+/** Revoke an open or accepted offer. The person leaves the pipeline; the offer and its letter stay on record. */
+export const revokeOffer = asyncHandler(async (req, res) => {
+  const { reason } = offerRevokeSchema.parse(req.body ?? {});
   const offer = await prisma.offer.findUnique({ where: { id: req.params.id }, include: { employee: true } });
   if (!offer) throw notFound('That offer');
-  if (offer.employee.status !== 'ACCEPTED') throw new AppError('INVALID_TRANSITION', `Mark the offer accepted before onboarding. ${offer.employee.name} is ${offer.employee.status}.`, 409);
+  if (offer.revoked_on) throw new AppError('INVALID_TRANSITION', `The offer to ${offer.employee.name} is already revoked.`, 409);
+  if (!['OFFER', 'ACCEPTED'].includes(offer.employee.status)) {
+    throw new AppError('INVALID_TRANSITION', `${offer.employee.name} is ${offer.employee.status.toLowerCase()}; only an open or accepted offer can be revoked.`, 409);
+  }
   const { actor, ip } = who(req);
   await prisma.$transaction(async (tx) => {
-    await tx.employeeSalary.create({
-      data: {
-        employee_id: offer.employee_id,
-        valid_from: offer.employee.joined_on,
-        mode: offer.mode,
-        amount: offer.amount,
-        monthly_gross: offer.monthly_gross,
-        structure_id: offer.structure_id,
-        reason: `As offered (${offer.ref})`,
-        created_by: actor,
-      },
-    });
-    await tx.employee.update({ where: { id: offer.employee_id }, data: { status: 'ONBOARDING' } });
-    await markTask(tx, offer.employee_id, 'PAY', actor);
-    await audit(tx, { actor, ip, action: 'onboarding.start', entity_type: 'employee', entity_id: offer.employee_id, detail: { ref: offer.ref } });
+    await tx.offer.update({ where: { id: offer.id }, data: { revoked_on: toDbDate(today()), revoke_reason: reason, revoked_by: actor } });
+    await tx.employee.update({ where: { id: offer.employee_id }, data: { deleted_at: new Date() } });
+    await audit(tx, { actor, ip, action: 'offer.revoke', entity_type: 'employee', entity_id: offer.employee_id, detail: { ref: offer.ref, from: offer.employee.status, reason } });
   });
+  res.json({ data: { status: 'REVOKED' } });
+});
+
+/**
+ * Start onboarding accepted candidates from a joining date, all or none: the joining date,
+ * the offered salary from that date, the joining letter issued, then the onboarding steps.
+ */
+async function onboardOffers(offerIds, joinedOn, actor, ip) {
+  return prisma.$transaction(async (tx) => {
+    const offers = await tx.offer.findMany({ where: { id: { in: offerIds }, deleted_at: null }, include: { employee: true } });
+    if (offers.length !== new Set(offerIds).size) throw notFound('One of those offers');
+    for (const offer of offers) {
+      const name = offer.employee.name;
+      if (offer.revoked_on || offer.employee.deleted_at) throw new AppError('INVALID_TRANSITION', `The offer to ${name} was revoked.`, 409);
+      if (offer.employee.status !== 'ACCEPTED') throw new AppError('INVALID_TRANSITION', `Mark the offer accepted before onboarding. ${name} is ${offer.employee.status.toLowerCase()}.`, 409);
+      const date = joinedOn ?? fromDbDate(offer.employee.joined_on);
+      if (!date) throw new AppError('VALIDATION', `Give ${name}'s joining date to start onboarding.`, 422, 'joined_on');
+      if (date < fromDbDate(offer.issued_on)) throw new AppError('VALIDATION', `${name}'s joining date cannot be before the offer was issued (${formatLongDate(fromDbDate(offer.issued_on))}).`, 422, 'joined_on');
+    }
+    const today_ = today();
+    for (const offer of offers) {
+      const date = joinedOn ?? fromDbDate(offer.employee.joined_on);
+      await tx.offer.update({ where: { id: offer.id }, data: { join_by: toDbDate(date) } });
+      await tx.employee.update({ where: { id: offer.employee_id }, data: { joined_on: toDbDate(date), status: 'ONBOARDING' } });
+      await tx.employeeSalary.create({
+        data: {
+          employee_id: offer.employee_id,
+          valid_from: toDbDate(date),
+          mode: offer.mode,
+          amount: offer.amount,
+          monthly_gross: offer.monthly_gross,
+          structure_id: offer.structure_id,
+          reason: `As offered (${offer.ref})`,
+          created_by: actor,
+        },
+      });
+      await markTask(tx, offer.employee_id, 'PAY', actor);
+      await audit(tx, { actor, ip, action: 'onboarding.start', entity_type: 'employee', entity_id: offer.employee_id, detail: { ref: offer.ref, joined_on: date } });
+      // Formalities start once the joining letter is out: issue it now, with the date and salary.
+      await issueLetter(tx, await loadEmployee(tx, offer.employee_id), 'JOINING', { today: today_, actor, ip });
+    }
+    return offers.map((o) => o.employee_id);
+  }, { timeout: 120_000 });
+}
+
+/** Start onboarding one accepted candidate. The joining date may be given now or come from the offer. */
+export const startOnboarding = asyncHandler(async (req, res) => {
+  const b = offerOnboardSchema.pick({ joined_on: true }).partial().parse(req.body ?? {});
+  const { actor, ip } = who(req);
+  await onboardOffers([req.params.id], b.joined_on, actor, ip);
   res.json({ data: { status: 'ONBOARDING' } });
+});
+
+/** Start onboarding several accepted candidates from one joining date. */
+export const startOnboardingMany = asyncHandler(async (req, res) => {
+  const b = offerOnboardSchema.parse(req.body);
+  const { actor, ip } = who(req);
+  const ids = await onboardOffers(b.offer_ids, b.joined_on, actor, ip);
+  res.json({ data: { status: 'ONBOARDING', employee_ids: ids } });
 });

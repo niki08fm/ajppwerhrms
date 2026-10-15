@@ -117,8 +117,14 @@ export default function LetterPrint() {
             <h2 className="my-6 text-center font-display text-lg font-semibold">Offer of employment</h2>
             <p>Dear {first},</p>
             <p className="mt-3">
-              We are pleased to offer you the position of <strong>{s.employee.designation}</strong> in our {s.employee.department} department, in the {s.pay_group} pay group, with an expected joining
-              date of <strong>{longDate(s.offer?.join_by ?? s.employee.joined_on)}</strong>.
+              We are pleased to offer you the position of <strong>{s.employee.designation}</strong> in our {s.employee.department} department, in the {s.pay_group} pay group
+              {s.offer?.join_by ?? s.employee.joined_on ? (
+                <>
+                  , with an expected joining date of <strong>{longDate(s.offer?.join_by ?? s.employee.joined_on)}</strong>.
+                </>
+              ) : (
+                '. Your date of joining will be confirmed in your joining letter.'
+              )}
             </p>
             <p className="mt-3">
               Your remuneration is {s.salary?.mode === 'CTC' ? 'an annual cost to company' : 'a monthly gross salary'} of{' '}

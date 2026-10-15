@@ -87,7 +87,7 @@ export default function People() {
     { id: 'dept', header: 'Department', cell: (r) => r.department.name },
     { id: 'group', header: 'Pay group', cell: (r) => r.pay_group.name },
     { id: 'status', header: 'Status', sortKey: 'status', cell: (r) => <EmployeeStatusChip status={r.status} /> },
-    { id: 'joined', header: 'Joined', sortKey: 'joined', cell: (r) => <span className="num">{r.joined_on}</span> },
+    { id: 'joined', header: 'Joined', sortKey: 'joined', cell: (r) => (r.joined_on ? <span className="num">{r.joined_on}</span> : <span className="text-muted-foreground">Not set yet</span>) },
     { id: 'pt', header: 'PT state', cell: (r) => r.pt_state ?? '—' },
     { id: 'regime', header: 'Regime', cell: (r) => (r.tax_regime === 'OLD' ? 'Old' : 'New') },
     {

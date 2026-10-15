@@ -626,7 +626,8 @@ model Employee {
   pay_group_id      String               @db.Uuid
   pay_group         PayGroup             @relation(fields: [pay_group_id], references: [id])
   status            EmployeeStatus       @default(OFFER)
-  joined_on         DateTime             @db.Date
+  /// Not set while on offer or accepted; required from onboarding on (CHECK employee_joined_on_required)
+  joined_on         DateTime?            @db.Date
   resigned_on       DateTime?            @db.Date
   last_day          DateTime?            @db.Date
   exit_reason       String?
@@ -774,9 +775,14 @@ model Offer {
   structure_id  String          @db.Uuid
   structure     SalaryStructure @relation(fields: [structure_id], references: [id])
   issued_on     DateTime        @db.Date
-  join_by       DateTime        @db.Date
+  /// The joining date, once given: optional on the offer, set when onboarding starts
+  join_by       DateTime?       @db.Date
   valid_till    DateTime        @db.Date
   accepted_on   DateTime?       @db.Date
+  /// A revoked offer stays on record; its person is soft-deleted
+  revoked_on    DateTime?       @db.Date
+  revoke_reason String?
+  revoked_by    String?
   created_at    DateTime        @default(now()) @db.Timestamptz(6)
   updated_at    DateTime?       @updatedAt @db.Timestamptz(6)
   deleted_at    DateTime?       @db.Timestamptz(6)
