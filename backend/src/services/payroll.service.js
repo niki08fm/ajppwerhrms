@@ -170,6 +170,7 @@ export const ISSUE_LABELS = {
   OT_OVER_CAP: 'Overtime over the monthly cap',
   NO_POLICY: 'No attendance policy on some days',
   HELD_NOT_PAID: 'Released held salary not paid',
+  NO_OPENING_TDS: 'TDS before AJPWER not entered',
 };
 
 export async function computeIssues(db, ym) {
@@ -222,6 +223,12 @@ export async function computeIssues(db, ym) {
     if (p.result.net < 0) add(e, 'NEGATIVE_NET', 'BLOCKING', `Net pay would be −₹${Math.round(-p.result.net / 100).toLocaleString('en-IN')}.`, 'loans');
     const absences = p.result.lop_days;
     if (absences > 3 && !fromDbDate(e.last_day)) add(e, 'MANY_ABSENCES', 'WARNING', `${absences} days loss of pay this month.`, 'attendance');
+    // Months of this financial year paid before AJPWER: TDS then deducted is needed to true up the year (Section 192).
+    const th = p.tax_history;
+    if (th && th.opening_tds === null && th.earlier_months > 0) {
+      const months = th.earlier_from === th.earlier_to ? formatYearMonth(th.earlier_from) : `${formatYearMonth(th.earlier_from)} – ${formatYearMonth(th.earlier_to)}`;
+      add(e, 'NO_OPENING_TDS', 'WARNING', `No TDS entered for ${months}. Enter the TDS deducted before AJPWER on the Tax tab; until then those months count as taxed evenly.`, 'tax');
+    }
     if (p.result.flags.includes('OT_OVER_CAP')) add(e, 'OT_OVER_CAP', 'WARNING', `${Math.round((p.result.ot?.excess_min ?? 0) / 60)} hours of overtime above the cap are unpaid.`, 'attendance');
     if (p.salary.mode === 'CTC' && e.statutory?.esi_enabled && ctxForBand) {
       const components = await structureComponents(db, p.salary.structure_id);

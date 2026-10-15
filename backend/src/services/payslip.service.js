@@ -29,6 +29,66 @@ export function monthsInFy(ym, joined, lastDay) {
   return Math.max(1, count);
 }
 
+const TAXABLE_KINDS = ['COMPONENT', 'YEARLY', 'OT', 'OFFDAY', 'LEAVE', 'ADHOC'];
+
+/** Regular monthly taxable salary on a date, from the salary record then in force. */
+async function regularTaxableOn(db, e, date, cache) {
+  const salary = await salaryOn(db, e.id, date);
+  if (!salary) return 0;
+  if (!cache.has(salary.id)) {
+    const components = await structureComponents(db, salary.structure_id);
+    const s = expandStructure(components, salary.monthly_gross, ctcBasisOf(salary, components, e.statutory, await ratesOn(db, date)));
+    cache.set(salary.id, s.monthly.filter((c) => c.is_taxable).reduce((a, c) => a + c.amount, 0));
+  }
+  return cache.get(salary.id);
+}
+
+/**
+ * What Section 192 needs from the rest of the financial year: TDS entered as deducted before
+ * AJPWER, AJPWER payslips already run, the months before those (at the salary then on record),
+ * and the months left including this one.
+ */
+export async function taxHistory(db, e, ym, joined, lastDay) {
+  const fy = financialYearStart(ym);
+  const start = ymOf(maxDate(`${fy}-04-01`, joined));
+  const end = ymOf(lastDay ? minDate(`${fy + 1}-03-31`, lastDay) : `${fy + 1}-03-31`);
+  const before = [];
+  for (let m = start; m < ym; m = addMonths(m, 1)) before.push(m);
+  const [opening, slips] = await Promise.all([
+    db.employeeOpeningTds.findFirst({ where: { employee_id: e.id, fy_start: fy, deleted_at: null } }),
+    before.length
+      ? db.payslip.findMany({
+          where: { employee_id: e.id, deleted_at: null, period: { period_ym: { in: before }, deleted_at: null } },
+          select: { period: { select: { period_ym: true } }, lines: { select: { kind: true, code: true, amount: true, is_taxable: true } } },
+        })
+      : [],
+  ]);
+  const runYms = new Set(slips.map((x) => x.period.period_ym));
+  const earlier = before.filter((m) => !runYms.has(m));
+  const lines = slips.flatMap((x) => x.lines);
+  const opening_tds = opening ? n(opening.tds_deducted) : null;
+  // The months before AJPWER only matter once there is something to true up against.
+  let earlier_taxable = 0;
+  if (opening_tds !== null || runYms.size) {
+    const cache = new Map();
+    for (const m of earlier) earlier_taxable += await regularTaxableOn(db, e, maxDate(lastOfMonth(m), joined), cache);
+  }
+  let remaining_months = 0;
+  for (let m = ym; m <= end; m = addMonths(m, 1)) remaining_months++;
+  return {
+    fy_start: fy,
+    opening_tds,
+    earlier_months: earlier.length,
+    earlier_from: earlier[0] ?? null,
+    earlier_to: earlier[earlier.length - 1] ?? null,
+    earlier_taxable,
+    run_months: runYms.size,
+    run_taxable: lines.filter((l) => l.is_taxable && TAXABLE_KINDS.includes(l.kind)).reduce((a, l) => a + n(l.amount), 0),
+    run_tds: lines.filter((l) => l.code === 'TDS').reduce((a, l) => a + n(l.amount), 0),
+    remaining_months: Math.max(1, remaining_months),
+  };
+}
+
 export function recoveryItems(src) {
   const items = [];
   if (src.carry && n(src.carry.amount) > 0) items.push({ type: 'CARRY', ref_id: null, label: 'Recovery carried from last month', due: n(src.carry.amount) });
@@ -111,6 +171,7 @@ export async function computePayslip(db, e, ym, month, ctx, recoveries) {
 
   const regimeCode = e.statutory.tax_regime_code === 'OLD' ? 'OLD' : 'NEW';
   const mify = monthsInFy(ym, joined, lastDay);
+  const history = await taxHistory(db, e, ym, joined, lastDay);
 
   const result = assemblePayslip({
     ym,
@@ -142,6 +203,7 @@ export async function computePayslip(db, e, ym, month, ctx, recoveries) {
         decl_metro: e.statutory.decl_metro,
       },
       months_in_fy: mify,
+      history,
     },
     adhoc: adhocFor(e, ctx.adhoc),
     recoveries: recoveries ? recoveryItems(recoveries) : [],
@@ -161,5 +223,6 @@ export async function computePayslip(db, e, ym, month, ctx, recoveries) {
     regime: regimeCode,
     pt_state: e.statutory.pt_state,
     months_in_fy: mify,
+    tax_history: history,
   };
 }

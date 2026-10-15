@@ -28,6 +28,9 @@ employeesRouter.delete('/:id/salary/:salaryId', requirePerm('salary.write'), emp
 employeesRouter.patch('/:id/statutory', requirePerm('salary.write'), employeeController.updateStatutory);
 employeesRouter.get('/:id/pay', requirePerm('salary.read'), employeeController.getPay);
 employeesRouter.get('/:id/tax', requirePerm('salary.read'), employeeController.getTax);
+employeesRouter.get('/:id/opening-tds', requirePerm('salary.read'), employeeController.getOpeningTds);
+employeesRouter.put('/:id/opening-tds', requirePerm('salary.write'), employeeController.saveOpeningTds);
+employeesRouter.delete('/:id/opening-tds', requirePerm('salary.write'), employeeController.clearOpeningTds);
 
 // ─── Attendance, payslips, leave, timeline ───────────────────────────────────
 employeesRouter.get('/:id/attendance', requirePerm('attendance.read'), employeeController.getAttendance);

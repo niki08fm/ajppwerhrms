@@ -329,6 +329,15 @@ export const employeeUpdateSchema = employeeCoreSchema
   })
   .strict();
 
+/** TDS deducted in a financial year before the person's payroll ran in AJPWER, by any employer. */
+export const openingTdsSchema = z
+  .object({
+    fy_start: z.number().int().min(2020).max(2100),
+    tds_deducted: paise,
+    note: z.string().max(200).nullable().optional(),
+  })
+  .strict();
+
 export const statutoryUpdateSchema = z
   .object({
     pf_enabled: z.boolean().optional(),

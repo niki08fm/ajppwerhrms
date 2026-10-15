@@ -6,11 +6,13 @@ import {
   employeeCoreSchema,
   employeeIdentitySchema,
   employeeUpdateSchema,
+  financialYearStart,
   formatINR,
   formatYearMonth,
   isoDate,
   istDate,
   LETTER_KINDS,
+  openingTdsSchema,
   ONBOARDING_TASKS,
   resignSchema,
   salaryRevisionSchema,
@@ -663,6 +665,83 @@ export const getPay = asyncHandler(async (req, res) => {
   res.json({ data: { salary: cur, preview, rates: { pf: rates.pf, esi: rates.esi } } });
 });
 
+// ─── TDS deducted before AJPWER ──────────────────────────────────────────────
+const openingOut = (row) => (row ? { fy_start: row.fy_start, tds_deducted: n(row.tds_deducted), note: row.note, updated_at: row.updated_at ?? row.created_at } : null);
+const fyParam = (v) => z.coerce.number().int().min(2020).max(2100).parse(v ?? financialYearStart(today()));
+
+export const getOpeningTds = asyncHandler(async (req, res) => {
+  const e = await mustLoad(req.params.id);
+  const row = await prisma.employeeOpeningTds.findFirst({ where: { employee_id: e.id, fy_start: fyParam(req.query.fy), deleted_at: null } });
+  res.json({ data: openingOut(row) });
+});
+
+export const saveOpeningTds = asyncHandler(async (req, res) => {
+  const b = openingTdsSchema.parse(req.body);
+  const e = await mustLoad(req.params.id);
+  assertWritable(e);
+  const { actor } = who(req);
+  const row = await prisma.$transaction(async (tx) => {
+    const before = await tx.employeeOpeningTds.findUnique({ where: { employee_id_fy_start: { employee_id: e.id, fy_start: b.fy_start } } });
+    const data = { tds_deducted: BigInt(b.tds_deducted), note: b.note ?? null, deleted_at: null };
+    const saved = await tx.employeeOpeningTds.upsert({
+      where: { employee_id_fy_start: { employee_id: e.id, fy_start: b.fy_start } },
+      update: data,
+      create: { employee_id: e.id, fy_start: b.fy_start, created_by: actor, ...data },
+    });
+    await auditReq(req, {
+      action: 'employee.opening_tds.save',
+      entity_type: 'employee_opening_tds',
+      entity_id: e.id,
+      detail: { fy_start: b.fy_start, tds_deducted: b.tds_deducted, before: before && !before.deleted_at ? n(before.tds_deducted) : null },
+    }, tx);
+    return saved;
+  });
+  res.json({ data: openingOut(row) });
+});
+
+export const clearOpeningTds = asyncHandler(async (req, res) => {
+  const fy = fyParam(req.body?.fy_start ?? req.query.fy);
+  const e = await mustLoad(req.params.id);
+  assertWritable(e);
+  const row = await prisma.employeeOpeningTds.findFirst({ where: { employee_id: e.id, fy_start: fy, deleted_at: null } });
+  if (row) {
+    await prisma.$transaction(async (tx) => {
+      await tx.employeeOpeningTds.update({ where: { id: row.id }, data: { deleted_at: new Date() } });
+      await auditReq(req, { action: 'employee.opening_tds.clear', entity_type: 'employee_opening_tds', entity_id: e.id, detail: { fy_start: fy, before: n(row.tds_deducted) } }, tx);
+    });
+  }
+  res.json({ data: null });
+});
+
+/** This year's TDS working for the current month: the payslip engine's figures, without writing anything. */
+async function taxYear(e) {
+  const date = today() > fromDbDate(e.joined_on) ? today() : fromDbDate(e.joined_on);
+  const ym = ymOf(date);
+  try {
+    const [ctx, months] = await Promise.all([payContext(prisma, ym), computeMonths(prisma, [e], ym)]);
+    const p = await computePayslip(prisma, e, ym, months.get(e.id), ctx, null);
+    const h = p.tax_history;
+    const t = p.result.tds;
+    return {
+      ym,
+      fy_start: h.fy_start,
+      annual_tax: t.annual,
+      opening_tds: h.opening_tds,
+      deducted_in_ajpwer: h.run_tds,
+      deducted_before: t.deducted_before,
+      remaining_tax: Math.max(0, t.annual - t.deducted_before),
+      remaining_months: h.remaining_months,
+      monthly_tds: t.regular,
+      months_before_ajpwer: h.earlier_months,
+      before_from: h.earlier_from,
+      before_to: h.earlier_to,
+    };
+  } catch (err) {
+    if (err instanceof AppError) return null;
+    throw err;
+  }
+}
+
 export const getTax = asyncHandler(async (req, res) => {
   const e = await mustLoad(req.params.id);
   const date = today() > fromDbDate(e.joined_on) ? today() : fromDbDate(e.joined_on);
@@ -678,7 +757,7 @@ export const getTax = asyncHandler(async (req, res) => {
     { decl_80c: n(st.decl_80c), decl_80d: n(st.decl_80d), decl_rent_monthly: n(st.decl_rent_monthly), decl_metro: st.decl_metro },
     regimes,
   );
-  res.json({ data: { current: st.tax_regime_code, comparison: cmp, regimes } });
+  res.json({ data: { current: st.tax_regime_code, comparison: cmp, regimes, year: await taxYear(e) } });
 });
 
 // ─── Attendance, payslips, leave, timeline ───────────────────────────────────

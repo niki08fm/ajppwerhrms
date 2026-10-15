@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { formatINR } from '@ajpwer/shared';
+import { formatINR, formatYearMonth } from '@ajpwer/shared';
 import { api, errorMessage } from '@/services/api';
 import { cn, toPaise, toRupeesInput } from '@/utils';
 import { Money } from '@/components/bits';
@@ -168,6 +168,85 @@ function WorkingCard({ w, current, onPick, disabled, selectedOnly = false }) {
   );
 }
 
+const fyLabel = (fy) => `FY ${fy}-${String(fy + 1).slice(2)}`;
+
+/**
+ * TDS deducted this financial year before the person's payroll ran in AJPWER, by any employer, and the
+ * year's working: the year's tax less TDS already deducted, spread over the months left (Section 192).
+ */
+function OpeningTdsCard({ e, year }) {
+  const qc = useQueryClient();
+  const fy = year?.fy_start;
+  const q = useQuery({
+    queryKey: ['employee-opening-tds', e.id, fy],
+    queryFn: () => api.get(`/employees/${e.id}/opening-tds`, { fy }).then((r) => r.data),
+    enabled: !!fy,
+  });
+  const [amount, setAmount] = useState('');
+  useEffect(() => setAmount(toRupeesInput(q.data?.tds_deducted ?? null)), [q.data]);
+  const done = (message) => {
+    toast.success(message);
+    qc.invalidateQueries({ queryKey: ['employee-opening-tds', e.id] });
+    qc.invalidateQueries({ queryKey: ['employee-tax', e.id] });
+  };
+  const save = useMutation({
+    mutationFn: () => api.put(`/employees/${e.id}/opening-tds`, { fy_start: fy, tds_deducted: toPaise(amount) }),
+    onSuccess: () => done('Saved'),
+    onError: (err) => toast.error(errorMessage(err)),
+  });
+  const clear = useMutation({
+    mutationFn: () => api.del(`/employees/${e.id}/opening-tds?fy=${fy}`),
+    onSuccess: () => done('Cleared'),
+    onError: (err) => toast.error(errorMessage(err)),
+  });
+  if (!year) return null;
+  const busy = e.read_only || save.isPending || clear.isPending || q.isFetching;
+  const before = year.months_before_ajpwer > 0
+    ? year.before_from === year.before_to ? formatYearMonth(year.before_from) : `${formatYearMonth(year.before_from)} – ${formatYearMonth(year.before_to)}`
+    : null;
+  const line = (label, value, strong = false) => (
+    <div className={cn('flex justify-between gap-3 py-1', strong && 'font-semibold')}>
+      <dt className={strong ? undefined : 'text-muted-foreground'}>{label}</dt>
+      <dd className="num">{value}</dd>
+    </div>
+  );
+  return (
+    <Card role="region" aria-label="TDS deducted before AJPWER">
+      <CardHeader
+        title="TDS deducted before AJPWER"
+        description={`${fyLabel(fy)}: TDS deducted this year, by any employer, before this person's payroll ran in AJPWER.`}
+      />
+      <CardBody>
+        <div className="flex flex-wrap items-end gap-3">
+          <Field label="TDS deducted" hint={before ? `For ${before}` : 'Leave empty if there is none'} className="w-56">
+            {(id) => <MoneyInput id={id} value={amount} disabled={busy} onChange={(ev) => setAmount(ev.target.value)} />}
+          </Field>
+          <Button loading={save.isPending} disabled={busy || amount === ''} onClick={() => save.mutate()}>
+            Save
+          </Button>
+          {q.data && (
+            <Button variant="outline" loading={clear.isPending} disabled={busy} onClick={() => clear.mutate()}>
+              Clear
+            </Button>
+          )}
+        </div>
+        {before && !q.data && (
+          <div className="mt-3">
+            <Notice tone="warning">Nothing entered for {before}. Until it is, those months count as taxed evenly.</Notice>
+          </div>
+        )}
+        <dl className="mt-4 border-t pt-3 text-[14px]">
+          {line(`Tax for ${fyLabel(fy)}`, <Money value={year.annual_tax} />)}
+          {line(year.opening_tds === null && before ? 'Deducted before AJPWER (counted evenly)' : 'Deducted before AJPWER', <Money value={year.deducted_before - year.deducted_in_ajpwer} />)}
+          {line('Deducted in AJPWER so far', <Money value={year.deducted_in_ajpwer} />)}
+          {line('Still to deduct', <Money value={year.remaining_tax} />)}
+          {line(`Monthly TDS from ${formatYearMonth(year.ym)} (${year.remaining_months} ${year.remaining_months === 1 ? 'month' : 'months'} left)`, <Money value={year.monthly_tds} />, true)}
+        </dl>
+      </CardBody>
+    </Card>
+  );
+}
+
 /** `selectedOnly` puts declarations above the chosen tax working; other layouts retain the comparison. */
 export function TaxTab({ e, compact = false, selectedOnly = false }) {
   const qc = useQueryClient();
@@ -233,7 +312,7 @@ export function TaxTab({ e, compact = false, selectedOnly = false }) {
         )}
         {!selectedOnly && (
           <p className="mt-2 text-[13px] text-muted-foreground">
-            TDS is a projection: it assumes salary continues unchanged and spreads the year's tax evenly. Surcharge above ₹50 lakh and quarterly true-up are not built.
+            Monthly TDS is the year's tax, less TDS already deducted, spread over the months left; future months assume salary continues unchanged. Surcharge above ₹50 lakh is not built.
           </p>
         )}
       </CardBody>
@@ -244,6 +323,7 @@ export function TaxTab({ e, compact = false, selectedOnly = false }) {
       {selectedOnly ? <>
         {declarations}
         <WorkingCard w={regime === 'OLD' ? c?.old : c?.new} selectedOnly />
+        <OpeningTdsCard e={e} year={q.data?.year} />
       </> : <>
         <Notice tone={worse ? 'warning' : 'success'}>
           <strong>{c.sentence}</strong> {worse && `${e.name.split(' ')[0]} is on the ${q.data.current === 'NEW' ? 'new' : 'old'} regime and is ${formatINR(c.difference)} a year worse off.`}
@@ -255,6 +335,7 @@ export function TaxTab({ e, compact = false, selectedOnly = false }) {
           </div>
         )}
         {declarations}
+        <OpeningTdsCard e={e} year={q.data?.year} />
       </>}
     </div>
   );

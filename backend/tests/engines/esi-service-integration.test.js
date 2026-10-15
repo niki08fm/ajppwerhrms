@@ -27,6 +27,9 @@ function database(salaries, structures) {
         .sort((a, b) => b.valid_from - a.valid_from)[0] ?? null;
     }) },
     salaryComponent: { findMany: vi.fn(async ({ where }) => structures[where.structure_id]) },
+    // No TDS entered before AJPWER and no earlier AJPWER payslips: TDS is the even spread.
+    employeeOpeningTds: { findFirst: vi.fn(async () => null) },
+    payslip: { findMany: vi.fn(async () => []) },
   };
 }
 async function payslip(db, ym = '2026-08', statutory = {}, rates = RATES) {

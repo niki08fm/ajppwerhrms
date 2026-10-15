@@ -10,7 +10,7 @@ import { expandStructure } from './structure.js';
 import { applyRecoveryCap } from './recovery.js';
 
 /** Stored on every payslip. Bump when a computation changes so old months stay explainable. */
-export const ENGINE_VERSION = '1.6.0';
+export const ENGINE_VERSION = '1.7.0';
 
 export class PayslipReconciliationError extends Error {
   constructor(message) {
@@ -137,15 +137,22 @@ export function assemblePayslip(input) {
   const esi = computeEsi(input.statutory.esi_applicable, esi_wage, input.rates.esi);
   const pt = computePt({ pt_applicable: input.statutory.pt_applicable, pt_state: input.statutory.pt_state, gender: input.employee.gender, gross: statutory_gross, month }, input.pt_slabs);
   const monthsInFy = Math.max(1, input.tax.months_in_fy);
-  const projected = {
-    gross: taxableRegular * monthsInFy,
-    basic: full.basic * monthsInFy,
-    hra: full.hra * monthsInFy,
-  };
   const oneOffTaxable = yearlyTaxable + adhocTaxable + otAmount + offdayTotal + leaveTotal;
+  // Section 192: the year's tax, less TDS already deducted (before AJPWER and on AJPWER payslips),
+  // spread over the months left. With nothing entered and no AJPWER month yet, TDS is the even spread.
+  const h = input.tax.history;
+  const trueUp = h && (h.opening_tds !== null || h.run_months > 0);
+  const projectedMonths = trueUp ? h.earlier_months + h.run_months + h.remaining_months : monthsInFy;
+  const projected = {
+    gross: trueUp ? h.earlier_taxable + h.run_taxable + taxableRegular * h.remaining_months : taxableRegular * monthsInFy,
+    basic: full.basic * projectedMonths,
+    hra: full.hra * projectedMonths,
+  };
   const tdsCalc = monthlyTds(projected, oneOffTaxable, input.tax.declarations, input.tax.regime);
-  // monthlyTds spreads over 12; re-spread over the months actually employed this year.
-  const regular = Math.round(tdsCalc.annual / monthsInFy / 100) * 100;
+  const evenMonthly = Math.round(tdsCalc.annual / projectedMonths / 100) * 100;
+  // Months before AJPWER with nothing entered count as deducted at the even rate.
+  const deducted_before = h ? (h.opening_tds ?? evenMonthly * h.earlier_months) + h.run_tds : 0;
+  const regular = trueUp ? Math.round(clampMin0(tdsCalc.annual - deducted_before) / Math.max(1, h.remaining_months) / 100) * 100 : evenMonthly;
   const tds = regular + tdsCalc.incremental;
 
   const statutoryLines = [
@@ -243,7 +250,14 @@ export function assemblePayslip(input) {
     lop_rule_text: LOP_RULE_TEXT[rule],
     ot,
     recovery,
-    tds: { regular, incremental: tdsCalc.incremental, annual: tdsCalc.annual },
+    tds: {
+      regular,
+      incremental: tdsCalc.incremental,
+      annual: tdsCalc.annual,
+      opening_tds: h?.opening_tds ?? null,
+      deducted_before,
+      remaining_months: h?.remaining_months ?? null,
+    },
     pt_basis: pt.basis,
     flags,
     engine_version: ENGINE_VERSION,
