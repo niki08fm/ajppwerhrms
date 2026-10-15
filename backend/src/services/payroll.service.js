@@ -410,6 +410,7 @@ export async function executeRun(ym, actor, onProgress) {
                 lop_rule: r.lop_rule,
                 lop_rule_text: r.lop_rule_text,
                 ot: r.ot,
+                fixed: r.fixed,
                 tds: r.tds,
                 pf_charges: r.pf_charges,
                 regime: ps.regime,

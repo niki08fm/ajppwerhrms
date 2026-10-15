@@ -37,11 +37,22 @@ export function assemblePayslip(input) {
   let pfBaseEarned = 0;
   let esiBaseEarned = 0;
   let taxableRegular = 0;
+  // The full month's wages, before loss of pay: the fixed salary a register shows beside what was earned.
+  let fixedGross = 0;
+  let pfBaseFixed = 0;
+  let esiBaseFixed = 0;
   for (const c of full.monthly) {
     const earned = earnedAfterLop(c.amount, input.divisor, rule, att.lop_days, att.paid_days);
     componentsEarned += earned;
-    if (c.counts_as_wages) pfBaseEarned += earned;
-    if (c.counts_as_esi_wages !== false) esiBaseEarned += earned;
+    fixedGross += c.amount;
+    if (c.counts_as_wages) {
+      pfBaseEarned += earned;
+      pfBaseFixed += c.amount;
+    }
+    if (c.counts_as_esi_wages !== false) {
+      esiBaseEarned += earned;
+      esiBaseFixed += c.amount;
+    }
     if (c.is_taxable) taxableRegular += c.amount;
     push({ kind: 'COMPONENT', code: c.name, name: c.name, full_amount: c.amount, amount: earned, is_taxable: c.is_taxable, counts_as_wages: c.counts_as_wages });
   }
@@ -62,7 +73,7 @@ export function assemblePayslip(input) {
   if (input.overtime_rules && att.ot_min > 0) {
     const o = overtimePay(att.ot_min, input.overtime_rules, full, input.divisor);
     otAmount = o.amount;
-    ot = { minutes: att.ot_min, paid_min: o.paid_min, excess_min: o.excess_min, hourly: o.hourly, amount: o.amount };
+    ot = { minutes: att.ot_min, paid_min: o.paid_min, excess_min: o.excess_min, hourly: o.hourly, amount: o.amount, hours_per_day: input.overtime_rules.hours_per_day };
     if (o.excess_min > 0) flags.push('OT_OVER_CAP');
     const h = Math.floor(o.paid_min / 60);
     const m = o.paid_min % 60;
@@ -188,6 +199,11 @@ export function assemblePayslip(input) {
   }
   if (employer_total !== pfEmployerCost(pf) + esi.employer) throw new PayslipReconciliationError('Employer contributions do not add up');
 
+  // Employer contributions on the full month's wages: the fixed CTC, which loss of pay does not change.
+  const fixedEmployerPf = pfEmployerCost(computePf(pfBaseFixed, input.statutory, input.rates.pf));
+  const fixedEmployerEsi = computeEsi(input.statutory.esi_applicable, esiBaseFixed, input.rates.esi).employer;
+  const fixed = { gross: fixedGross, employer_pf: fixedEmployerPf, employer_esi: fixedEmployerEsi, ctc: fixedGross + fixedEmployerPf + fixedEmployerEsi };
+
   // 10. Net.
   const total_deductions = employee_statutory + recovery.total_recovered + adhoc_deductions;
   const net = gross - total_deductions + reimbursements;
@@ -215,6 +231,7 @@ export function assemblePayslip(input) {
     net,
     employer_total,
     ctc_month: salary_gross + employer_total,
+    fixed,
     pf_charges: pfChallanCharges(pf),
     pf_wage: pf.pf_wage,
     eps_wage: pf.eps_wage,

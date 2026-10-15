@@ -210,6 +210,6 @@ describe('Reports', () => {
     for (const row of bank.body.data.rows) expect(row.amount).toBeGreaterThan(0);
     const csv = await f.agent.get(`${P}/report/register?format=csv`);
     expect(csv.headers['content-type']).toMatch(/text\/csv/);
-    expect(csv.headers['content-disposition']).toMatch(/payroll-register-2026-08\.csv/);
+    expect(csv.headers['content-disposition']).toMatch(/Payroll_[A-Z0-9_]+_2026-08\.csv/);
   });
 });

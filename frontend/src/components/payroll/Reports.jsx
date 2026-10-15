@@ -62,7 +62,7 @@ export function Reports({ ym, period, company }) {
     if (!rep) return [];
     return rep.columns.map((c, i) => ({
       id: c.key,
-      header: c.label,
+      header: c.flat_label ?? c.label,
       align: c.money || typeof rep.rows[0]?.[c.key] === 'number' ? 'right' : 'left',
       sticky: i === 0 && rep.key === 'register' ? true : c.key === 'name' && rep.key === 'register',
       width: c.key === 'name' ? 180 : c.key === 'code' ? 80 : undefined,

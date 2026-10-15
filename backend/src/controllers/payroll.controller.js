@@ -527,13 +527,15 @@ export const getReport = asyncHandler(async (req, res) => {
     : report;
   const suffix = `${company ? `-${company.toLowerCase()}` : ''}${q ? `-${q.replace(/[^a-z0-9]+/g, '-')}` : ''}`;
   await auditReq(req, { action: 'export.report', entity_type: 'report', detail: { report: key, period: ym, format, rows: filtered.rows.length } });
+  // The salary register is named like the payroll statement it replaces: Payroll_<COMPANY>_<YYYY-MM>.
+  const fileName = filtered.file_name ? `${filtered.file_name}${q ? `-${q.replace(/[^a-z0-9]+/g, '-')}` : ''}` : `payroll-${key}-${ym}${suffix}`;
   if (format === 'xlsx') {
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="payroll-${key}-${ym}${suffix}.xlsx"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}.xlsx"`);
     return res.send(await reportXLSX(filtered));
   }
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="payroll-${key}-${ym}${suffix}.csv"`);
+  res.setHeader('Content-Disposition', `attachment; filename="${fileName}.csv"`);
   res.send(reportCSV(filtered));
 });
 
