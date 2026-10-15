@@ -480,14 +480,14 @@ test('face registration is absent from onboarding and does not block activation'
     await route.fulfill({ json: { data } });
   });
   await page.goto(`/people/${EMPLOYEE.id}?tab=onboarding`);
-  await expect(page.getByRole('heading', { name: 'Onboarding checklist', exact: true })).toBeVisible();
-  await expect(page.getByRole('checkbox', { name: 'Face registration', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Onboarding', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Face registration/ })).toHaveCount(0);
   await expect(page.getByText('All required steps are done.', { exact: false })).toBeVisible();
   await expect(page.getByRole('button', { name: /Enrol face|Re-enrol|Register face|Register face again/ })).toHaveCount(0);
   const activate = page.getByRole('button', { name: 'Activate', exact: true });
   await expect(activate).toBeEnabled();
   await activate.click();
-  await expect(page.getByRole('heading', { name: 'Onboarding checklist', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Onboarding', exact: true })).toHaveCount(0);
   await expect(page.getByText('Active employees register at any site.', { exact: true })).toBeVisible();
   expect(writes).toEqual([`/employees/${EMPLOYEE.id}/activate`]);
   expect(errors).toEqual([]);

@@ -33,6 +33,8 @@ export default function Offers() {
       refreshEmployeePay(qc, v.employee_id);
       setTab(v.next);
       toast.success(v.next === 'ACCEPTED' ? 'Marked accepted' : 'Onboarding started: the salary record now runs from the joining date.');
+      // Onboarding is done step by step on the person's profile: open it straight away.
+      if (v.next === 'ONBOARDING') nav(`/people/${v.employee_id}?tab=onboarding`);
     },
     onError: (e) => toast.error(errorMessage(e)),
   });

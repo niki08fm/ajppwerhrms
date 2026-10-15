@@ -134,9 +134,11 @@ test('accepting and onboarding refresh a previously cached profile, pay and sala
   await page.getByRole('link', { name: 'Hiring and onboarding', exact: true }).click();
   await page.getByRole('tab', { name: /^Accepted/ }).click();
   await page.getByRole('button', { name: 'Start onboarding', exact: true }).click();
-  await expect(page.getByRole('tab', { name: /^Onboarding/ })).toHaveAttribute('data-state', 'active');
+  // Starting onboarding opens the person's onboarding steps.
+  await expect(page).toHaveURL(new RegExp(`/people/${EMPLOYEE}\\?tab=onboarding$`));
+  await expect(page.getByRole('heading', { name: 'Onboarding', exact: true })).toBeVisible();
   await page.goBack();
-  await expect(page.getByText('Onboarding', { exact: true })).toBeVisible();
+  await page.goBack();
   await expect(salary.getByRole('heading', { name: 'Salary breakup · Employee salary', exact: true })).toBeVisible();
   await expect(salary).toContainText('As offered (TEST/OFFER/061)');
   await expect(salary.getByRole('heading', { name: 'No salary yet', exact: true })).toHaveCount(0);
