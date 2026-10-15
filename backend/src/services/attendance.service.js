@@ -1,4 +1,4 @@
-import { addDays, addMonths, dayName, firstOfMonth, istDate, lastOfMonth, maxDate, minDate, monthDates, ymOf } from '@ajpwer/shared';
+import { addDays, addMonths, dayName, firstOfMonth, istDate, lastOfMonth, maxDate, minDate, monthDates, STEP, ymOf } from '@ajpwer/shared';
 import { computeDay, computeMonth, leaveYearOf, nextLeaveState, occasionPaidDates, pickPolicy, resolvePolicies, shiftEndOnWorkDate, usableFrom } from '../calculations/index.js';
 import { fromDbDate, toDbDate } from '../utils/dbDates.js';
 import { holidaysBetween, payGroupRulesCache } from './rules.service.js';
@@ -312,7 +312,7 @@ export async function attendanceFrozen(db, ym) {
   if (p.state !== 'DRAFT') {
     return { frozen: true, reason: `Payroll for ${ym} is ${p.state.toLowerCase()}. Corrections open again if the run is taken back to its steps and step 1 is reopened.` };
   }
-  if (p.steps_submitted.includes(1)) {
+  if (p.steps_submitted.includes(STEP.ATTENDANCE)) {
     return { frozen: true, reason: `Attendance for ${ym} was submitted in payroll step 1. Reopen step 1 in Payroll to make corrections.` };
   }
   return { frozen: false, reason: null };

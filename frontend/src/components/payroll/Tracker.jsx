@@ -16,13 +16,12 @@ export function submittedBy(period, n) {
   return e ? { by: e.by, on: String(e.at).slice(0, 10) } : null;
 }
 
-const SHORT = { 1: 'Attendance', 2: 'Joiners and exits', 3: 'Held salary', 4: 'F&F', 5: 'Adhoc', 6: 'Generate' };
-export const stepLabel = (n) => SHORT[n] ?? PAYROLL_STEPS.find((s) => s.n === n)?.label ?? `Step ${n}`;
+export const stepLabel = (n) => PAYROLL_STEPS.find((s) => s.n === n)?.label ?? `Step ${n}`;
 
 const STATE_WORD = { RUN: 'Generated', LOCKED: 'Locked', PAID: 'Paid' };
 
 /**
- * The six steps of a month, in order: done, the one to do now, and the ones waiting.
+ * The seven steps of a month, in order: done, the one to do now, and the ones waiting.
  * A done step or the current one opens; a waiting one does not.
  */
 export function StepTracker({ period, selected, onOpen, notes = {} }) {

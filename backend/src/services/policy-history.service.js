@@ -1,4 +1,4 @@
-import { addDays, firstOfMonth, formatYearMonth, lastOfMonth, parsePolicyRules } from '@ajpwer/shared';
+import { addDays, firstOfMonth, formatYearMonth, lastOfMonth, parsePolicyRules, STEP } from '@ajpwer/shared';
 import { Prisma } from '@prisma/client';
 import { audit } from '../utils/audit.js';
 import { fromDbDate, toDbDate } from '../utils/dbDates.js';
@@ -45,7 +45,7 @@ async function protectionContext(db, keys) {
   });
   for (const settlement of settlements) {
     const period = settlement.period;
-    const frozen = settlement.state === 'PAID' || !!settlement.paid_separately || (settlement.state === 'INCLUDED' && period && !period.deleted_at && (period.state !== 'DRAFT' || period.steps_submitted.includes(4)));
+    const frozen = settlement.state === 'PAID' || !!settlement.paid_separately || (settlement.state === 'INCLUDED' && period && !period.deleted_at && (period.state !== 'DRAFT' || period.steps_submitted.includes(STEP.FNF)));
     if (!frozen) continue;
     const ym = fromDbDate(settlement.last_day).slice(0, 7);
     ranges.push({ group: settlement.employee.pay_group_id, from: firstOfMonth(ym), to: lastOfMonth(ym), reason: settlement.state === 'PAID' || settlement.paid_separately ? 'This change could affect a paid full and final settlement. Publish a later policy version instead.' : 'This change could affect a finalized full and final settlement. Reopen its payroll F&F step before changing this policy history.' });

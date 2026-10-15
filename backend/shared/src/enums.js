@@ -135,17 +135,20 @@ export const FACE_EXCEPTION_STATUSES = ['PENDING', 'APPROVED', 'REJECTED'];
 export const PERIOD_STATES = ['DRAFT', 'RUN', 'LOCKED', 'PAID'];
 
 /** Five reviewed steps, submitted in order, then the sixth: generating the payroll. */
+/** A month's payroll steps by name. Code refers to steps by name, never by number. */
+export const STEP = Object.freeze({ ATTENDANCE: 1, JOINERS: 2, ISSUES: 3, HELD: 4, FNF: 5, ADHOC: 6, GENERATE: 7 });
 export const PAYROLL_STEPS = [
-  { n: 1, key: 'attendance', label: 'Attendance' },
-  { n: 2, key: 'joiners', label: 'Joiners and exits' },
-  { n: 3, key: 'held', label: 'Held salary' },
-  { n: 4, key: 'fnf', label: 'F&F' },
-  { n: 5, key: 'adhoc', label: 'Adhoc' },
-  { n: 6, key: 'generate', label: 'Generate' },
+  { n: STEP.ATTENDANCE, key: 'attendance', label: 'Attendance' },
+  { n: STEP.JOINERS, key: 'joiners', label: 'Joiners and exits' },
+  { n: STEP.ISSUES, key: 'issues', label: 'Issues' },
+  { n: STEP.HELD, key: 'held', label: 'Held salary' },
+  { n: STEP.FNF, key: 'fnf', label: 'F&F' },
+  { n: STEP.ADHOC, key: 'adhoc', label: 'Adhoc' },
+  { n: STEP.GENERATE, key: 'generate', label: 'Generate' },
 ];
 /** The last step HR submits; the one after it is generating. */
-export const LAST_REVIEW_STEP = 5;
-export const GENERATE_STEP = 6;
+export const LAST_REVIEW_STEP = STEP.ADHOC;
+export const GENERATE_STEP = STEP.GENERATE;
 
 /** The two companies, told apart by the employee code prefix. */
 export const COMPANIES = [

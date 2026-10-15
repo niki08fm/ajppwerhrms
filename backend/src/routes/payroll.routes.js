@@ -16,7 +16,7 @@ payrollRouter.get('/payroll/periods/:ym/attendance', requirePerm('payroll.read')
 payrollRouter.get('/payroll/periods/:ym/joiners', requirePerm('payroll.read'), payrollController.getJoinersStep);
 payrollRouter.post('/settlements/:id/include', requirePerm('payroll.run'), payrollController.includeSettlement);
 
-// ─── Step 3: issues and hold-backs ──────────────────────────────────────────
+// ─── Steps 3 and 4: issues and held salaries ──────────────────────────────────────────
 payrollRouter.get('/payroll/periods/:ym/issues', requirePerm('payroll.read'), payrollController.getIssues);
 payrollRouter.post('/payroll/periods/:ym/exclusions', requirePerm('payroll.run'), payrollController.excludeEmployee);
 payrollRouter.delete('/payroll/periods/:ym/exclusions/:employeeId', requirePerm('payroll.run'), payrollController.removeExclusion);
@@ -31,7 +31,7 @@ payrollRouter.post('/adhoc', requirePerm('payroll.run'), payrollController.creat
 payrollRouter.delete('/adhoc/:id', requirePerm('payroll.run'), payrollController.deleteAdhoc);
 payrollRouter.get('/adhoc/:id/people', requirePerm('payroll.read'), payrollController.getAdhocPeople);
 
-// ─── Step 5: preview and run ────────────────────────────────────────────────
+// ─── Step 7: preview and run ────────────────────────────────────────────────
 payrollRouter.get('/payroll/periods/:ym/preview', requirePerm('payroll.read'), payrollController.previewRun);
 payrollRouter.get('/payroll/periods/:ym/summary', requirePerm('payroll.read'), payrollController.getSummary);
 payrollRouter.get('/payroll/periods/:ym/fnf', requirePerm('payroll.read'), payrollController.getFnfStep);

@@ -111,7 +111,7 @@ export default function HeldSalaries() {
                 ))}
               </ul>
             ) : (
-              <EmptyState title="Nobody's salary is held" body="Hold one from here, from the person's Pay tab, or from step 3 of a payroll." />
+              <EmptyState title="Nobody's salary is held" body="Hold one from here, from the person's Pay tab, or from the Held salary step of a payroll." />
             )}
           </Card>
           {past.length > 0 && (

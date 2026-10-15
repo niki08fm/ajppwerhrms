@@ -1,4 +1,4 @@
-import { lastOfMonth, ymOf } from '@ajpwer/shared';
+import { lastOfMonth, STEP, ymOf } from '@ajpwer/shared';
 import { baseMonthly, computeSettlement, expandStructure, pickPolicy } from '../calculations/index.js';
 import { fromDbDate, n } from '../utils/dbDates.js';
 import { AppError } from '../utils/errors.js';
@@ -50,7 +50,7 @@ export async function computeSettlementFor(db, employeeId, opts = {}) {
     db.advance.findMany({ where: { employee_id: e.id, status: 'ACTIVE', deleted_at: null } }),
     db.payrollPeriod.findUnique({ where: { period_ym: ym } }),
   ]);
-  const submitted = opts.attendanceSubmitted ?? (!!period && (period.steps_submitted.includes(1) || period.state !== 'DRAFT'));
+  const submitted = opts.attendanceSubmitted ?? (!!period && (period.steps_submitted.includes(STEP.ATTENDANCE) || period.state !== 'DRAFT'));
 
   const result = computeSettlement({
     employee: {

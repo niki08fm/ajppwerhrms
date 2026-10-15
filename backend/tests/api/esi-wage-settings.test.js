@@ -95,7 +95,7 @@ describe('Employee ESI settings validate selected structure wages without rewrit
     await selectStructure(50);
     const enabled = await f.agent.patch(`/api/v1/employees/${f.employees.B}/statutory`).send({ esi_enabled: true });
     expect(enabled.status, JSON.stringify(enabled.body)).toBe(200);
-    await submitSteps(f.agent, YM, 5);
+    await submitSteps(f.agent, YM, 6);
     expect((await runAndWait(f.agent, YM)).status).toBe('DONE');
     const payslip = await f.agent.get(`/api/v1/payroll/periods/${YM}/payslips/${f.employees.B}`);
     expect(payslip.status, JSON.stringify(payslip.body)).toBe(200);

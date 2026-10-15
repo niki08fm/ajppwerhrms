@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Play } from 'lucide-react';
-import { COMPANIES, GENERATE_STEP } from '@ajpwer/shared';
+import { COMPANIES, GENERATE_STEP, STEP } from '@ajpwer/shared';
 import { api } from '@/services/api';
 import { monthLabel } from '@/utils';
 import { PageHeader } from '@/components/bits';
@@ -10,7 +10,7 @@ import { ErrorState, PeriodChip, SkeletonBlock } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { Segmented } from '@/components/ui/form';
 import { PayrollOverview } from '../../components/payroll/Overview';
-import { StepAdhoc, StepAttendance, StepFnf, StepGenerate, StepHeld, StepJoiners } from '../../components/payroll/Steps';
+import { StepAdhoc, StepAttendance, StepFnf, StepGenerate, StepHeld, StepIssues, StepJoiners } from '../../components/payroll/Steps';
 import { currentStep, StepTracker, stepLabel } from '../../components/payroll/Tracker';
 
 export function usePeriod(ym) {
@@ -113,9 +113,10 @@ export default function RunPayroll() {
       <StepTracker period={p} selected={shown} onOpen={open} />
       {shown === 1 && <StepAttendance ym={ym} period={p} onNext={next(1)} />}
       {shown === 2 && <StepJoiners ym={ym} period={p} onNext={next(2)} />}
-      {shown === 3 && <StepHeld ym={ym} period={p} onNext={next(3)} />}
-      {shown === 4 && <StepFnf ym={ym} period={p} onNext={next(4)} />}
-      {shown === 5 && <StepAdhoc ym={ym} period={p} onNext={next(5)} />}
+      {shown === STEP.ISSUES && <StepIssues ym={ym} period={p} onNext={next(STEP.ISSUES)} />}
+      {shown === STEP.HELD && <StepHeld ym={ym} period={p} onNext={next(STEP.HELD)} />}
+      {shown === STEP.FNF && <StepFnf ym={ym} period={p} onNext={next(STEP.FNF)} />}
+      {shown === STEP.ADHOC && <StepAdhoc ym={ym} period={p} onNext={next(STEP.ADHOC)} />}
       {shown === GENERATE_STEP && <StepGenerate ym={ym} period={p} company={company} onBack={toOverview} />}
     </div>
   );

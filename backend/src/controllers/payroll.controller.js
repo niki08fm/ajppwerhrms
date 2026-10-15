@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { adhocCreateSchema, addMonths, COMPANIES, companyOf, exclusionSchema, firstOfMonth, formatYearMonth, istDate, lastOfMonth, markPaidSchema, PAYROLL_STEPS, yearMonth, ymOf } from '@ajpwer/shared';
+import { adhocCreateSchema, addMonths, COMPANIES, companyOf, exclusionSchema, firstOfMonth, formatYearMonth, istDate, lastOfMonth, markPaidSchema, PAYROLL_STEPS, STEP, yearMonth, ymOf } from '@ajpwer/shared';
 import { audit, auditReq, who } from '../utils/audit.js';
 import { can } from '../middleware/auth.js';
 import { fromDbDate, n, toDbDate } from '../utils/dbDates.js';
@@ -173,7 +173,7 @@ export const includeSettlement = asyncHandler(async (req, res) => {
   if (s.state === 'PAID') throw new AppError('CONFLICT', 'This settlement has already been paid.', 409);
   const p = await getPeriod(prisma, b.period_ym);
   if (p.state !== 'DRAFT') throw new AppError('PERIOD_LOCKED', `${formatYearMonth(b.period_ym)} has been run. Take it back to its steps first.`, 409);
-  if (p.steps_submitted.includes(4)) throw new AppError('PERIOD_LOCKED', 'Step 4 (F&F) is submitted. Reopen it to change which settlements go out.', 409);
+  if (p.steps_submitted.includes(STEP.FNF)) throw new AppError('PERIOD_LOCKED', `Step ${STEP.FNF} (F&F) is submitted. Reopen it to change which settlements go out.`, 409);
   if (b.include && fromDbDate(s.last_day) > lastOfMonth(b.period_ym)) throw new AppError('VALIDATION', 'A settlement goes out with the run for the month the last day falls in, or later.', 422);
   await upsertSettlement(prisma, s.employee_id);
   const ids = new Set(p.settlement_ids);
@@ -194,7 +194,7 @@ export const includeSettlement = asyncHandler(async (req, res) => {
   res.json({ data: { included: b.include } });
 });
 
-// ─── Step 3: issues and hold-backs ──────────────────────────────────────────
+// ─── Steps 3 and 4: issues and held salaries ──────────────────────────────────────────
 export const getIssues = asyncHandler(async (req, res) => {
   const ym = ymParam(req.params.ym);
   const { issues } = await computeIssues(prisma, ym);
@@ -256,7 +256,7 @@ export const reopenPayrollStep = asyncHandler(async (req, res) => {
   res.json({ data: periodOut(p) });
 });
 
-// ─── Step 4: adhoc ──────────────────────────────────────────────────────────
+// ─── Step 6: adhoc ──────────────────────────────────────────────────────────
 
 /** Who an adhoc item reaches this month: working some day of it, in the group it names. */
 function targetWhere(item, ym) {
@@ -299,7 +299,7 @@ export const listAdhoc = asyncHandler(async (req, res) => {
 async function assertAdhocOpen(ym) {
   const p = await getPeriod(prisma, ym);
   if (p.state !== 'DRAFT') throw new AppError('PERIOD_LOCKED', `${formatYearMonth(ym)} has been run. Take it back to its steps first.`, 409);
-  if (p.steps_submitted.includes(5)) throw new AppError('PERIOD_LOCKED', 'Step 5 (adhoc) is submitted. Reopen it to change adhoc items.', 409);
+  if (p.steps_submitted.includes(STEP.ADHOC)) throw new AppError('PERIOD_LOCKED', `Step ${STEP.ADHOC} (adhoc) is submitted. Reopen it to change adhoc items.`, 409);
 }
 
 export const createAdhoc = asyncHandler(async (req, res) => {
@@ -323,7 +323,7 @@ export const deleteAdhoc = asyncHandler(async (req, res) => {
   res.json({ data: { ok: true } });
 });
 
-// ─── Step 5: preview and run ────────────────────────────────────────────────
+// ─── Step 7: preview and run ────────────────────────────────────────────────
 export const previewRun = asyncHandler(async (req, res) => {
   const ym = ymParam(req.params.ym);
   const { run, population } = await computeIssues(prisma, ym);
@@ -388,7 +388,7 @@ export const getSummary = asyncHandler(async (req, res) => {
 });
 
 /**
- * Step 4: every F&F this month's payroll can settle — leavers whose last day is in this
+ * Step 5: every F&F this month's payroll can settle — leavers whose last day is in this
  * month or earlier and whose F&F is still open, and those already processed into this month.
  */
 export const getFnfStep = asyncHandler(async (req, res) => {
@@ -406,7 +406,7 @@ export const getFnfStep = asyncHandler(async (req, res) => {
     include: { department: { select: { name: true } } },
     orderBy: { last_day: 'asc' },
   });
-  const closed = p.state !== 'DRAFT' ? `${formatYearMonth(ym)} payroll has been generated` : p.steps_submitted.includes(4) ? 'The F&F step is submitted' : null;
+  const closed = p.state !== 'DRAFT' ? `${formatYearMonth(ym)} payroll has been generated` : p.steps_submitted.includes(STEP.FNF) ? 'The F&F step is submitted' : null;
   const rows = [];
   for (const l of leavers) {
     const s = await prisma.settlement.findFirst({ where: { employee_id: l.id, deleted_at: null }, orderBy: { created_at: 'desc' }, include: { period: { select: { period_ym: true } } } });

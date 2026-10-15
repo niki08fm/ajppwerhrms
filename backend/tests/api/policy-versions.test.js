@@ -47,7 +47,7 @@ async function freeze({ ym = '2026-08', state = 'LOCKED', finalMonth, snapshotGr
   await prisma.payrollPeriod.update({ where: { id: period.id }, data: { state } });
   return period;
 }
-async function settlement({ state = 'INCLUDED', steps = [1, 2, 3, 4], separately = false } = {}) {
+async function settlement({ state = 'INCLUDED', steps = [1, 2, 3, 4, 5], separately = false } = {}) {
   const period = await prisma.payrollPeriod.create({ data: { period_ym: '2026-10', steps_submitted: steps } });
   await prisma.settlement.create({ data: {
     employee_id: f.employees.A, last_day: toDbDate('2026-08-20'), period_id: period.id,

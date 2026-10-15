@@ -147,7 +147,7 @@ describe('EPS in payroll snapshots and ECR reports', () => {
     const originalSalaries = await savedSalaries();
     const originalPreview = await payPreview();
     await setStatutory({ eps_enabled: false });
-    await submitSteps(f.agent, YM, 5);
+    await submitSteps(f.agent, YM, 6);
     expect((await runAndWait(f.agent, YM)).status).toBe('DONE');
     const snapshot = await payrollSnapshot();
     expect(snapshot).toMatchObject({ gross: R(30000), pf_wage: R(15000), employer_total: R(1800),
@@ -173,7 +173,7 @@ describe('EPS in payroll snapshots and ECR reports', () => {
   });
 
   it('uses frozen pension wages for legacy payslips without EPS metadata, independently of the current employee choice', async () => {
-    await submitSteps(f.agent, YM, 5);
+    await submitSteps(f.agent, YM, 6);
     expect((await runAndWait(f.agent, YM)).status).toBe('DONE');
     const snapshot = await payrollSnapshot();
     expect(snapshot.meta.eps_wage).toBe(R(15000));

@@ -37,7 +37,7 @@ test('the dashboard shows today at a glance', async ({ page }) => {
   await expect(page.getByRole('button', { name: /On site now/, pressed: true })).toBeVisible();
 });
 
-test('a month runs end to end: overview, five steps, generate, reports, lock, paid', async ({ page }) => {
+test('a month runs end to end: overview, six steps, generate, reports, lock, paid', async ({ page }) => {
   await signIn(page);
   const ym = await page.evaluate(async () => (await (await fetch('/api/v1/payroll/periods')).json()).meta.suggested);
   await resetMonth(page, ym);
@@ -50,9 +50,10 @@ test('a month runs end to end: overview, five steps, generate, reports, lock, pa
 
   const steps = [
     ['Submit attendance', 'Step 2 · Joiners and exits'],
-    ['Submit joiners and exits', 'Step 3 · Held salary'],
-    ['Submit held salaries', 'Step 4 · F&F'],
-    ['Submit F&F', 'Step 5 · Adhoc'],
+    ['Submit joiners and exits', 'Step 3 · Issues'],
+    ['Submit issues', 'Step 4 · Held salary'],
+    ['Submit held salaries', 'Step 5 · F&F'],
+    ['Submit F&F', 'Step 6 · Adhoc'],
     ['Submit adhoc', 'Generate payroll'],
   ];
   for (const [button, next] of steps) {

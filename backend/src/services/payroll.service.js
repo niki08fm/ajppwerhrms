@@ -1,4 +1,4 @@
-import { firstOfMonth, formatYearMonth, GENERATE_STEP, LAST_REVIEW_STEP, lastOfMonth, ymOf } from '@ajpwer/shared';
+import { firstOfMonth, formatYearMonth, GENERATE_STEP, LAST_REVIEW_STEP, lastOfMonth, STEP, ymOf } from '@ajpwer/shared';
 import { solveGrossFromCtc } from '../calculations/index.js';
 import { audit } from '../utils/audit.js';
 import { fromDbDate, n, toDbDate } from '../utils/dbDates.js';
@@ -250,7 +250,7 @@ export async function submitStep(ym, step, actor, ip) {
       for (let s = 1; s < step; s++) {
         if (!period.steps_submitted.includes(s)) throw new AppError('STEP_NOT_SUBMITTED', `Submit step ${s} first.`, 409);
       }
-      if (step === 4) {
+      if (step === STEP.FNF) {
         // A ticked settlement with a blocking clearance issue stops the step.
         for (const sid of period.settlement_ids) {
           const s = await tx.settlement.findUnique({ where: { id: sid }, include: { employee: true } });
@@ -262,7 +262,7 @@ export async function submitStep(ym, step, actor, ip) {
           }
         }
       }
-      if (step === 3) {
+      if (step === STEP.ISSUES) {
         const { issues } = await computeIssues(tx, ym);
         const blocking = issues.filter((i) => i.severity === 'BLOCKING');
         if (blocking.length) {

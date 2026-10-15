@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, Lock, LockOpen, PauseCircle, Play, Plus, RotateCcw, Undo2, Users, Wallet } from 'lucide-react';
 import { toast } from 'sonner';
-import { DAY_STATUS_LABELS, firstOfMonth, istDate, LAST_REVIEW_STEP, lastOfMonth } from '@ajpwer/shared';
+import { DAY_STATUS_LABELS, firstOfMonth, istDate, LAST_REVIEW_STEP, lastOfMonth, STEP } from '@ajpwer/shared';
 import { api, ApiError, errorMessage } from '@/services/api';
 import { useLookups } from '@/hooks/useLookups';
 import { useSession } from '@/context/SessionContext';
@@ -102,7 +102,7 @@ export function StepAttendance({ ym, period, onNext }) {
     queryFn: () => api.get(`/payroll/periods/${ym}/attendance`).then((r) => r.data),
   });
   const [open, setOpen] = useState(null);
-  const frozen = period.state !== 'DRAFT' || period.steps_submitted.includes(1);
+  const frozen = period.state !== 'DRAFT' || period.steps_submitted.includes(STEP.ATTENDANCE);
   useEffect(() => setOpen(null), [ym]);
   const rows = q.data?.rows ?? [];
   const sum = (k) => Math.round(rows.reduce((a, r) => a + (Number(r[k]) || 0), 0) * 100) / 100;
@@ -207,7 +207,7 @@ export function StepAttendance({ ym, period, onNext }) {
           onOpenChange={(value) => !value && setOpen(null)}
         />
       )}
-      <StepFooter period={period} n={1} ym={ym} onNext={onNext} label="Submit attendance" note="Missing punch-outs pay half a day; short days pay nothing. Correct them above before submitting." />
+      <StepFooter period={period} n={STEP.ATTENDANCE} ym={ym} onNext={onNext} label="Submit attendance" note="Missing punch-outs pay half a day; short days pay nothing. Correct them above before submitting." />
     </>
   );
 }
@@ -251,7 +251,7 @@ export function StepJoiners({ ym, period, onNext }) {
             )}
           </Card>
           <Card className="overflow-hidden">
-            <CardHeader title={`Leaving · ${d.leavers.length}`} description="Paid up to the last working day. Their full and final settlement is decided in step 4." />
+            <CardHeader title={`Leaving · ${d.leavers.length}`} description={`Paid up to the last working day. Their full and final settlement is decided in step ${STEP.FNF}.`} />
             {!d.leavers.length ? (
               <p className="m-0 px-5 pb-4 text-[14px] text-muted-foreground">Nobody leaves this month.</p>
             ) : (
@@ -267,7 +267,7 @@ export function StepJoiners({ ym, period, onNext }) {
                         {l.employee.department} · last day {longDate(l.last_day)}
                       </div>
                     </div>
-                    <Chip tone="info">F&F in step 4</Chip>
+                    <Chip tone="info">F&F in step {STEP.FNF}</Chip>
                   </li>
                 ))}
               </ul>
@@ -292,23 +292,20 @@ export function StepJoiners({ ym, period, onNext }) {
           )}
         </div>
       )}
-      <StepFooter period={period} n={2} ym={ym} onNext={onNext} label="Submit joiners and exits" />
+      <StepFooter period={period} n={STEP.JOINERS} ym={ym} onNext={onNext} label="Submit joiners and exits" />
     </>
   );
 }
 
-// ─── Step 3: held salary ────────────────────────────────────────────────────
+// ─── Step 3: issues ────────────────────────────────────────────────────
 
-export function StepHeld({ ym, period, onNext }) {
+export function StepIssues({ ym, period, onNext }) {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['payroll-issues', ym], queryFn: () => api.get(`/payroll/periods/${ym}/issues`).then((r) => r.data) });
-  const holds = useQuery({ queryKey: ['held-salaries'], queryFn: () => api.get('/held-salaries').then((r) => r.data) });
   const [holding, setHolding] = useState(null);
-  const [holdingAny, setHoldingAny] = useState(false);
-  const [releasing, setReleasing] = useState(null);
   const [reason, setReason] = useState('');
   const [kindFilter, setKindFilter] = useState(null);
-  const locked = period.steps_submitted.includes(3) || period.state !== 'DRAFT';
+  const locked = period.steps_submitted.includes(STEP.ISSUES) || period.state !== 'DRAFT';
   const act = useMutation({
     mutationFn: async ({ ids, how }) => {
       if (how === 'LEAVE_OUT') return api.post(`/payroll/periods/${ym}/exclusions`, { employee_ids: ids, reason });
@@ -322,24 +319,9 @@ export function StepHeld({ ym, period, onNext }) {
     },
     onError: (e) => toast.error(errorMessage(e)),
   });
-  const include = useMutation({
-    mutationFn: (id) => api.del(`/payroll/periods/${ym}/exclusions/${id}`),
-    onSuccess: () => refreshPeriod(qc, ym),
-    onError: (e) => toast.error(errorMessage(e)),
-  });
-  const stop = useMutation({
-    mutationFn: (h) => api.post(`/employees/${h.employee.id}/hold/stop`, {}),
-    onSuccess: () => {
-      toast.success('Hold stopped.');
-      refreshPeriod(qc, ym);
-    },
-    onError: (e) => toast.error(errorMessage(e)),
-  });
   const d = q.data;
   const blocking = d?.issues.filter((i) => i.severity === 'BLOCKING').length ?? 0;
   const rows = (d?.issues ?? []).filter((i) => !kindFilter || i.kind === kindFilter);
-  const h = holds.data;
-  const standing = (h?.holds ?? []).filter((x) => !x.released_at || x.months.some((m) => m.state === 'HELD'));
 
   return (
     <>
@@ -405,24 +387,77 @@ export function StepHeld({ ym, period, onNext }) {
               </ul>
             )}
             {d.held_back.length > 0 && (
-              <div className="border-t px-5 py-3 text-[14px]">
-                <h4 className="mb-1 font-semibold">Left out of this month ({d.held_back.length})</h4>
-                {d.held_back.map((x) => (
-                  <div key={x.employee.id} className="flex flex-wrap items-center gap-2 py-0.5">
-                    <PersonLink id={x.employee.id} name={x.employee.name} code={x.employee.code} /> <span className="text-muted-foreground">— {x.reason}</span>
-                    {!locked && (
-                      <Button size="sm" variant="ghost" onClick={() => include.mutate(x.employee.id)}>
-                        Include again
-                      </Button>
-                    )}
-                  </div>
-                ))}
-              </div>
+              <p className="m-0 border-t px-5 py-3 text-[14px] text-muted-foreground">
+                {d.held_back.length} {d.held_back.length === 1 ? 'person is' : 'people are'} left out of this month. They are listed in step {STEP.HELD}, Held salary.
+              </p>
             )}
           </>
         )}
       </Card>
 
+      <StepFooter
+        period={period}
+        n={STEP.ISSUES}
+        ym={ym}
+        onNext={onNext}
+        label="Submit issues"
+        blocked={blocking > 0}
+        blockedNote={`${blocking} blocking issue${blocking === 1 ? '' : 's'} still to settle`}
+      />
+      <Dialog
+        open={!!holding}
+        onOpenChange={(o) => !o && setHolding(null)}
+        title={holding?.how === 'LEAVE_OUT' ? `Leave ${holding?.name} out of ${monthLabel(ym)}` : `Hold ${holding?.name}'s salary`}
+        description={
+          holding?.how === 'LEAVE_OUT'
+            ? 'No payslip this month: nothing is worked out, so no PF or ESI either. Use it only when the payslip cannot be worked out.'
+            : `Worked out in ${monthLabel(ym)} as usual — payslip, PF, ESI, TDS — and kept out of the bank file until released.`
+        }
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setHolding(null)}>
+              Cancel
+            </Button>
+            <Button disabled={reason.trim().length < 3} loading={act.isPending} onClick={() => holding && act.mutate(holding)}>
+              {holding?.how === 'LEAVE_OUT' ? 'Leave out' : 'Hold salary'}
+            </Button>
+          </>
+        }
+      >
+        <Input autoFocus value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why, e.g. bank details pending" aria-label="Reason" />
+      </Dialog>
+    </>
+  );
+}
+
+// ─── Step 4: held salary ────────────────────────────────────────────────────
+
+export function StepHeld({ ym, period, onNext }) {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ['payroll-issues', ym], queryFn: () => api.get(`/payroll/periods/${ym}/issues`).then((r) => r.data) });
+  const holds = useQuery({ queryKey: ['held-salaries'], queryFn: () => api.get('/held-salaries').then((r) => r.data) });
+  const [holdingAny, setHoldingAny] = useState(false);
+  const [releasing, setReleasing] = useState(null);
+  const locked = period.steps_submitted.includes(STEP.HELD) || period.state !== 'DRAFT';
+  const include = useMutation({
+    mutationFn: (id) => api.del(`/payroll/periods/${ym}/exclusions/${id}`),
+    onSuccess: () => refreshPeriod(qc, ym),
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+  const stop = useMutation({
+    mutationFn: (h) => api.post(`/employees/${h.employee.id}/hold/stop`, {}),
+    onSuccess: () => {
+      toast.success('Hold stopped.');
+      refreshPeriod(qc, ym);
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+  const d = q.data;
+  const h = holds.data;
+  const standing = (h?.holds ?? []).filter((x) => !x.released_at || x.months.some((m) => m.state === 'HELD'));
+
+  return (
+    <>
       <Card className="overflow-hidden">
         <CardHeader
           title={`Held salaries${h ? ` · ${standing.length}` : ''}`}
@@ -477,44 +512,32 @@ export function StepHeld({ ym, period, onNext }) {
         )}
       </Card>
 
-      <StepFooter
-        period={period}
-        n={3}
-        ym={ym}
-        onNext={onNext}
-        label="Submit held salaries"
-        blocked={blocking > 0}
-        blockedNote={`${blocking} blocking issue${blocking === 1 ? '' : 's'} still to settle`}
-      />
-      <Dialog
-        open={!!holding}
-        onOpenChange={(o) => !o && setHolding(null)}
-        title={holding?.how === 'LEAVE_OUT' ? `Leave ${holding?.name} out of ${monthLabel(ym)}` : `Hold ${holding?.name}'s salary`}
-        description={
-          holding?.how === 'LEAVE_OUT'
-            ? 'No payslip this month: nothing is worked out, so no PF or ESI either. Use it only when the payslip cannot be worked out.'
-            : `Worked out in ${monthLabel(ym)} as usual — payslip, PF, ESI, TDS — and kept out of the bank file until released.`
-        }
-        footer={
-          <>
-            <Button variant="outline" onClick={() => setHolding(null)}>
-              Cancel
-            </Button>
-            <Button disabled={reason.trim().length < 3} loading={act.isPending} onClick={() => holding && act.mutate(holding)}>
-              {holding?.how === 'LEAVE_OUT' ? 'Leave out' : 'Hold salary'}
-            </Button>
-          </>
-        }
-      >
-        <Input autoFocus value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why, e.g. bank details pending" aria-label="Reason" />
-      </Dialog>
+      {d && d.held_back.length > 0 && (
+        <Card className="overflow-hidden">
+          <CardHeader title={`Left out of ${monthLabel(ym)} · ${d.held_back.length}`} description="No payslip this month: nothing is worked out for them. Include someone again to pay them in this run." />
+          <div className="px-5 pb-3 text-[14px]">
+            {d.held_back.map((x) => (
+              <div key={x.employee.id} className="flex flex-wrap items-center gap-2 py-0.5">
+                <PersonLink id={x.employee.id} name={x.employee.name} code={x.employee.code} /> <span className="text-muted-foreground">— {x.reason}</span>
+                {!locked && (
+                  <Button size="sm" variant="ghost" onClick={() => include.mutate(x.employee.id)}>
+                    Include again
+                  </Button>
+                )}
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      <StepFooter period={period} n={STEP.HELD} ym={ym} onNext={onNext} label="Submit held salaries" />
       {holdingAny && h && <HoldDialog openMonths={h.open_months} onClose={() => { setHoldingAny(false); refreshPeriod(qc, ym); }} />}
       {releasing && h && <ReleaseDialog hold={releasing} openMonths={h.open_months} runMonths={h.run_months} onClose={() => { setReleasing(null); refreshPeriod(qc, ym); }} />}
     </>
   );
 }
 
-// ─── Step 4: F&F ────────────────────────────────────────────────────────────
+// ─── Step 5: F&F ────────────────────────────────────────────────────────────
 
 const MODES = [
   { value: 'PAYROLL', label: 'This payroll' },
@@ -662,7 +685,7 @@ export function StepFnf({ ym, period, onNext }) {
       </Card>
       <StepFooter
         period={period}
-        n={4}
+        n={STEP.FNF}
         ym={ym}
         onNext={onNext}
         label="Submit F&F"
@@ -710,7 +733,7 @@ export function StepFnf({ ym, period, onNext }) {
   );
 }
 
-// ─── Step 5: adhoc ──────────────────────────────────────────────────────────
+// ─── Step 6: adhoc ──────────────────────────────────────────────────────────
 
 const KIND_LABEL = { EARNING: 'Bonus or incentive', REIMBURSEMENT: 'Reimbursement', DEDUCTION: 'Deduction' };
 const KIND_TONE = { EARNING: 'success', REIMBURSEMENT: 'info', DEDUCTION: 'destructive' };
@@ -734,7 +757,7 @@ export function StepAdhoc({ ym, period, onNext }) {
   const loans = useQuery({ queryKey: ['advances-loans', 'all'], queryFn: () => api.get('/advances-loans').then((r) => r.data), retry: false });
   const [adding, setAdding] = useState(false);
   const [viewing, setViewing] = useState(null);
-  const locked = period.steps_submitted.includes(5) || period.state !== 'DRAFT';
+  const locked = period.steps_submitted.includes(STEP.ADHOC) || period.state !== 'DRAFT';
   const del = useMutation({
     mutationFn: (id) => api.del(`/adhoc/${id}`),
     onSuccess: () => {
@@ -858,7 +881,7 @@ export function StepAdhoc({ ym, period, onNext }) {
           </div>
         )}
       </Card>
-      <StepFooter period={period} n={5} ym={ym} onNext={onNext} label="Submit adhoc" />
+      <StepFooter period={period} n={STEP.ADHOC} ym={ym} onNext={onNext} label="Submit adhoc" />
       <AdhocPeople item={viewing} text={viewing ? targetText(viewing) : ''} canRemove={!locked} removing={del.isPending} onRemove={() => viewing && del.mutate(viewing.id)} onClose={() => setViewing(null)} />
     </>
   );
@@ -1063,7 +1086,7 @@ function AdhocPeople({ item, text, canRemove, removing, onRemove, onClose }) {
   );
 }
 
-// ─── Step 6: generate ───────────────────────────────────────────────────────
+// ─── Step 7: generate ───────────────────────────────────────────────────────
 
 /** Watches a running job, then refreshes everything that read the old figures. */
 function JobProgress({ jobId, ym, onEnd }) {
@@ -1130,7 +1153,7 @@ export function StepGenerate({ ym, period, company, onBack }) {
     if (period.running_job_id) setJobId(period.running_job_id);
   }, [period.running_job_id]);
   const q = useQuery({ queryKey: ['payroll-preview', ym], queryFn: () => api.get(`/payroll/periods/${ym}/preview`).then((r) => r.data), enabled: !generated });
-  const ready = [1, 2, 3, 4, 5].every((s) => period.steps_submitted.includes(s));
+  const ready = Array.from({ length: LAST_REVIEW_STEP }, (_, i) => i + 1).every((s) => period.steps_submitted.includes(s));
   const run = useMutation({
     mutationFn: () => api.post(`/payroll/periods/${ym}/run`, {}, { 'Idempotency-Key': crypto.randomUUID() }),
     onSuccess: (r) => setJobId(r.data.job_id),
@@ -1161,7 +1184,7 @@ export function StepGenerate({ ym, period, company, onBack }) {
       {!generated ? (
         <Card>
           <CardHeader
-            title={ready ? `Everything is reviewed. Ready to generate ${monthLabel(ym)}.` : `Submit steps 1 to 5 first`}
+            title={ready ? `Everything is reviewed. Ready to generate ${monthLabel(ym)}.` : `Submit steps 1 to ${LAST_REVIEW_STEP} first`}
             description="Generating works out every payslip from what was submitted, and makes the bank file and the statutory reports. Nothing is paid until you mark it paid."
           />
           <div className="flex flex-col gap-4 px-5 pb-5">

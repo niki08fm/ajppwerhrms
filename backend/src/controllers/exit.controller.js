@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { addMonths, exitTaskTickSchema, exitWithdrawSchema, EXIT_CHECKLIST, formatYearMonth, resignSchema, settlementAdjustSchema, settlementProcessSchema, ymOf } from '@ajpwer/shared';
+import { addMonths, exitTaskTickSchema, exitWithdrawSchema, EXIT_CHECKLIST, formatYearMonth, resignSchema, settlementAdjustSchema, settlementProcessSchema, STEP, ymOf } from '@ajpwer/shared';
 import { audit, who } from '../utils/audit.js';
 import { fromDbDate, n, toDbDate } from '../utils/dbDates.js';
 import { AppError, notFound } from '../utils/errors.js';
@@ -23,7 +23,7 @@ const leaving = (e) => {
 function closedReason(p) {
   if (!p) return null;
   if (p.state !== 'DRAFT') return `${formatYearMonth(p.period_ym)} payroll has been run`;
-  if (p.steps_submitted.includes(4)) return `${formatYearMonth(p.period_ym)} payroll is past its F&F step`;
+  if (p.steps_submitted.includes(STEP.FNF)) return `${formatYearMonth(p.period_ym)} payroll is past its F&F step`;
   return null;
 }
 
@@ -165,7 +165,7 @@ export const processSettlement = asyncHandler(async (req, res) => {
   assertProcessReady(result, checklist, b);
   const p = await getPeriod(prisma, b.period_ym);
   const why = closedReason(p);
-  if (why) throw new AppError('PERIOD_LOCKED', `${why}. Choose a later month, or reopen its F&F step (step 4) there.`, 409, 'period_ym');
+  if (why) throw new AppError('PERIOD_LOCKED', `${why}. Choose a later month, or reopen its F&F step (step ${STEP.FNF}) there.`, 409, 'period_ym');
   const { actor, ip } = who(req);
   const fresh = await prisma.$transaction(async (tx) => {
     // Keep the same period-before-rules order as payroll and policy edits.
@@ -173,7 +173,7 @@ export const processSettlement = asyncHandler(async (req, res) => {
     await tx.$queryRaw`SELECT id FROM payroll_period WHERE id = ${p.id}::uuid FOR UPDATE`;
     const period = await tx.payrollPeriod.findUniqueOrThrow({ where: { id: p.id } });
     const reason = closedReason(period);
-    if (reason) throw new AppError('PERIOD_LOCKED', `${reason}. Choose a later month, or reopen its F&F step (step 4) there.`, 409, 'period_ym');
+    if (reason) throw new AppError('PERIOD_LOCKED', `${reason}. Choose a later month, or reopen its F&F step (step ${STEP.FNF}) there.`, 409, 'period_ym');
     await tx.$queryRaw`SELECT id FROM employee WHERE id = ${e.id}::uuid FOR UPDATE`;
     const employee = await tx.employee.findUniqueOrThrow({ where: { id: e.id } });
     leaving(employee);
@@ -210,7 +210,7 @@ export const processSettlement = asyncHandler(async (req, res) => {
   res.json({ data: { state: 'INCLUDED', period_ym: b.period_ym, paid_separately: b.paid_separately ?? null, net: n(fresh.net) } });
 });
 
-/** Take a processed F&F back out of its month, while that payroll is not past its F&F step (step 4). */
+/** Take a processed F&F back out of its month, while that payroll is not past its F&F step. */
 export const unprocessSettlement = asyncHandler(async (req, res) => {
   const e = await loadPerson(req.params.id);
   leaving(e);
