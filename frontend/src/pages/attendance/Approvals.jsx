@@ -14,6 +14,7 @@ import { Card } from '@/components/ui/card';
 import { Input, Segmented, Select } from '@/components/ui/form';
 import { CorrectionDrawer } from '@/components/attendance/CorrectionDrawer';
 import { DeptAvatar } from '@/components/attendance/DeptAvatar';
+import { ManualAttendanceSheets } from '@/components/attendance/ManualAttendanceSheets';
 import { TONE, dayName, fullDate } from '@/components/attendance/dayVocab';
 
 /**
@@ -50,6 +51,7 @@ export default function Approvals() {
   const site = sp.get('site') ?? '';
   const dept = sp.get('dept') ?? '';
   const q = sp.get('q') ?? '';
+  const manualView = kind === 'manual';
   const set = (patch) => {
     const next = new URLSearchParams(sp);
     for (const [k, v] of Object.entries(patch)) v ? next.set(k, v) : next.delete(k);
@@ -64,7 +66,8 @@ export default function Approvals() {
 
   const today = list.data?.today;
   const bucket = (d) => (d === today ? 'today' : d === addDays(today, -1) ? 'yest' : 'earlier');
-  const open = useMemo(() => (list.data?.items ?? []).filter((it) => !done.has(it.id)), [list.data, done]);
+  const manualCount = (list.data?.items ?? []).filter((it) => it.kind === 'manual' && !done.has(it.id)).length;
+  const open = useMemo(() => (list.data?.items ?? []).filter((it) => it.kind !== 'manual' && !done.has(it.id)), [list.data, done]);
   const needle = q.trim().toLowerCase();
   // Everything except the kind, so each chip says how many of that kind are within the other filters.
   const scoped = open.filter(
@@ -100,7 +103,7 @@ export default function Approvals() {
     <div>
       <PageHeader
         title="Approvals"
-        description="Review attendance, leave and site transfer requests."
+        description="Review attendance requests, manual sheets, leave and site transfers."
         actions={
           can('reports.export') && (
             <Button variant="outline" onClick={() => download('/punch-attempts.csv', 'punch-attempts.csv').catch((e) => toast.error(errorMessage(e)))}>
@@ -110,6 +113,19 @@ export default function Approvals() {
         }
       />
 
+      <div role="tablist" aria-label="Approval views" className="mb-5 flex gap-1 overflow-x-auto border-b scrollbar-thin">
+        {[{ value: 'requests', label: 'Requests', count: open.length }, { value: 'manual', label: 'Manual attendance sheets', count: manualCount }].map((view) => <button key={view.value} id={`approval-view-${view.value}`} type="button" role="tab" aria-selected={manualView === (view.value === 'manual')} aria-controls={`approval-panel-${view.value}`} tabIndex={manualView === (view.value === 'manual') ? 0 : -1} onClick={() => set({ kind: view.value === 'manual' ? 'manual' : '', sheet: '' })} onKeyDown={(event) => {
+          const next = event.key === 'Home' ? 'requests' : event.key === 'End' ? 'manual' : ['ArrowLeft', 'ArrowRight'].includes(event.key) ? manualView ? 'requests' : 'manual' : null;
+          if (!next) return;
+          event.preventDefault();
+          set({ kind: next === 'manual' ? 'manual' : '', sheet: '' });
+          document.getElementById(`approval-view-${next}`)?.focus();
+        }} className={cn('-mb-px inline-flex shrink-0 items-center gap-2 border-b-2 px-3.5 py-2.5 text-sm font-medium', manualView === (view.value === 'manual') ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground')}>
+          {view.label}<span className="rounded-full bg-muted px-2 py-0.5 text-[12px] num">{view.count}</span>
+        </button>)}
+      </div>
+
+      {manualView ? <div role="tabpanel" id="approval-panel-manual" aria-labelledby="approval-view-manual"><ManualAttendanceSheets sheetId={sp.get('sheet')} onSelectSheet={(id) => set({ sheet: id ?? '' })} /></div> : <div role="tabpanel" id="approval-panel-requests" aria-labelledby="approval-view-requests">
       <div className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center gap-2.5">
           <Segmented label="When" value={day} onChange={(v) => set({ day: v === 'all' ? '' : v })} options={DAYS} />
@@ -214,6 +230,7 @@ export default function Approvals() {
           }}
         />
       )}
+      </div>}
     </div>
   );
 }

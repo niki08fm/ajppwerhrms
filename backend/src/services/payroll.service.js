@@ -20,7 +20,10 @@ export const employeeInclude = {
 export async function getPeriod(db, ym) {
   const existing = await db.payrollPeriod.findUnique({ where: { period_ym: ym } });
   if (existing) return existing;
-  return db.payrollPeriod.upsert({ where: { period_ym: ym }, update: {}, create: { period_ym: ym } });
+  // A site's first sheet can create this month at the same time as payroll.
+  // ON CONFLICT keeps the surrounding transaction usable in that race.
+  await db.$executeRaw`INSERT INTO payroll_period (period_ym) VALUES (${ym}) ON CONFLICT (period_ym) DO NOTHING`;
+  return db.payrollPeriod.findUnique({ where: { period_ym: ym } });
 }
 
 export async function payContext(db, ym, ratesId) {
@@ -249,6 +252,12 @@ export async function submitStep(ym, step, actor, ip) {
       if (step < 1 || step > LAST_REVIEW_STEP) throw new AppError('VALIDATION', `Steps 1 to ${LAST_REVIEW_STEP} are submitted; step ${GENERATE_STEP} is generating the payroll.`, 422);
       for (let s = 1; s < step; s++) {
         if (!period.steps_submitted.includes(s)) throw new AppError('STEP_NOT_SUBMITTED', `Submit step ${s} first.`, 409);
+      }
+      if (step === STEP.ATTENDANCE) {
+        const waiting = await tx.manualAttendanceSheet.count({ where: { status: 'PENDING',
+          expires_at: { gt: new Date() }, work_date: { gte: toDbDate(firstOfMonth(ym)), lte: toDbDate(lastOfMonth(ym)) } } });
+        if (waiting) throw new AppError('MANUAL_ATTENDANCE_PENDING',
+          `Review ${waiting} manual attendance sheet${waiting === 1 ? '' : 's'} in Approvals before submitting this month's attendance.`, 409);
       }
       if (step === STEP.FNF) {
         // A ticked settlement with a blocking clearance issue stops the step.

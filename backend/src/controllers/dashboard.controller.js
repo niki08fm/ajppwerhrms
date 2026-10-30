@@ -8,12 +8,11 @@ import { heldBackList } from '../services/payroll.service.js';
 import { holidaysBetween } from '../services/rules.service.js';
 import { completedShiftShortfall, inView, isExpected, liveFigures, minutesNow, VIEWS } from '../services/dayview.service.js';
 import { KINDS, WINDOW_DAYS, waitingItems } from '../services/approvals.service.js';
+import { dashboardCache as cache } from '../utils/dashboard-cache.js';
 
 const today = () => istDate(new Date());
 
 /** Small in-memory cache: the dashboard reads cached aggregates, never a full recompute per load. */
-const cache = new Map();
-
 async function cached(key, ttlMs, fn) {
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < ttlMs) return hit.v;
@@ -255,18 +254,18 @@ export const getOverview = asyncHandler(async (req, res) => {
   const nameOf = (id) => named.get(id)?.name ?? people.find((p) => p.id === id)?.name ?? null;
 
   // What waits on HR: the same list the Approvals screen shows, counted by kind.
-  const LABELS = { face: 'Face checks', miss: 'Missing punch-outs', short: 'Short days', transfer: 'Site transfer requests', move: 'Site changes', leave: 'Leave requests' };
+  const LABELS = { face: 'Face checks', miss: 'Missing punch-outs', short: 'Short days', transfer: 'Site transfer requests', move: 'Site changes', leave: 'Leave requests', manual: 'Manual attendance sheets' };
   const item = (key, label, list, to, at) => ({ key, label, n: list.length, names: list.map((x) => x.name).filter(Boolean).slice(0, 6), employee_ids: list.map((x) => x.id).filter(Boolean), to, oldest_at: at ?? null });
   const waiting = [
     ...KINDS.map((k) => {
       const of = waitingNow.filter((w) => w.kind === k);
-      return item(k, LABELS[k], of.map((w) => ({ id: w.employee?.id, name: w.employee?.name ?? 'Unknown face' })), `/approvals?kind=${k}`, of[of.length - 1]?.at);
+      return item(k, LABELS[k], of.map((w) => ({ id: w.employee?.id, name: w.employee?.name ?? w.site?.name ?? 'Unknown face' })), `/approvals?kind=${k}`, of[of.length - 1]?.at);
     }),
     item('hold', 'Salaries on hold', holds.map((h) => ({ id: h.employee_id, name: nameOf(h.employee_id) })), '/held-salaries', null),
     item('heldback', 'Left out of payroll', heldBack.map((h) => ({ id: h.employee.id, name: h.employee.name })), '/payroll', null),
   ].filter((w) => w.n > 0);
 
-  const KIND_WORD = { face: 'face check', miss: 'missing punch-out', short: 'short day', transfer: 'site transfer request', move: 'site change', leave: 'leave request' };
+  const KIND_WORD = { face: 'face check', miss: 'missing punch-out', short: 'short day', transfer: 'site transfer request', move: 'site change', leave: 'leave request', manual: 'manual attendance sheet' };
   const last = waitingNow[waitingNow.length - 1];
   const oldest = last ? { label: KIND_WORD[last.kind], name: last.employee?.name ?? 'Unknown face', at: last.at } : null;
 

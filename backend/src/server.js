@@ -4,6 +4,7 @@ import { env } from './config/env.js';
 import { closeJobs, startWorker } from './jobs/queue.js';
 import { logger } from './config/logger.js';
 import { prisma } from './config/db.js';
+import { startManualAttendanceExpiry } from './jobs/manual-attendance-expiry.js';
 
 mkdirSync(env.UPLOAD_DIR, { recursive: true });
 mkdirSync(env.EXPORT_DIR, { recursive: true });
@@ -11,6 +12,8 @@ mkdirSync(env.EXPORT_DIR, { recursive: true });
 const app = createApp();
 // In development the API process also works the queue. In production run `npm run worker` separately.
 const worker = env.NODE_ENV !== 'production' || process.env.RUN_WORKER === 'true' ? startWorker() : null;
+const stopManualAttendanceExpiry = startManualAttendanceExpiry({ db: prisma,
+  onError: (err) => logger.error({ err }, 'Could not expire manual attendance sheets') });
 
 const server = app.listen(env.API_PORT, () => {
   logger.info(`AJPWER API listening on http://localhost:${env.API_PORT}/api/v1`);
@@ -18,6 +21,7 @@ const server = app.listen(env.API_PORT, () => {
 
 async function shutdown(signal) {
   logger.info(`${signal} received, shutting down`);
+  stopManualAttendanceExpiry();
   server.close();
   await worker?.close();
   await closeJobs();

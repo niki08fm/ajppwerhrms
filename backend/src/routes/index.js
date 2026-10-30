@@ -15,6 +15,7 @@ import { moneyRouter } from './money.routes.js';
 import { auditRouter } from './audit.routes.js';
 import { dashboardRouter } from './dashboard.routes.js';
 import { miscRouter } from './misc.routes.js';
+import { manualAttendanceRouter } from './manual-attendance.routes.js';
 
 /** Every API route, mounted under /api/v1 by app.js. */
 export const apiRouter = Router();
@@ -24,6 +25,7 @@ apiRouter.use(attachAdmin, attachSite);
 
 apiRouter.use('/auth', authRouter);
 apiRouter.use('/', tabletRouter);
+apiRouter.use('/', manualAttendanceRouter);
 apiRouter.use('/employees', employeesRouter);
 apiRouter.use('/offers', offersRouter);
 apiRouter.use('/', attendanceRouter);

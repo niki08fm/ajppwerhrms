@@ -28,6 +28,8 @@ grouped together under **Payroll**.
 
 [Attendance correction, payroll navigation and payslip ZIP guide](follow-up/README.md)
 
+[Manual attendance sheets and HR review](../manual-attendance/README.md)
+
 **Before**
 
 ![Previous Today view](screens/today-before.png)

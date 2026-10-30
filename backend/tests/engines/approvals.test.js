@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { waitingItems } from '../../src/services/approvals.service.js';
 
 /**
@@ -16,7 +16,7 @@ const people = {
   suresh: { id: 'e-4', code: 'AJ0002', name: 'Suresh Reddy', department: ELEC },
 };
 
-function mockDb({ frozenMonths = [], transfers = [] } = {}) {
+function mockDb({ frozenMonths = [], transfers = [], manualSheets = [] } = {}) {
   return {
     site: { findMany: async () => [{ id: 's-a', name: 'Alpha substation' }, { id: 's-b', name: 'Beta line camp' }] },
     employee: { findMany: async ({ where }) => Object.values(people).filter((p) => where.id.in.includes(p.id)) },
@@ -39,6 +39,14 @@ function mockDb({ frozenMonths = [], transfers = [] } = {}) {
       ],
     },
     siteTransferRequest: { findMany: async () => transfers },
+    manualAttendanceSheet: {
+      updateMany: async ({ where }) => {
+        let count = 0;
+        for (const sheet of manualSheets) if (sheet.status === 'PENDING' && sheet.expires_at <= where.expires_at.lte) { sheet.status = 'EXPIRED'; count++; }
+        return { count };
+      },
+      findMany: async ({ where }) => manualSheets.filter((sheet) => !where.status || sheet.status === where.status),
+    },
   };
 }
 
@@ -126,5 +134,26 @@ describe('waiting items', () => {
       detail: { transfer_request_id: 'tr-1', from_site: { id: 's-a', name: 'Alpha substation' }, to_site: { id: 's-b', name: 'Beta line camp' }, departure_date: '2026-10-03', reason: 'Electrical work at Beta' },
     });
     expect(items.some((item) => item.kind === 'move')).toBe(true);
+  });
+
+  it('shows one manual sheet for all its employees and drops it at the deadline even within the cache lifetime', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(`${NOW}T10:00:00Z`));
+    try {
+      const sheet = { id: 'sheet-1', site: { id: 's-a', code: 'ALPHA', name: 'Alpha substation' },
+        work_date: new Date(`${NOW}T00:00:00Z`), status: 'PENDING', reason: 'Site connection unavailable',
+        submitted_at: new Date(`${NOW}T09:00:00Z`), expires_at: new Date(Date.now() + 1000), version: 1,
+        rows: [{ included: true }, { included: true }], decided_at: null };
+      const db = mockDb({ manualSheets: [sheet] });
+      const items = await waitingItems(db, NOW, { fresh: true, register });
+      expect(items.filter((item) => item.kind === 'manual')).toEqual([expect.objectContaining({
+        id: 'manual:sheet-1', employee: null, site: sheet.site,
+        detail: { sheet_id: 'sheet-1', row_count: 2, expires_at: sheet.expires_at.toISOString(), to: '/approvals?kind=manual&sheet=sheet-1' },
+      })]);
+      vi.setSystemTime(new Date(Date.now() + 1000));
+      const after = await waitingItems(db, NOW, { register });
+      expect(after.some((item) => item.kind === 'manual')).toBe(false);
+      expect(sheet.status).toBe('EXPIRED');
+    } finally { vi.useRealTimers(); }
   });
 });

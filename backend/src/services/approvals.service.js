@@ -3,6 +3,7 @@ import { fromDbDate, toDbDate } from '../utils/dbDates.js';
 import { attendanceFrozen, effectiveTravel } from './attendance.service.js';
 import { leaveTypesInUse } from './leave.service.js';
 import { dayRegister } from './register.service.js';
+import { listManualAttendanceSheets } from './manual-attendance.service.js';
 
 /**
  * Everything that waits on HR, as one list — the Approvals screen shows it and the
@@ -19,11 +20,15 @@ import { dayRegister } from './register.service.js';
  * never in a month whose attendance payroll has already frozen (nothing can change there).
  * A day is settled once HR saves a correction for it.
  */
-export const KINDS = ['face', 'miss', 'short', 'transfer', 'move', 'leave'];
+export const KINDS = ['face', 'miss', 'short', 'transfer', 'move', 'leave', 'manual'];
 export const WINDOW_DAYS = 7;
 
 const TTL_MS = 10_000;
 let memo = null;
+
+export function invalidateApprovalsCache() {
+  memo = null;
+}
 
 const dept = (d) => (d ? { id: d.id, name: d.name, colour: d.colour ?? null } : null);
 const person = (e) => (e ? { id: e.id, code: e.code, name: e.name, department: dept(e.department) } : null);
@@ -33,7 +38,7 @@ const person = (e) => (e ? { id: e.id, code: e.code, name: e.name, department: d
  * decision. `register` is there for tests.
  */
 export async function waitingItems(db, now, { fresh = false, register = dayRegister } = {}) {
-  if (!fresh && memo && memo.now === now && Date.now() - memo.at < TTL_MS) return memo.items;
+  if (!fresh && memo && memo.now === now && Date.now() - memo.at < TTL_MS && !memo.items.some((item) => item.kind === 'manual' && Date.parse(item.detail.expires_at) <= Date.now())) return memo.items;
   const items = await build(db, now, register);
   memo = { now, at: Date.now(), items };
   return items;
@@ -45,7 +50,7 @@ async function build(db, now, register) {
   for (const ym of new Set(dates.map(ymOf))) frozen.set(ym, (await attendanceFrozen(db, ym)).frozen);
   const open = dates.filter((d) => !frozen.get(ymOf(d)));
 
-  const [registers, sites, faces, changes, leaves, types, transfers] = await Promise.all([
+  const [registers, sites, faces, changes, leaves, types, transfers, manualSheets] = await Promise.all([
     Promise.all(open.map((d) => register(db, d, undefined, now).then((rows) => [d, rows]))),
     db.site.findMany({ select: { id: true, name: true } }),
     db.faceException.findMany({ where: { status: 'PENDING', deleted_at: null }, include: { site: { select: { id: true, name: true } } }, orderBy: { occurred_at: 'desc' }, take: 300 }),
@@ -63,6 +68,7 @@ async function build(db, now, register) {
       orderBy: { requested_at: 'desc' },
       take: 300,
     }),
+    listManualAttendanceSheets(db, { status: 'PENDING' }),
   ]);
   const siteName = new Map(sites.map((s) => [s.id, s.name]));
   const siteOf = (id) => (id ? { id, name: siteName.get(id) ?? 'Unknown site' } : null);
@@ -74,6 +80,13 @@ async function build(db, now, register) {
   );
 
   const items = [];
+
+  for (const sheet of manualSheets) {
+    items.push({ id: `manual:${sheet.id}`, kind: 'manual', at: sheet.submitted_at,
+      day: sheet.work_date, employee: null, site: sheet.site,
+      detail: { sheet_id: sheet.id, row_count: sheet.row_count, expires_at: sheet.expires_at,
+        to: `/approvals?kind=manual&sheet=${sheet.id}` } });
+  }
 
   for (const f of faces) {
     const who = people.get(f.claimed_employee_id) ?? people.get(f.best_match_id) ?? null;

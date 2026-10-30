@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, ChevronLeft, ChevronRight, CloudOff, LogOut, MapPin, ScanFace, Users, UserPlus } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
@@ -14,12 +14,14 @@ import { Dialog } from '@/components/ui/overlay';
 import { EmptyState, ErrorState, Notice, SkeletonRows } from '@/components/states';
 import { TabletRegisters } from './TabletRegisters';
 import { TabletTransfers } from './TabletTransfers';
+import { TabletManualAttendance } from './TabletManualAttendance';
 
 const TABS = [
   { value: 'today', label: 'Today' },
   { value: 'day', label: 'Daily register' },
   { value: 'month', label: 'Monthly register' },
   { value: 'transfers', label: 'Transfer requests' },
+  { value: 'manual', label: 'Manual attendance' },
 ];
 
 const localToday = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
@@ -34,6 +36,15 @@ export function TabletDashboard({ site, online, onPunch, onRegister, onSignOut }
   const [department, setDepartment] = useState(null);
   const [showPeople, setShowPeople] = useState(false);
   const [showMonth, setShowMonth] = useState(false);
+  // Manual entries follow the current IST day even before the summary refreshes.
+  // The selected historical register dates stay unchanged.
+  const [manualToday, setManualToday] = useState(localToday);
+  useEffect(() => {
+    const refresh = () => setManualToday(localToday());
+    const timer = setInterval(refresh, 30_000);
+    window.addEventListener('focus', refresh);
+    return () => { clearInterval(timer); window.removeEventListener('focus', refresh); };
+  }, []);
   const summary = useQuery({
     queryKey: ['tablet-summary', site.id],
     queryFn: () => api.get('/tablet/summary').then((r) => r.data),
@@ -78,11 +89,11 @@ export function TabletDashboard({ site, online, onPunch, onRegister, onSignOut }
       </header>
 
       <main className="mx-auto flex max-w-[1200px] flex-col gap-5 px-4 py-6 sm:px-6">
-        {!online && <Notice tone="warning" icon={<CloudOff className="size-4 shrink-0" />}>Offline. Attendance cannot be recorded until the connection returns.</Notice>}
+        {!online && tab !== 'manual' && <Notice tone="warning" icon={<CloudOff className="size-4 shrink-0" />}>Offline. Keep attendance in the paper register. Enter and send it for HR review when connected.</Notice>}
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h2 className="font-display text-3xl font-semibold">{TABS.find((t) => t.value === tab)?.label}</h2>
-            <p className="mt-1 text-sm text-muted-foreground">{fullDate(today)}</p>
+            <p className="mt-1 text-sm text-muted-foreground">{fullDate(tab === 'manual' ? manualToday : today)}</p>
           </div>
           {tab !== 'today' && <div className="flex flex-wrap items-center gap-2">
             <Button size="lg" variant="outline" disabled={!online} onClick={onRegister}><UserPlus /> Register face</Button>
@@ -117,6 +128,7 @@ export function TabletDashboard({ site, online, onPunch, onRegister, onSignOut }
                 <div className="flex shrink-0 flex-col gap-2 sm:min-w-52">
                   <Button size="xl" disabled={!online} onClick={onPunch}><ScanFace /> Punch in / out</Button>
                   <Button size="lg" variant="ghost" disabled={!online} onClick={onRegister}><UserPlus /> Register face</Button>
+                  <Button variant="link" size="sm" disabled={!online} onClick={() => setTab('manual')}>Enter manual attendance</Button>
                 </div>
               </Card>
 
@@ -160,6 +172,7 @@ export function TabletDashboard({ site, online, onPunch, onRegister, onSignOut }
           {tab === 'day' && <TabletRegisters mode="day" query={day} today={today} selector={<DayPicker date={date} today={today} onChange={setDate} />} />}
           {tab === 'month' && <TabletRegisters mode="month" query={month} today={today} selector={<MonthPicker ym={ym} today={today} onChange={setYm} />} />}
           {tab === 'transfers' && <TabletTransfers site={site} today={today} online={online} />}
+          <div hidden={tab !== 'manual'}><TabletManualAttendance site={site} today={manualToday} online={online} active={tab === 'manual'} /></div>
         </section>
       </main>
 

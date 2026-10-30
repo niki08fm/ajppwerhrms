@@ -101,6 +101,10 @@ export function StepAttendance({ ym, period, onNext }) {
     queryKey: ['payroll-attendance', ym],
     queryFn: () => api.get(`/payroll/periods/${ym}/attendance`).then((r) => r.data),
   });
+  const manualSheets = useQuery({ queryKey: ['manual-attendance-sheets', 'payroll', ym],
+    queryFn: () => api.get('/manual-attendance-sheets', { status: 'PENDING', ym }).then((r) => r.data),
+    enabled: canViewAttendance, refetchInterval: 30_000 });
+  const manualCount = manualSheets.data?.length ?? 0;
   const [open, setOpen] = useState(null);
   const frozen = period.state !== 'DRAFT' || period.steps_submitted.includes(STEP.ATTENDANCE);
   useEffect(() => setOpen(null), [ym]);
@@ -151,6 +155,7 @@ export function StepAttendance({ ym, period, onNext }) {
   ];
   return (
     <>
+      {manualCount > 0 && <Notice tone="warning">{manualCount} manual attendance sheet{manualCount === 1 ? ' is' : 's are'} waiting for HR. Review before submitting this month. <Link to="/approvals?kind=manual" className="font-medium text-primary underline">Review sheets</Link></Notice>}
       {q.data && (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <Stat label="People in this payroll" value={rows.filter((r) => r.in_run).length} sub={`${rows.filter((r) => r.partial).length} part month`} />
@@ -207,7 +212,7 @@ export function StepAttendance({ ym, period, onNext }) {
           onOpenChange={(value) => !value && setOpen(null)}
         />
       )}
-      <StepFooter period={period} n={STEP.ATTENDANCE} ym={ym} onNext={onNext} label="Submit attendance" note="Missing punch-outs pay half a day; short days pay nothing. Correct them above before submitting." />
+      <StepFooter period={period} n={STEP.ATTENDANCE} ym={ym} onNext={onNext} label="Submit attendance" blocked={manualCount > 0} blockedNote="Review manual attendance sheets first" note="Missing punch-outs pay half a day; short days pay nothing. Correct them above before submitting." />
     </>
   );
 }

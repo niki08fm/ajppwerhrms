@@ -87,6 +87,7 @@ async function mockAttendance(page, { readOnly = false, frozen = false, frozenPa
     if (path === '/auth/me') data = { id: 'hr', name: 'Example HR', role: 'HR Admin', permissions: ['people.read', 'payroll.read', 'payroll.run', 'setup.read', ...(noAttendance ? [] : ['attendance.read']), ...(readOnly ? [] : ['attendance.write']), ...(noExport ? [] : ['reports.export'])] };
     else if (path === '/lookups') data = { today: TODAY, departments: [department], sites: [site], pay_groups: [group], structures: [], shifts: [], leave_types: [] };
     else if (path === '/dashboard/people') data = { approvals: { total: 0 } };
+    else if (path === '/manual-attendance-sheets') data = [];
     else if (path === '/approvals') data = {
       today: TODAY, sites: [site], departments: [department], window_days: 30,
       items: state.overrides.has(`${EMPLOYEE_A}:2026-10-09`) ? [] : [{
@@ -249,6 +250,22 @@ test('switching calendar days does not carry a draft or show a delayed previous 
   await expect(correction(page).getByLabel('Correction reason')).toHaveValue('');
   await page.waitForTimeout(650);
   await expect(selectedDay(page)).toContainText('Thursday, 8 October 2026');
+  expect(state.writes).toEqual([]);
+  clean(state);
+});
+
+test('payroll attendance directs HR to pending sheets before freezing the month', async ({ page }) => {
+  const state = await mockAttendance(page);
+  const requested = [];
+  await page.route('**/api/v1/manual-attendance-sheets?*', async (route) => {
+    requested.push(Object.fromEntries(new URL(route.request().url()).searchParams));
+    await route.fulfill({ json: { data: [{ id: 'sheet-1', status: 'PENDING', work_date: `${MONTH}-08` }] } });
+  });
+  await page.goto(`/payroll/${MONTH}?step=1`);
+  await expect(page.getByText('1 manual attendance sheet is waiting for HR.', { exact: false })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Submit attendance', exact: true })).toBeDisabled();
+  await expect(page.getByRole('link', { name: 'Review sheets', exact: true })).toHaveAttribute('href', '/approvals?kind=manual');
+  expect(requested).toEqual([{ status: 'PENDING', ym: MONTH }]);
   expect(state.writes).toEqual([]);
   clean(state);
 });
