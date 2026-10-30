@@ -1,0 +1,21 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "installCommand": "npm ci",
+  "buildCommand": "npm run build --workspace=@ajpwer/frontend",
+  "outputDirectory": "frontend/dist",
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://ajpower-hrms.duckdns.org/api/:path*"
+    },
+    {
+      "source": "/face-models/:path*",
+      "destination": "https://ajpower-hrms.duckdns.org/face-models/:path*"
+    },
+    {
+      "source": "/((?!api(?:/|$)|face-models(?:/|$)|assets(?:/|$)).*)",
+      "destination": "/index.html"
+    }
+  ]
+}
