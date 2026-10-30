@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { fileURLToPath } from 'node:url';
 
 const SITE = { id: '00000000-0000-4000-8000-000000000071', code: 'SITE-TEST', name: 'Example site' };
 const OTHER_SITE = { id: '00000000-0000-4000-8000-000000000072', code: 'DEST-TEST', name: 'Destination site' };
@@ -15,7 +16,7 @@ const people = [
 
 /** All records and camera frames are fictional. These tests check the site UI,
  * cancellation and request boundaries, never biometric recognition accuracy. */
-async function mockTablet(page, { loggedIn = true, guidedRegistration = false, delayedCamera = false, deniedLocation = false, withOT = false } = {}) {
+async function mockTablet(page, { loggedIn = true, guidedRegistration = false, delayedCamera = false, deniedLocation = false, withOT = false, punchDirection = null, sessionError = null, frameOutcome = null, busyFrames = false } = {}) {
   const state = { loggedIn, site: SITE, reads: [], writes: [], unexpected: [], errors: [], transfers: [] };
   // Keep date and month navigation stable when this fixture runs on another day.
   await page.clock.setFixedTime(new Date(`${TODAY}T${withOT ? '14' : '06'}:00:00.000Z`));
@@ -42,13 +43,13 @@ async function mockTablet(page, { loggedIn = true, guidedRegistration = false, d
           const track = { stop: () => { probe.stopped++; } };
           probe.resolveCamera = () => resolve({ getTracks: () => [track] });
         });
-        if (!${guidedRegistration}) throw new DOMException('Camera refused for browser test', 'NotAllowedError');
+        if (!${Boolean(guidedRegistration || punchDirection || frameOutcome || busyFrames)}) throw new DOMException('Camera refused for browser test', 'NotAllowedError');
         return { getTracks: () => [] };
       };
       export const stopCamera = (stream) => stream?.getTracks().forEach((track) => track.stop());
       export const capture = async () => {
         probe.captures++;
-        if (!${guidedRegistration}) throw new Error('No biometric capture in this test');
+        if (!${Boolean(guidedRegistration || punchDirection || frameOutcome || busyFrames)}) throw new Error('No biometric capture in this test');
         const canvas = document.createElement('canvas');
         canvas.width = 80; canvas.height = 80;
         const context = canvas.getContext('2d');
@@ -56,7 +57,7 @@ async function mockTablet(page, { loggedIn = true, guidedRegistration = false, d
         context.fillStyle = '#ffffff'; context.font = '12px sans-serif'; context.fillText('Test frame', 8, 42);
         return new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg'));
       };
-      export const waitForGoodFrame = async () => { probe.waits++; return false; };
+      export const waitForGoodFrame = async () => { probe.waits++; return ${Boolean(punchDirection || frameOutcome || busyFrames)}; };
       export const waitForHeadTurn = async (_, follow) => { follow?.onProgress?.(1); return ${guidedRegistration} ? { yaw: follow.direction === 'LEFT' ? -25 : 25 } : false; };
       export const waitForStraight = async (_, follow) => { probe.waits++; follow?.onProgress?.(1); return ${guidedRegistration} ? { yaw: 0 } : false; };
       export const waitForBlink = async (_, follow) => { follow?.onProgress?.(1); return ${guidedRegistration} ? { blob: await capture() } : false; };
@@ -123,7 +124,20 @@ async function mockTablet(page, { loggedIn = true, guidedRegistration = false, d
     else if (path === '/tablet/transfers' && method === 'POST') {
       data = { id: 'test-transfer', employee: EMPLOYEE, from_site: SITE, to_site: OTHER_SITE, departure_date: body.departure_date, reason: body.reason, status: 'PENDING', requested_at: `${TODAY}T06:00:00.000Z`, decided_at: null, decision_note: null };
       state.transfers.push(data);
-    } else if (path === '/punches/sessions' && method === 'POST') data = { session_id: 'test-session', challenge: { type: 'STRAIGHT' } };
+    } else if (path === '/punches/sessions' && method === 'POST') {
+      if (sessionError) return route.fulfill({ status: sessionError.status ?? 503, json: { error: sessionError } });
+      data = { session_id: 'test-session', challenge: { type: 'STRAIGHT' } };
+    }
+    else if (path === '/punches/sessions/test-session/frames' && method === 'POST' && busyFrames) {
+      return route.fulfill({ status: 503, json: { error: { code: 'FACE_BUSY', message: 'Still checking — one moment…' } } });
+    }
+    else if (path === '/punches/sessions/test-session/frames' && method === 'POST' && frameOutcome) data = frameOutcome;
+    else if (path === '/punches/sessions/test-session/frames' && method === 'POST' && punchDirection) data = {
+      outcome: 'IDENTIFIED', message: 'Is this you?', employee: EMPLOYEE, direction: punchDirection, confirm_token: 'fictional-confirm-token',
+    };
+    else if (path === '/punches/sessions/test-session/confirm' && method === 'POST' && punchDirection) data = {
+      message: punchDirection === 'IN' ? 'Punched in at 09:00. Have a good day, Example.' : 'Punched out at 18:00. Thank you, Example.',
+    };
     else if (path === '/punches/sessions/test-session/frames' && method === 'POST' && guidedRegistration) {
       state.registered = true;
       data = { outcome: 'REGISTERED', message: 'Face registered. You can now punch at any site.' };
@@ -147,6 +161,10 @@ test('site login opens its own Today workspace without HR or payroll requests', 
   await expect(page.getByRole('tab', { name: 'Today', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByRole('button', { name: 'Punch in / out', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Departments on site', exact: true })).toBeVisible();
+  await expect(page.getByText(EMPLOYEE.name, { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Attendance this month', exact: true })).toHaveCount(0);
+  expect(state.reads.some(({ path }) => path === '/tablet/attendance/month')).toBe(false);
+  await page.getByRole('button', { name: /Attendance this month/ }).click();
   await expect(page.getByLabel('Attendance this month', { exact: true })).toBeVisible();
   await expect(page.locator('.recharts-bar-rectangle')).toHaveCount(1);
   await expect(page.locator('.recharts-line')).toHaveCount(0);
@@ -173,6 +191,8 @@ test('site login works without GPS permission but punching still requires locati
   await expect(page.getByRole('alert')).toContainText('Location permission was refused. Allow location for this site in the browser.');
   expect(await page.evaluate(() => window.__tabletLocationCalls)).toBe(1);
   expect(state.writes.some(({ path }) => path.startsWith('/punches/'))).toBe(false);
+  await expect(page.getByRole('heading', { name: 'Check your location', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Back to site', exact: true }).click();
   await expect(page.getByRole('tab', { name: 'Today', exact: true })).toHaveAttribute('aria-selected', 'true');
   expect(state.unexpected).toEqual([]);
   expect(state.errors).toEqual([]);
@@ -181,7 +201,9 @@ test('site login works without GPS permission but punching still requires locati
 test('signing out and into another site does not retain the first site headcount', async ({ page }) => {
   const state = await mockTablet(page);
   await page.goto('/tablet');
+  await page.getByRole('button', { name: 'View people', exact: true }).click();
   await expect(page.getByText(EMPLOYEE.name, { exact: true })).toBeVisible();
+  await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Sign in here', exact: true })).toBeVisible();
   await expect(page.getByText(EMPLOYEE.name, { exact: true })).toHaveCount(0);
@@ -189,7 +211,7 @@ test('signing out and into another site does not retain the first site headcount
   await page.getByLabel('Password', { exact: true }).fill('test-password');
   await page.getByRole('button', { name: 'Sign in here', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Destination site', exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Nobody is on site now', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'No department headcount yet', exact: true })).toBeVisible();
   await expect(page.getByText(EMPLOYEE.name, { exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Mechanical · 3 people', exact: true })).toHaveCount(0);
   expect(state.unexpected).toEqual([]);
@@ -211,6 +233,7 @@ test('department visualization opens the currently present people from that depa
 test('selecting a monthly attendance bar opens that site day register', async ({ page }) => {
   const state = await mockTablet(page);
   await page.goto('/tablet');
+  await page.getByRole('button', { name: /Attendance this month/ }).click();
   await page.locator('.recharts-bar-rectangle').click();
   await expect(page.getByRole('tab', { name: 'Daily register', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByLabel('Register date', { exact: true })).toHaveValue(TODAY);
@@ -347,7 +370,7 @@ test('Punch opens a face session only after clicking and offers recovery when th
   await expect(page.getByRole('alert')).toContainText('Allow the camera in your browser to continue.');
   await expect(page.getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
   expect(state.writes).toEqual([{ path: '/punches/sessions', body: { purpose: 'PUNCH', ...POSITION } }]);
-  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByRole('button', { name: 'Back to site', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Punch in / out', exact: true })).toBeVisible();
   expect(state.unexpected).toEqual([]);
   expect(state.errors).toEqual([]);
@@ -491,4 +514,189 @@ test('face registration is absent from onboarding and does not block activation'
   await expect(page.getByText('Active employees register at any site.', { exact: true })).toBeVisible();
   expect(writes).toEqual([`/employees/${EMPLOYEE.id}/activate`]);
   expect(errors).toEqual([]);
+});
+
+test('service failure before opening a punch has an actionable recovery screen without requesting a camera', async ({ page }) => {
+  const state = await mockTablet(page, { sessionError: { code: 'FACE_SERVICE_DOWN', message: 'Face check is not working right now.' } });
+  await page.goto('/tablet');
+  await page.getByRole('button', { name: 'Punch in / out', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Face check is unavailable', exact: true })).toBeVisible();
+  await expect(page.getByRole('alert')).toContainText('Face check is not working right now.');
+  await expect(page.getByText('Wait a moment and try again.', { exact: false })).toBeVisible();
+  expect(await page.evaluate(() => window.__tabletFaceProbe.started)).toBe(0);
+  await page.getByRole('button', { name: 'Try again', exact: true }).click();
+  await expect.poll(() => state.writes.filter(({ path }) => path === '/punches/sessions').length).toBe(2);
+  expect(state.writes.every(({ body }) => body.purpose === 'PUNCH')).toBe(true);
+  await page.getByRole('button', { name: 'Back to site', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Today', exact: true })).toHaveAttribute('aria-selected', 'true');
+  expect(state.errors).toEqual([]);
+});
+
+test('registration service failure preserves the registration task and selected employee when retried', async ({ page }) => {
+  const state = await mockTablet(page, { guidedRegistration: true, frameOutcome: { outcome: 'SERVICE_DOWN', message: 'Face check is not working right now.' } });
+  await page.goto('/tablet');
+  await page.getByRole('button', { name: 'Register face', exact: true }).click();
+  await page.getByRole('combobox').fill('Example');
+  await page.getByRole('option').getByRole('button', { name: new RegExp(EMPLOYEE.name) }).click();
+  await page.getByRole('button', { name: 'Start camera', exact: true }).click();
+  await page.getByRole('button', { name: 'Use these photos', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Face check is unavailable', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Try again', exact: true }).click();
+  await expect(page.getByRole('img', { name: 'Looking straight', exact: true })).toBeVisible();
+  expect(state.writes.filter(({ path }) => path === '/punches/sessions')).toEqual([
+    { path: '/punches/sessions', body: { purpose: 'REGISTER', employee_code: EMPLOYEE.code, name: EMPLOYEE.name, ...POSITION } },
+  ]);
+  expect(state.writes.filter(({ path }) => path.endsWith('/frames'))).toHaveLength(1);
+  expect(state.errors).toEqual([]);
+});
+
+test('an already registered employee gets the punch action instead of repeated registration retries', async ({ page }) => {
+  const state = await mockTablet(page, { sessionError: { status: 409, code: 'ALREADY_REGISTERED', message: 'Your face is already registered. Use Punch at any site.' } });
+  await page.goto('/tablet');
+  await page.getByRole('button', { name: 'Register face', exact: true }).click();
+  await page.getByRole('combobox').fill('Example');
+  await page.getByRole('option').getByRole('button', { name: new RegExp(EMPLOYEE.name) }).click();
+  await page.getByRole('button', { name: 'Start camera', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Your face is already registered', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Try again', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Punch in / out', exact: true }).click();
+  await expect.poll(() => state.writes.length).toBe(2);
+  expect(state.writes.map(({ body }) => body.purpose)).toEqual(['REGISTER', 'PUNCH']);
+  expect(await page.evaluate(() => window.__tabletFaceProbe.started)).toBe(0);
+  expect(state.errors).toEqual([]);
+});
+
+test('a face belonging to another employee is a warning, not a successful registration', async ({ page }) => {
+  const state = await mockTablet(page, { guidedRegistration: true, frameOutcome: { outcome: 'DUPLICATE_FACE', message: 'This face is already registered to another person. Ask HR.' } });
+  await page.goto('/tablet');
+  await page.getByRole('button', { name: 'Register face', exact: true }).click();
+  await page.getByRole('combobox').fill('Example');
+  await page.getByRole('option').getByRole('button', { name: new RegExp(EMPLOYEE.name) }).click();
+  await page.getByRole('button', { name: 'Start camera', exact: true }).click();
+  await page.getByRole('button', { name: 'Use these photos', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('HR help needed');
+  await expect(page.getByRole('status')).toContainText('A new registration was not saved.');
+  await expect(page.getByText('Registration complete', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Punch now', exact: true })).toHaveCount(0);
+  expect(state.writes.filter(({ path }) => path.endsWith('/frames'))).toHaveLength(1);
+  expect(state.errors).toEqual([]);
+});
+
+for (const direction of ['IN', 'OUT']) {
+  test(`a matched ${direction.toLowerCase()} punch is saved only after the named employee confirms the direction`, async ({ page }) => {
+    const state = await mockTablet(page, { punchDirection: direction });
+    await page.goto('/tablet');
+    await page.getByRole('button', { name: 'Punch in / out', exact: true }).click();
+    const confirm = page.getByRole('button', { name: direction === 'IN' ? 'Punch in' : 'Punch out', exact: true });
+    await expect(confirm).toBeVisible();
+    await expect(page.getByText(EMPLOYEE.name, { exact: true })).toBeVisible();
+    expect(state.writes.filter(({ path }) => path.endsWith('/confirm'))).toHaveLength(0);
+    await confirm.click();
+    await expect(page.getByRole('status')).toContainText(direction === 'IN' ? 'Punched in at 09:00' : 'Punched out at 18:00');
+    expect(state.writes.filter(({ path }) => path.endsWith('/confirm'))).toHaveLength(1);
+    expect(state.writes.find(({ path }) => path.endsWith('/confirm')).body).toMatchObject({ confirm_token: 'fictional-confirm-token', ...POSITION });
+    expect(state.errors).toEqual([]);
+  });
+}
+
+test('a repeated punch is shown as already recorded rather than a new attendance save', async ({ page }) => {
+  const state = await mockTablet(page, { frameOutcome: { outcome: 'DUPLICATE', message: 'This punch was already recorded at 09:00.' } });
+  await page.goto('/tablet');
+  await page.getByRole('button', { name: 'Punch in / out', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('Already recorded');
+  await expect(page.getByRole('status')).toContainText('This punch was already recorded at 09:00.');
+  await expect(page.getByText('Attendance recorded', { exact: true })).toHaveCount(0);
+  expect(state.writes.filter(({ path }) => path.endsWith('/confirm'))).toHaveLength(0);
+  expect(state.errors).toEqual([]);
+});
+
+test('cancelling a busy face upload prevents queued retries and late recovery screens', async ({ page }) => {
+  const state = await mockTablet(page, { busyFrames: true });
+  await page.goto('/tablet');
+  await page.getByRole('button', { name: 'Punch in / out', exact: true }).click();
+  await expect.poll(() => state.writes.filter(({ path }) => path.endsWith('/frames')).length).toBe(1);
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Today', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await page.waitForTimeout(1700);
+  expect(state.writes.filter(({ path }) => path.endsWith('/frames'))).toHaveLength(1);
+  await expect(page.getByRole('button', { name: 'Try again', exact: true })).toHaveCount(0);
+  expect(state.errors).toEqual([]);
+});
+
+test('pending camera permission stays cancellable and a late camera stream is stopped without capture', async ({ page }) => {
+  const state = await mockTablet(page, { delayedCamera: true });
+  await page.goto('/tablet');
+  await page.getByRole('button', { name: 'Punch in / out', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Opening your camera', exact: true })).toBeVisible();
+  await expect(page.getByText('Allow Camera when the browser asks. You can cancel while waiting.', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Today', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await page.evaluate(() => window.__tabletFaceProbe.resolveCamera());
+  await expect.poll(() => page.evaluate(() => window.__tabletFaceProbe.stopped)).toBe(1);
+  expect(await page.evaluate(() => ({ waits: window.__tabletFaceProbe.waits, captures: window.__tabletFaceProbe.captures }))).toEqual({ waits: 0, captures: 0 });
+  expect(state.writes.filter(({ path }) => path.endsWith('/frames'))).toHaveLength(0);
+  await expect(page.getByRole('heading', { name: 'Opening your camera', exact: true })).toHaveCount(0);
+  expect(state.errors).toEqual([]);
+});
+
+test('a cancelled camera acquisition cannot replace the preview of a newer capture', async ({ page }) => {
+  const state = await mockTablet(page);
+  // Use the real camera attachment helper with fictional MediaStreams. The first
+  // permission response stays pending while the employee cancels and tries again.
+  await page.addInitScript(() => {
+    const probe = window.__cameraRace = { requests: 0, oldStopped: 0, newStopped: 0, waits: 0, captures: 0 };
+    const obsolete = new MediaStream();
+    const active = new MediaStream();
+    obsolete.getTracks = () => [{ stop: () => { probe.oldStopped++; } }];
+    active.getTracks = () => [{ stop: () => { probe.newStopped++; } }];
+    probe.active = active;
+    Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: {
+      getUserMedia: () => {
+        probe.requests++;
+        return probe.requests === 1 ? new Promise((resolve) => { probe.resolveOld = () => resolve(obsolete); }) : Promise.resolve(active);
+      },
+    } });
+    HTMLMediaElement.prototype.play = () => Promise.resolve();
+  });
+  await page.route('**/src/services/face.js*', (route) => route.fulfill({
+    contentType: 'application/javascript',
+    body: `
+      export { startCamera, stopCamera } from ${JSON.stringify(`/@fs/${fileURLToPath(new URL('../../face/src/guidance.js', import.meta.url)).replaceAll('\\', '/')}`)};
+      export const loadGuidance = async () => {};
+      export const loadLandmarks = async () => {};
+      export const waitForGoodFrame = async (_, options) => {
+        window.__cameraRace.waits++;
+        return new Promise((resolve) => options.signal.addEventListener('abort', () => resolve(false), { once: true }));
+      };
+      export const capture = async () => { window.__cameraRace.captures++; throw new Error('No real camera capture in this test'); };
+      export const waitForHeadTurn = async () => false;
+      export const waitForStraight = async () => false;
+      export const waitForBlink = async () => false;
+      export const messageFor = (code) => code;
+    `,
+  }));
+  let sessions = 0;
+  await page.route('**/api/v1/punches/sessions', async (route) => {
+    state.writes.push({ path: '/punches/sessions', body: route.request().postDataJSON() });
+    await route.fulfill({ json: { data: { session_id: `camera-race-${++sessions}`, challenge: { type: 'STRAIGHT' } } } });
+  });
+  await page.goto('/tablet');
+  await page.getByRole('button', { name: 'Punch in / out', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.__cameraRace.requests)).toBe(1);
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByRole('button', { name: 'Punch in / out', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.__cameraRace.waits)).toBe(1);
+  await expect.poll(() => page.evaluate(() => document.querySelector('video').srcObject === window.__cameraRace.active)).toBe(true);
+  await page.evaluate(() => window.__cameraRace.resolveOld());
+  await expect.poll(() => page.evaluate(() => window.__cameraRace.oldStopped)).toBe(1);
+  expect(await page.evaluate(() => ({
+    previewIsCurrent: document.querySelector('video').srcObject === window.__cameraRace.active,
+    newStopped: window.__cameraRace.newStopped, waits: window.__cameraRace.waits, captures: window.__cameraRace.captures,
+  }))).toEqual({ previewIsCurrent: true, newStopped: 0, waits: 1, captures: 0 });
+  expect(state.writes.filter(({ path }) => path.endsWith('/frames'))).toHaveLength(0);
+  await expect(page.getByRole('button', { name: 'Try again', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.__cameraRace.newStopped)).toBe(1);
+  expect(state.unexpected).toEqual([]);
+  expect(state.errors).toEqual([]);
 });

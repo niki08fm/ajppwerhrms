@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Command } from 'cmdk';
@@ -22,6 +22,7 @@ import {
   MapPin,
   Menu as MenuIcon,
   Moon,
+  MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
   PauseCircle,
@@ -51,15 +52,13 @@ const NAV = [
     group: null,
     items: [
       { to: '/', label: 'Today', icon: <Gauge />, end: true },
-      { to: '/analytics', label: 'Analytics', icon: <BarChart3 /> },
     ],
   },
   {
-    group: 'People',
+    group: 'Workforce',
     items: [
       { to: '/people', label: 'Employees', icon: <Users /> },
-      { to: '/offers', label: 'Hiring and onboarding', icon: <UserPlus /> },
-      { to: '/exits', label: 'Exits and settlement', icon: <UserMinus /> },
+      { to: '/sites', label: 'Sites', icon: <MapPin /> },
     ],
   },
   {
@@ -75,18 +74,18 @@ const NAV = [
     group: 'Payroll',
     items: [
       { to: '/payroll', label: 'Monthly payroll', icon: <Banknote /> },
-      { to: '/held-salaries', label: 'Held salaries', icon: <PauseCircle /> },
-      { to: '/money', label: 'Loans and advances', icon: <HandCoins /> },
     ],
   },
-  {
-    group: 'Sites and records',
-    items: [
-      { to: '/sites', label: 'Sites', icon: <MapPin /> },
-      { to: '/documents', label: 'Documents', icon: <FileCheck2 /> },
-      { to: '/audit', label: 'Audit log', icon: <ScrollText /> },
-    ],
-  },
+];
+
+const MORE_TOOLS = [
+  { to: '/offers', label: 'Hiring and onboarding', icon: <UserPlus /> },
+  { to: '/exits', label: 'Exits and settlement', icon: <UserMinus /> },
+  { to: '/held-salaries', label: 'Held salaries', icon: <PauseCircle /> },
+  { to: '/money', label: 'Loans and advances', icon: <HandCoins /> },
+  { to: '/analytics', label: 'Analytics', icon: <BarChart3 /> },
+  { to: '/documents', label: 'Documents', icon: <FileCheck2 /> },
+  { to: '/audit', label: 'Audit log', icon: <ScrollText /> },
 ];
 
 const SETTINGS = [
@@ -162,8 +161,13 @@ function Sidebar({ onNavigate, collapsed, onToggleCollapsed }) {
   const { pathname } = useLocation();
   const nav = useNavigate();
   const inSettings = settings.some((x) => pathname.startsWith(x.to));
+  const inMore = MORE_TOOLS.some((item) => pathname.startsWith(item.to));
   const [settingsOpen, setSettingsOpen] = useState(() => remember('nav.settings', false));
+  const [moreOpen, setMoreOpen] = useState(() => remember('nav.more', false));
+  const moreId = useId();
+  const settingsId = useId();
   const showSettings = settingsOpen || inSettings;
+  const showMore = moreOpen || inMore;
   return (
     <nav aria-label="Main" className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
       <div className={cn('flex h-14 shrink-0 items-center gap-2.5 border-b border-sidebar-border', collapsed ? 'justify-center px-2' : 'px-4')}>
@@ -201,7 +205,7 @@ function Sidebar({ onNavigate, collapsed, onToggleCollapsed }) {
           }))}
         />
       </div>
-      <div className={cn('flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto py-3 scrollbar-thin', collapsed ? 'px-2' : 'px-3')}>
+      <div className={cn('flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto py-3 scrollbar-thin', collapsed ? 'px-2' : 'px-3')}>
         {NAV.map((g, gi) => (
           <div key={gi}>
             {g.group && !collapsed && <div className="px-3 pb-1.5 text-[12px] font-semibold tracking-wider text-sidebar-foreground/50 uppercase">{g.group}</div>}
@@ -216,12 +220,26 @@ function Sidebar({ onNavigate, collapsed, onToggleCollapsed }) {
           </div>
         ))}
         <div>
+          <button type="button" onClick={() => { setMoreOpen(!showMore); store('nav.more', !showMore); }}
+            aria-expanded={showMore} aria-controls={moreId} aria-label="More tools"
+            className={cn('flex h-9 w-full items-center gap-3 rounded-md text-sm text-sidebar-foreground/75 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground [&_svg]:size-[18px]', collapsed ? 'justify-center' : 'px-3')}
+            title={collapsed ? 'More tools' : undefined}>
+            <MoreHorizontal />{!collapsed && <><span className="flex-1 text-left">More tools</span><ChevronRight className={cn('size-4 transition-transform', showMore && 'rotate-90')} /></>}
+          </button>
+          {showMore && <ul id={moreId} className={cn('mt-0.5 flex flex-col gap-0.5', !collapsed && 'ml-3 border-l border-sidebar-border pl-2')}>
+            {MORE_TOOLS.map((item) => <li key={item.to}><NavItem it={item} collapsed={collapsed} onNavigate={onNavigate} /></li>)}
+          </ul>}
+        </div>
+        <div>
           <button
+            type="button"
             onClick={() => {
               setSettingsOpen(!showSettings);
               store('nav.settings', !showSettings);
             }}
             aria-expanded={showSettings}
+            aria-controls={settingsId}
+            aria-label="Settings"
             className={cn(
               'flex h-9 w-full items-center gap-3 rounded-md text-sm text-sidebar-foreground/75 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground [&_svg]:size-[18px]',
               collapsed ? 'justify-center' : 'px-3',
@@ -237,7 +255,7 @@ function Sidebar({ onNavigate, collapsed, onToggleCollapsed }) {
             )}
           </button>
           {showSettings && (
-            <ul className={cn('mt-0.5 flex flex-col gap-0.5', !collapsed && 'ml-3 border-l border-sidebar-border pl-2')}>
+            <ul id={settingsId} className={cn('mt-0.5 flex flex-col gap-0.5', !collapsed && 'ml-3 border-l border-sidebar-border pl-2')}>
               {settings.map((it) => (
                 <li key={it.to}>
                   <NavItem it={it} collapsed={collapsed} onNavigate={onNavigate} />

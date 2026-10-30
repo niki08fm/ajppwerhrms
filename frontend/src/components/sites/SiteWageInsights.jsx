@@ -64,11 +64,11 @@ export default function SiteWageInsights({ costs, period }) {
         {[['Total wages', inr(costs.total_wages)], ['Normal wages', inr(costs.normal_wages)], ['OT wages', inr(costs.ot_wages)], ['OT hours · period', mins(period.ot_min ?? costs.ot_min ?? 0)]].map(([label, value]) => <div key={label} className="min-w-0"><div className="text-[12px] text-muted-foreground">{label}</div><div className="num mt-1 text-[23px] font-semibold leading-tight">{value}</div></div>)}
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3 px-5 pt-4">
-        <Segmented label="Wage view" value={view} onChange={setView} options={[{ value: 'trend', label: 'Trend' }, { value: 'departments', label: 'Departments' }]} />
+        <Segmented label="Wage view" value={view} onChange={setView} options={[{ value: 'trend', label: 'Trend' }, { value: 'departments', label: 'Departments' }, { value: 'mix', label: 'Wage mix' }]} />
         {view === 'departments' && <Select aria-label="Department metric" value={metric} onChange={(event) => setMetric(event.target.value)} className="w-40"><option value="total_wages">Total wages</option><option value="ot_wages">OT wages</option><option value="ot_min">OT hours</option></Select>}
       </div>
 
-      {view === 'trend' ? <div className="grid min-w-0 gap-5 p-5 lg:grid-cols-[1.8fr_1fr]">
+      {view === 'trend' ? <div className="min-w-0 p-5">
         <div className="min-w-0">
           <h3 className="mb-3 text-[14px] font-medium">Wages over time</h3>
           {hasTrend ? <div role="img" aria-label="Stacked area chart of normal wages and OT wages over time"><ResponsiveContainer width="100%" height={225}>
@@ -79,17 +79,19 @@ export default function SiteWageInsights({ costs, period }) {
             </AreaChart>
           </ResponsiveContainer></div> : <EmptyState title="No allocated wages yet" body="Recorded work and salary or payroll data are needed." />}
         </div>
-        <div className="min-w-0 lg:border-l lg:pl-5">
+        <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-[12px] text-muted-foreground">{wageParts.filter((part) => hasOther || part.key !== 'other_wages').map((part) => <span key={part.key} className="inline-flex items-center gap-2"><span className="size-2 rounded-sm" style={{ background: part.colour }} />{part.label}</span>)}</div>
+      </div> : view === 'mix' ? <div className="mx-auto grid max-w-2xl items-center gap-5 p-5 sm:grid-cols-2">
+        <div className="min-w-0">
           <h3 className="text-[14px] font-medium">Wage mix</h3>
-          <div className="relative mx-auto h-40 max-w-56" role="img" aria-label={wageParts.map((part) => `${part.label} ${exactMoney(costs[part.key] ?? 0)}`).join(', ')}>
-            {positiveTotal > 0 ? <ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={parts} dataKey="value" nameKey="label" innerRadius={47} outerRadius={66} paddingAngle={parts.length > 1 ? 3 : 0} stroke="none" isAnimationActive={false}>{parts.map((part) => <Cell key={part.key} fill={part.colour} />)}</Pie><Tooltip {...tooltipStyle} formatter={(value) => exactMoney(value)} /></PieChart></ResponsiveContainer> : <div className="absolute inset-3 mx-auto aspect-square rounded-full border-[18px] border-muted" />}
+          <div className="relative mx-auto h-56 max-w-64" role="img" aria-label={wageParts.map((part) => `${part.label} ${exactMoney(costs[part.key] ?? 0)}`).join(', ')}>
+            {positiveTotal > 0 ? <ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={parts} dataKey="value" nameKey="label" innerRadius={62} outerRadius={88} paddingAngle={parts.length > 1 ? 3 : 0} stroke="none" isAnimationActive={false}>{parts.map((part) => <Cell key={part.key} fill={part.colour} />)}</Pie><Tooltip {...tooltipStyle} formatter={(value) => exactMoney(value)} /></PieChart></ResponsiveContainer> : <div className="absolute inset-5 mx-auto aspect-square rounded-full border-[24px] border-muted" />}
             <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center"><span className="num text-[24px] font-semibold">{otShare}%</span><span className="text-[11px] text-muted-foreground">OT share</span></div>
           </div>
-          <dl className="space-y-1.5 text-[12px]">{wageParts.filter((part) => hasOther || part.key !== 'other_wages').map((part) => <div key={part.key} className="flex items-center justify-between gap-3"><dt className="flex items-center gap-2 text-muted-foreground"><span className="size-2 rounded-sm" style={{ background: part.colour }} />{part.label}</dt><dd><Money value={costs[part.key] ?? 0} /></dd></div>)}</dl>
         </div>
+        <dl className="space-y-3 text-[13px]">{wageParts.filter((part) => hasOther || part.key !== 'other_wages').map((part) => <div key={part.key} className="flex items-center justify-between gap-3 border-b pb-3 last:border-0"><dt className="flex items-center gap-2 text-muted-foreground"><span className="size-2 rounded-sm" style={{ background: part.colour }} />{part.label}</dt><dd><Money value={costs[part.key] ?? 0} /></dd></div>)}</dl>
       </div> : <div className="p-5">
-        <div className="mb-3 flex items-center justify-between gap-3"><h3 className="text-[14px] font-medium">Where wages go</h3><Button size="sm" variant="ghost" aria-expanded={showFigures} onClick={() => setShowFigures(!showFigures)}>{showFigures ? 'Hide figures' : 'Show figures'}</Button></div>
-        {departments.length ? <div className="max-h-64 overflow-y-auto" role="img" aria-label={otView ? 'Department overtime hours, highest first' : metric === 'ot_wages' ? 'Department OT wages, highest first' : 'Department wages, highest first'}><ResponsiveContainer width="100%" height={Math.max(170, departments.length * 42 + 25)}>
+        <div className="mb-3 flex items-center justify-between gap-3"><h3 className="text-[14px] font-medium">Where wages go</h3><Button size="sm" variant="ghost" aria-pressed={showFigures} onClick={() => setShowFigures(!showFigures)}>{showFigures ? 'Show chart' : 'Show figures'}</Button></div>
+        {showFigures ? <DepartmentFigures departments={departments} hasOther={hasOther} /> : departments.length ? <div className="max-h-64 overflow-y-auto" role="img" aria-label={otView ? 'Department overtime hours, highest first' : metric === 'ot_wages' ? 'Department OT wages, highest first' : 'Department wages, highest first'}><ResponsiveContainer width="100%" height={Math.max(170, departments.length * 42 + 25)}>
           <BarChart layout="vertical" data={departments.map((department) => ({ ...department, ot_hours: (department.ot_min ?? 0) / 60 }))} margin={{ left: 0, right: 12, top: 8, bottom: 0 }} barSize={22}>
             <CartesianGrid {...grid} vertical horizontal={false} /><XAxis type="number" {...axis} tickFormatter={otView ? (value) => `${value}h` : rupeesShort} /><YAxis type="category" dataKey="name" {...axis} width={95} tickFormatter={(name) => name.length > 14 ? `${name.slice(0, 13)}…` : name} />
             <Tooltip {...tooltipStyle} labelFormatter={(_label, payload) => payload?.[0]?.payload?.name ?? ''} formatter={(value, _name, item) => [otView ? mins(item.payload.ot_min) : exactMoney(value), metricLabel]} />
@@ -98,7 +100,6 @@ export default function SiteWageInsights({ costs, period }) {
         </ResponsiveContainer></div> : <EmptyState title="No department costs yet" body="Department costs appear when work can be matched to salary or payroll." />}
       </div>}
 
-      {view === 'departments' && showFigures && <div className="overflow-x-auto border-t"><table className="data-table w-full"><thead><tr><th>Department</th><th className="text-right">People</th><th className="text-right">OT hours</th><th className="text-right">Normal wages</th><th className="text-right">OT wages</th>{hasOther && <th className="text-right">Other earnings</th>}<th className="text-right">Total wages</th></tr></thead><tbody>{departments.map((department) => <tr key={department.id}><td className="font-medium">{department.name}</td><td className="num text-right">{department.people}</td><td className="num text-right">{mins(department.ot_min ?? 0)}</td><td className="text-right"><Money value={department.normal_wages} /></td><td className="text-right"><Money value={department.ot_wages} /></td>{hasOther && <td className="text-right"><Money value={department.other_wages ?? 0} /></td>}<td className="text-right font-semibold"><Money value={department.total_wages} /></td></tr>)}</tbody></table></div>}
       <div className="space-y-1 border-t px-5 py-3 text-[12px] leading-relaxed text-muted-foreground">
         <p>{basisNote}{costs.paid_ot_min != null ? ` ${mins(costs.paid_ot_min)} covered by OT wages.` : ''}</p>
         {costs.uncosted_people > 0 && <p className="font-medium text-warning-foreground">{costs.uncosted_people} {costs.uncosted_people === 1 ? 'person has' : 'people have'} work without a salary calculation ({mins(costs.uncosted_min ?? 0)}). These wages are not included.</p>}
@@ -106,4 +107,8 @@ export default function SiteWageInsights({ costs, period }) {
       </div>
     </Card>
   </section>;
+}
+
+function DepartmentFigures({ departments, hasOther }) {
+  return <div className="overflow-x-auto rounded-md border"><table className="data-table w-full"><thead><tr><th>Department</th><th className="text-right">People</th><th className="text-right">OT hours</th><th className="text-right">Normal wages</th><th className="text-right">OT wages</th>{hasOther && <th className="text-right">Other earnings</th>}<th className="text-right">Total wages</th></tr></thead><tbody>{departments.map((department) => <tr key={department.id}><td className="font-medium">{department.name}</td><td className="num text-right">{department.people}</td><td className="num text-right">{mins(department.ot_min ?? 0)}</td><td className="text-right"><Money value={department.normal_wages} /></td><td className="text-right"><Money value={department.ot_wages} /></td>{hasOther && <td className="text-right"><Money value={department.other_wages ?? 0} /></td>}<td className="text-right font-semibold"><Money value={department.total_wages} /></td></tr>)}</tbody></table></div>;
 }

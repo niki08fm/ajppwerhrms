@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, ChevronLeft, ChevronRight, KeyRound, Pencil, Power, Search, Settings2, Users } from 'lucide-react';
+import { ChevronLeft, ChevronRight, KeyRound, Pencil, Power, Search, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { Bar, BarChart, CartesianGrid, Pie, PieChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { addDays, addMonths, diffDays, firstOfMonth, isISODate, isYearMonth, istDate, lastOfMonth } from '@ajpwer/shared';
@@ -55,7 +55,9 @@ export default function SiteDetail() {
   const [rangeError, setRangeError] = useState('');
   const [attendanceMetric, setAttendanceMetric] = useState('people');
   const [mainView, setMainView] = useState('overview');
-  const [currentView, setCurrentView] = useState('people');
+  const [currentView, setCurrentView] = useState('departments');
+  const [showAllPeople, setShowAllPeople] = useState(false);
+  const [showAllDepartments, setShowAllDepartments] = useState(false);
   const [department, setDepartment] = useState(null);
   const [peopleSearch, setPeopleSearch] = useState('');
   const lastLoaded = useRef(null);
@@ -89,6 +91,7 @@ export default function SiteDetail() {
   const openPeople = (nextDepartment = department) => {
     setDepartment(nextDepartment);
     setPeopleSearch('');
+    setShowAllPeople(false);
     setCurrentView('people');
     setMainView('overview');
   };
@@ -99,6 +102,9 @@ export default function SiteDetail() {
   const periodLabel = dateSpan(d.period.from, d.period.to);
   const selectedDepartment = d.departments.find((item) => departmentKey(item) === department);
   const people = d.on_site_now.filter((person) => (department === null || (person.department_id ?? 'unassigned') === department) && [person.name, person.code, person.department, person.designation].some((value) => String(value ?? '').toLowerCase().includes(peopleSearch.trim().toLowerCase())));
+  const visiblePeople = showAllPeople ? people : people.slice(0, 5);
+  const currentDepartments = d.departments.filter((item) => item.count > 0);
+  const visibleDepartments = showAllDepartments ? currentDepartments : currentDepartments.slice(0, 5);
   const attendance = attendanceBars(d.attendance);
   const overtime = attendanceMetric === 'overtime';
   const periodControls = (
@@ -129,7 +135,7 @@ export default function SiteDetail() {
       <PageHeader
         crumbs={[{ label: 'Sites', to: '/sites' }, { label: d.site.name }]}
         title={d.site.name}
-        description={`${d.site.state}${d.site.project ? ` · ${d.site.project.name}` : ''}${d.site.address ? ` · ${d.site.address}` : ''}`}
+        description={`${d.site.state}${d.site.project ? ` · ${d.site.project.name}` : ''}`}
         meta={<><Chip tone={d.site.is_active ? 'success' : 'muted'}>{d.site.is_active ? 'Active site' : 'Inactive site'}</Chip><Mono className="text-muted-foreground">{d.site.code}</Mono></>}
         actions={
           can('sites.manage') && (
@@ -142,7 +148,7 @@ export default function SiteDetail() {
       {editing && <SiteFormDialog site={d.site} onClose={() => setEditing(false)} />}
 
       <TabsRoot value={view} onValueChange={setMainView} className="space-y-4">
-        <TabsList tabs={[{ value: 'overview', label: 'Overview' }, { value: 'attendance', label: 'Attendance' }, ...(wageAccess ? [{ value: 'wages', label: 'Wages' }] : [])]} />
+        <TabsList tabs={[{ value: 'overview', label: 'Overview' }, { value: 'attendance', label: 'Attendance' }, ...(wageAccess ? [{ value: 'wages', label: 'Wages' }] : []), { value: 'settings', label: 'Settings' }]} />
         {q.isError && <Card><ErrorState error={q.error} compact onRetry={() => q.refetch()} /></Card>}
         <TabsContent value="overview" className="space-y-4" aria-label="Overview">
           <SiteLiveSummary today={d.today} date={d.date} fetching={q.isFetching} failed={q.isError} updatedAt={q.dataUpdatedAt} onViewPeople={() => openPeople(null)} />
@@ -150,32 +156,33 @@ export default function SiteDetail() {
             <CardHeader
               title={currentView === 'people' ? 'People on site now' : 'Departments on site'}
               description={currentView === 'people' ? 'Current headcount and punch-in times.' : 'Current headcount. Select a department to see people.'}
-              actions={<Segmented label="Current site view" value={currentView} onChange={setCurrentView} options={[{ value: 'people', label: 'People' }, { value: 'departments', label: 'Departments' }]} />}
+              actions={<Segmented label="Current site view" value={currentView} onChange={(next) => { setCurrentView(next); setShowAllPeople(false); }} options={[{ value: 'departments', label: 'Departments' }, { value: 'people', label: 'People' }]} />}
             />
             {currentView === 'people' ? <>
               <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
-                <div className="flex items-center gap-2 text-[13px] text-muted-foreground"><span>{people.length} people{selectedDepartment ? ` · ${selectedDepartment.name}` : ''}</span>{department !== null && <Button size="sm" variant="ghost" onClick={() => setDepartment(null)}>All departments</Button>}</div>
-                <div className="relative w-full sm:w-72"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input aria-label="Search people on site" value={peopleSearch} onChange={(event) => setPeopleSearch(event.target.value)} placeholder="Search name, code or department" className="pl-9" /></div>
+                <div className="flex items-center gap-2 text-[13px] text-muted-foreground"><span>{people.length} people{selectedDepartment ? ` · ${selectedDepartment.name}` : ''}</span>{department !== null && <Button size="sm" variant="ghost" onClick={() => { setDepartment(null); setShowAllPeople(false); }}>All departments</Button>}</div>
+                <div className="relative w-full sm:w-72"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input aria-label="Search people on site" value={peopleSearch} onChange={(event) => { setPeopleSearch(event.target.value); setShowAllPeople(false); }} placeholder="Search name, code or department" className="pl-9" /></div>
               </div>
               {people.length ? <ul className="grid max-h-72 overflow-y-auto sm:grid-cols-2" aria-label="People on site">
-                {people.map((person) => <li key={person.id} className="flex min-w-0 items-center justify-between gap-3 border-t px-5 py-3 text-[14px]"><div className="min-w-0"><PersonLink id={person.id} name={person.name} code={person.code} /><p className="mt-0.5 truncate text-[12px] text-muted-foreground">{[person.department || 'No department', person.designation].filter(Boolean).join(' · ')}</p></div><span className="shrink-0 text-[12px] text-muted-foreground">In <span className="num text-foreground">{istTime(person.since)}</span></span></li>)}
+                {visiblePeople.map((person) => <li key={person.id} className="flex min-w-0 items-center justify-between gap-3 border-t px-5 py-3 text-[14px]"><div className="min-w-0"><PersonLink id={person.id} name={person.name} code={person.code} /><p className="mt-0.5 truncate text-[12px] text-muted-foreground">{[person.department || 'No department', person.designation].filter(Boolean).join(' · ')}</p></div><span className="shrink-0 text-[12px] text-muted-foreground">In <span className="num text-foreground">{istTime(person.since)}</span></span></li>)}
               </ul> : <p className="border-t px-5 py-8 text-center text-[13px] text-muted-foreground">{d.on_site_now.length ? 'No people match these filters.' : 'No one is currently punched in at this site.'}</p>}
-            </> : d.departments.some((item) => item.count > 0) ? <div className="grid items-center gap-4 px-5 py-4 md:grid-cols-[minmax(220px,0.8fr)_minmax(0,1.2fr)]">
+              {people.length > 5 && <div className="flex flex-wrap items-center justify-between gap-2 border-t px-5 py-3"><p className="text-[12px] text-muted-foreground">Showing {visiblePeople.length} of {people.length} people</p><Button size="sm" variant="ghost" aria-expanded={showAllPeople} onClick={() => setShowAllPeople(!showAllPeople)}>{showAllPeople ? 'Show fewer people' : `Show all ${people.length} people`}</Button></div>}
+            </> : currentDepartments.length ? <div className="grid items-center gap-4 px-5 py-4 md:grid-cols-[minmax(220px,0.8fr)_minmax(0,1.2fr)]">
               <div className="relative mx-auto h-60 w-full max-w-[300px]" role="img" aria-label={`Department headcount: ${d.today.on_site_now} people on site now`}>
-                <ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={d.departments} dataKey="count" nameKey="name" innerRadius={72} outerRadius={98} paddingAngle={d.departments.length > 1 ? 2 : 0} stroke="var(--card)" isAnimationActive={false} onClick={(item) => openPeople(departmentKey(item))}>
-                  {d.departments.map((item, index) => <Cell key={departmentKey(item)} fill={departmentColour(item, index)} opacity={department === null || department === departmentKey(item) ? 1 : 0.35} className="cursor-pointer" />)}
+                <ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={currentDepartments} dataKey="count" nameKey="name" innerRadius={72} outerRadius={98} paddingAngle={currentDepartments.length > 1 ? 2 : 0} stroke="var(--card)" isAnimationActive={false} onClick={(item) => openPeople(departmentKey(item))}>
+                  {currentDepartments.map((item, index) => <Cell key={departmentKey(item)} fill={departmentColour(item, index)} opacity={department === null || department === departmentKey(item) ? 1 : 0.35} className="cursor-pointer" />)}
                 </Pie><Tooltip {...tooltipStyle} formatter={(value) => [value, 'People on site']} /></PieChart></ResponsiveContainer>
                 <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center"><span className="num text-3xl font-semibold">{d.today.on_site_now}</span><span className="mt-1 text-[12px] text-muted-foreground">on site now</span></div>
               </div>
-              <ul className="max-h-60 space-y-1 overflow-y-auto text-[13px]">
-                {d.departments.map((item, index) => <li key={departmentKey(item)}><button type="button" aria-label={`${item.name}: ${item.count} people on site`} aria-pressed={department === departmentKey(item)} onClick={() => openPeople(departmentKey(item))} className={cn('flex w-full items-center gap-2 rounded-md px-2 py-2 text-left transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring', department === departmentKey(item) && 'bg-accent')}><span className="size-2.5 shrink-0 rounded-sm" style={{ background: departmentColour(item, index) }} /><span className="min-w-0 flex-1 break-words">{item.name}</span><span className="num font-semibold">{item.count}</span></button></li>)}
-              </ul>
+              <div className="min-w-0"><ul className="max-h-60 space-y-1 overflow-y-auto text-[13px]">
+                {visibleDepartments.map((item, index) => <li key={departmentKey(item)}><button type="button" aria-label={`${item.name}: ${item.count} people on site`} aria-pressed={department === departmentKey(item)} onClick={() => openPeople(departmentKey(item))} className={cn('flex w-full items-center gap-2 rounded-md px-2 py-2 text-left transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring', department === departmentKey(item) && 'bg-accent')}><span className="size-2.5 shrink-0 rounded-sm" style={{ background: departmentColour(item, index) }} /><span className="min-w-0 flex-1 break-words">{item.name}</span><span className="num font-semibold">{item.count}</span></button></li>)}
+              </ul>{currentDepartments.length > 5 && <Button className="mt-2" size="sm" variant="ghost" aria-expanded={showAllDepartments} onClick={() => setShowAllDepartments(!showAllDepartments)}>{showAllDepartments ? 'Show fewer departments' : `Show all ${currentDepartments.length} departments`}</Button>}</div>
             </div> : <EmptyState icon={<Users className="size-6" />} title="No one on site now" body="Department headcounts appear when people punch in." />}
           </Card>
-          <details className="rounded-lg border bg-card text-card-foreground shadow-sm">
-            <summary className="flex cursor-pointer list-none items-center gap-2 px-5 py-4 text-[14px] font-medium focus-visible:outline-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden"><Settings2 className="size-4 text-muted-foreground" /> Site settings <ChevronDown className="ml-auto size-4 text-muted-foreground" /></summary>
-            <div className="border-t p-4"><TabletLogin site={d.site} manage={can('sites.manage')} /><p className="mt-3 text-[12px] text-muted-foreground">Punch boundary: {d.site.radius_m} m from <span className="num">{d.site.lat.toFixed(6)}, {d.site.lng.toFixed(6)}</span>. Login is available from any location; attendance punches require the site boundary.</p></div>
-          </details>
+        </TabsContent>
+        <TabsContent value="settings" className="space-y-4" aria-label="Settings">
+          <TabletLogin site={d.site} manage={can('sites.manage')} />
+          <Card><CardHeader title="Site location" description="Attendance punches must be inside the site's boundary." /><div className="space-y-2 px-5 py-4 text-[13px] text-muted-foreground">{d.site.address && <p>{d.site.address}</p>}<p>Punch boundary: <span className="font-medium text-foreground">{d.site.radius_m} m</span> from <span className="num">{d.site.lat.toFixed(6)}, {d.site.lng.toFixed(6)}</span>.</p><p>Viewing the site and signing in are available from any location.</p></div></Card>
         </TabsContent>
         <TabsContent value="attendance" className="space-y-4" aria-label="Attendance">
           {periodControls}

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ArrowRight, Check, CheckCircle2, CloudOff, EyeOff, Loader2, MapPin, RotateCcw, UserX } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, Clock3, CloudOff, EyeOff, Loader2, MapPin, RotateCcw, ScanFace, ShieldAlert, UserX } from 'lucide-react';
 import { api, ApiError, errorMessage } from '@/services/api';
 import { capture, loadGuidance, loadLandmarks, messageFor, startCamera, stopCamera, waitForBlink, waitForGoodFrame, waitForHeadTurn, waitForStraight } from '@/services/face';
 import { getPosition } from '@/services/location';
@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Field, Input } from '@/components/ui/form';
 import { Chip, Notice } from '@/components/states';
 import { TabletDashboard } from '@/components/tablet/TabletDashboard';
+import { captureProblem } from '@/components/tablet/captureProblem';
 
 const DEVICE_KEY = 'ajpwer.device';
 function deviceId() {
@@ -106,8 +107,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const newRequestId = () => `req-${crypto.randomUUID()}`;
 
 /** A busy face service is retried with the same frames and request ID. */
-async function sendFrames(sessionId, pictures, pos, requestId, onBusy) {
+async function sendFrames(sessionId, pictures, pos, requestId, onBusy, current) {
   for (let attempt = 0; ; attempt++) {
+    if (!current()) throw new DOMException('Capture cancelled', 'AbortError');
     const form = new FormData();
     form.set('request_id', requestId);
     form.set('lat', String(pos.lat));
@@ -149,6 +151,7 @@ function Station({ site }) {
   const flow = useRef(0);
 
   const [cameraOn, setCameraOn] = useState(false);
+  const [cameraWaiting, setCameraWaiting] = useState(false);
   const oval = useOval(video, cameraOn);
   const stop = useCallback(() => {
     abort.current?.abort();
@@ -163,6 +166,7 @@ function Station({ site }) {
     previews.current = {};
     session.current = null;
     setHint('');
+    setCameraWaiting(false);
     setError(null);
     setStage({ k: 'idle' });
   }, [stop]);
@@ -182,18 +186,22 @@ function Station({ site }) {
     }
   }, [online, stage.k, reset]);
 
-  const finish = (text, ms = 4000) => {
+  const finish = (text, ms = 4000, kind = 'punch') => {
     stop();
+    clearTimeout(finishTimer.current);
     session.current = null;
-    setStage({ k: 'done', text });
+    setStage({ k: 'done', text, kind });
     qc.invalidateQueries({ predicate: (query) => String(query.queryKey[0]).startsWith('tablet-') });
     finishTimer.current = setTimeout(reset, ms);
   };
 
   const fail = (e) => {
     stop();
-    setError(e instanceof ApiError && e.code === 'NETWORK' ? messageFor('OFFLINE') : errorMessage(e));
-    setStage((s) => (s.k === 'camera' || s.k === 'checking' || s.k === 'sending' ? { k: 'retry', text: null } : s));
+    setCameraWaiting(false);
+    setError(null);
+    const problem = captureProblem(e);
+    if (e?.name === 'NotAllowedError') problem.message = messageFor('CAMERA_BLOCKED');
+    setStage({ k: 'problem', problem, purpose: session.current?.purpose ?? 'PUNCH', who: session.current?.who });
   };
 
   /**
@@ -210,13 +218,15 @@ function Station({ site }) {
     setStep({ n: 1, progress: 0, good: false });
     try {
       if (!stream.current) {
+        setCameraWaiting(true);
         setHint(messageFor('LOOK_AT_CAMERA'));
         await loadGuidance();
         await new Promise(requestAnimationFrame);
         if (!current()) return;
-        const camera = await startCamera(video.current, 'user');
+        const camera = await startCamera(video.current, 'user', { isCurrent: current });
         if (!current()) { stopCamera(camera); return; }
         stream.current = camera;
+        setCameraWaiting(false);
       }
       abort.current = new AbortController();
       const signal = abort.current.signal;
@@ -240,7 +250,6 @@ function Station({ site }) {
       await send(pictures, 'checking');
     } catch (e) {
       if (!current()) return;
-      if (e?.name === 'NotAllowedError') return fail(new Error(messageFor('CAMERA_BLOCKED')));
       fail(e);
     }
   };
@@ -262,13 +271,15 @@ function Station({ site }) {
     setStage({ k: 'camera', purpose: 'REGISTER' });
     try {
       if (!stream.current) {
+        setCameraWaiting(true);
         setHint(messageFor('LOOK_STRAIGHT'));
         await loadLandmarks();
         await new Promise(requestAnimationFrame);
         if (!current()) return;
-        const camera = await startCamera(video.current, 'user');
+        const camera = await startCamera(video.current, 'user', { isCurrent: current });
         if (!current()) { stopCamera(camera); return; }
         stream.current = camera;
+        setCameraWaiting(false);
       }
       abort.current = new AbortController();
       const signal = abort.current.signal;
@@ -319,7 +330,6 @@ function Station({ site }) {
       setStage({ k: 'review', urls: previews.current });
     } catch (e) {
       if (!current()) return;
-      if (e?.name === 'NotAllowedError') return fail(new Error(messageFor('CAMERA_BLOCKED')));
       fail(e);
     }
   };
@@ -333,7 +343,7 @@ function Station({ site }) {
     if (session.current?.id !== sess.id) return;
     const d = await sendFrames(sess.id, pictures, pos, newRequestId(), () => {
       if (session.current?.id === sess.id) setHint(messageFor('BUSY'));
-    });
+    }, () => session.current?.id === sess.id);
     if (session.current?.id !== sess.id) return;
     handle(d, pos);
   };
@@ -345,11 +355,13 @@ function Station({ site }) {
 
   /** Registering: the person has looked at the four photos. Use them, or take them again. */
   const review = async (use) => {
+    const sessionId = session.current?.id;
     dropPreviews();
     if (!use) return registerScan(1);
     try {
       await send(registration.current.photos, 'sending');
     } catch (e) {
+      if (session.current?.id !== sessionId) return;
       fail(e);
     }
   };
@@ -361,8 +373,10 @@ function Station({ site }) {
     if (d.outcome === 'IDENTIFIED') {
       stop();
       setStage({ k: 'identified', d, pos });
-    } else if (d.outcome === 'REGISTERED') finish(d.message, 5000);
-    else if (d.outcome === 'DUPLICATE' || d.outcome === 'DUPLICATE_FACE') finish(d.message, 5000);
+    } else if (d.outcome === 'REGISTERED') finish(d.message, 5000, 'registered');
+    else if (d.outcome === 'DUPLICATE') finish(d.message, 5000, 'duplicate');
+    else if (d.outcome === 'DUPLICATE_FACE') finish(d.message, 8000, 'warning');
+    else if (d.outcome === 'SERVICE_DOWN') fail(new ApiError(503, 'SERVICE_DOWN', d.message));
     else if (d.status === 'BLOCKED') {
       stop();
       setStage(sess.purpose === 'REGISTER'
@@ -376,6 +390,11 @@ function Station({ site }) {
 
   const begin = async (purpose = 'PUNCH', who = null) => {
     const currentFlow = ++flow.current;
+    session.current = null;
+    stop();
+    clearTimeout(finishTimer.current);
+    setCameraWaiting(false);
+    setHint('');
     setError(null);
     setStage({ k: 'starting', purpose });
     try {
@@ -387,16 +406,18 @@ function Station({ site }) {
       await (purpose === 'REGISTER' ? registerScan(1) : scan());
     } catch (e) {
       if (flow.current !== currentFlow) return;
-      setError(e instanceof ApiError && e.code === 'NETWORK' ? messageFor('OFFLINE') : errorMessage(e));
-      setStage({ k: 'idle' });
+      setError(null);
+      setStage({ k: 'problem', problem: captureProblem(e), purpose, who });
     }
   };
 
   const act = async (fn) => {
+    const currentFlow = flow.current;
     setError(null);
     try {
       await fn();
     } catch (e) {
+      if (flow.current !== currentFlow) return;
       if (e instanceof ApiError && (e.code === 'CONFIRM_EXPIRED' || e.code === 'CONFLICT')) {
         setStage({ k: 'retry', text: messageFor('CHALLENGE_EXPIRED') });
         return;
@@ -407,22 +428,33 @@ function Station({ site }) {
 
   const confirmPunch = () =>
     act(async () => {
+      const sess = session.current;
+      if (!sess) return;
       const pos = await getPosition();
-      const r = await api.post(`/punches/sessions/${session.current.id}/confirm`, { confirm_token: stage.d.confirm_token, device_id: deviceId(), ...pos });
+      if (session.current?.id !== sess.id) return;
+      const r = await api.post(`/punches/sessions/${sess.id}/confirm`, { confirm_token: stage.d.confirm_token, device_id: deviceId(), ...pos });
+      if (session.current?.id !== sess.id) return;
       finish(r.data.message);
     });
 
   const notMe = () =>
     act(async () => {
-      const r = await api.post(`/punches/sessions/${session.current.id}/not-me`, { confirm_token: stage.d.confirm_token });
+      const sess = session.current;
+      if (!sess) return;
+      const r = await api.post(`/punches/sessions/${sess.id}/not-me`, { confirm_token: stage.d.confirm_token });
+      if (session.current?.id !== sess.id) return;
       handle(r.data, stage.pos);
     });
 
   const manual = (code, name) =>
     act(async () => {
+      const sess = session.current;
+      if (!sess) return;
       const pos = await getPosition();
-      const r = await api.post(`/punches/sessions/${session.current.id}/manual`, { employee_code: code, name, ...pos });
-      finish(r.data.message, 5000);
+      if (session.current?.id !== sess.id) return;
+      const r = await api.post(`/punches/sessions/${sess.id}/manual`, { employee_code: code, name, ...pos });
+      if (session.current?.id !== sess.id) return;
+      finish(r.data.message, 5000, 'manual');
     });
 
   const signOut = async () => {
@@ -449,7 +481,7 @@ function Station({ site }) {
           <Button variant="ghost" size="icon" aria-label="Back to site attendance" onClick={reset}><ArrowLeft /></Button>
           <div>
           <div className="font-display text-xl font-semibold">{site.name}</div>
-          <div className="text-[13px] text-muted-foreground">{stage.k === 'register' || session.current?.purpose === 'REGISTER' ? 'Register face' : 'Punch attendance'}</div>
+          <div className="text-[13px] text-muted-foreground">{stage.k === 'register' || stage.purpose === 'REGISTER' || session.current?.purpose === 'REGISTER' ? 'Register face' : 'Punch attendance'}</div>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -460,16 +492,33 @@ function Station({ site }) {
           )}
         </div>
       </header>
-      <main className="flex flex-1 justify-center p-4 sm:p-6">
-        <section className="flex flex-col items-center justify-center gap-5">
+      <main className="mx-auto flex w-full max-w-5xl flex-1 justify-center p-4 pt-8 sm:p-8 sm:pt-10">
+        <section className="flex w-full max-w-xl flex-col items-center gap-5">
           {!online && <Notice tone="destructive">{messageFor('OFFLINE')}</Notice>}
           {error && online && <Notice tone="destructive">{error}</Notice>}
-          {stage.k === 'starting' && <div className="flex flex-col items-center gap-3" aria-live="polite"><Loader2 className="size-10 animate-spin text-primary" /><p className="text-muted-foreground">Opening camera…</p></div>}
+          {stage.k === 'starting' && <div className="flex w-full flex-col items-center gap-3 rounded-xl border bg-card px-6 py-12 text-center" aria-live="polite"><Loader2 className="size-10 animate-spin text-primary" /><p className="font-display text-xl font-semibold">Checking your location…</p><p className="text-[13px] text-muted-foreground">The camera opens after this site is confirmed.</p></div>}
+          {stage.k === 'problem' && <div className="flex w-full flex-col gap-5 rounded-xl border bg-card p-6 sm:p-7">
+            <div className="flex items-start gap-3"><span className="rounded-xl bg-warning/10 p-3 text-warning"><ShieldAlert className="size-6" aria-hidden="true" /></span><div><p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{stage.purpose === 'REGISTER' ? 'Face registration' : 'Attendance punch'}</p><h2 className="mt-1 font-display text-xl font-semibold">{stage.problem.title}</h2></div></div>
+            <p className="text-[14px] leading-relaxed" role="alert">{stage.problem.message}</p>
+            <p className="rounded-lg bg-muted/50 px-4 py-3 text-[13px] leading-relaxed text-muted-foreground">{stage.problem.help}</p>
+            <div className="flex flex-wrap justify-end gap-2"><Button variant="outline" size="lg" onClick={reset}>Back to site</Button>
+              {stage.problem.action === 'punch' ? <Button size="lg" disabled={!online} onClick={() => begin('PUNCH')}><ScanFace /> Punch in / out</Button>
+                : stage.problem.action === 'choose' ? <Button size="lg" disabled={!online} onClick={() => { session.current = null; setStage({ k: 'register' }); }}>Choose employee</Button>
+                : <Button size="lg" disabled={!online} onClick={() => !session.current ? begin(stage.purpose, stage.who) : stage.purpose === 'REGISTER' ? registerScan(1) : scan()}><RotateCcw /> Try again</Button>}
+            </div>
+          </div>}
           {stage.k === 'register' && <RegisterForm onCancel={reset} onStart={(who) => begin('REGISTER', who)} />}
           {/* The camera fills the screen; only the button below stays. */}
           <div className={stage.k === 'camera' || stage.k === 'checking' ? 'fixed inset-0 z-40 flex flex-col bg-black text-white' : 'hidden'} style={{ height: '100dvh' }}>
             <div className="relative min-h-0 flex-1 overflow-hidden">
               <video ref={video} className="absolute inset-0 h-full w-full -scale-x-100 object-cover" muted playsInline />
+              {cameraWaiting && <div className="absolute inset-0 flex items-center justify-center px-6" aria-live="polite">
+                <div className="flex w-full max-w-sm flex-col items-center gap-4 rounded-2xl border border-white/15 bg-white/[0.06] px-6 py-8 text-center">
+                  <Loader2 className="size-9 animate-spin text-white/80" aria-hidden="true" />
+                  <h2 className="font-display text-2xl font-semibold">Opening your camera</h2>
+                  <p className="text-[14px] leading-relaxed text-white/75">Allow Camera when the browser asks. You can cancel while waiting.</p>
+                </div>
+              </div>}
               {oval && (
                 <div
                   className={`pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-[50%] border-4 shadow-[0_0_0_9999px_rgba(0,0,0,0.38)] transition-colors ${step.good ? 'border-success' : 'border-white/80'}`}
@@ -494,10 +543,10 @@ function Station({ site }) {
                 </div>
               )}
               <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center gap-3 bg-gradient-to-t from-black/80 to-transparent px-5 pt-10 pb-4">
-                <div className="min-h-9 text-center font-display text-2xl leading-snug font-semibold [text-shadow:0_1px_6px_rgba(0,0,0,0.8)]" aria-live="polite">
+                <div className={cameraWaiting ? 'hidden' : 'min-h-9 text-center font-display text-2xl leading-snug font-semibold [text-shadow:0_1px_6px_rgba(0,0,0,0.8)]'} aria-live="polite">
                   {stage.k === 'checking' ? hint || messageFor('CHECKING') : hint}
                 </div>
-                {stage.k === 'camera' && (
+                {stage.k === 'camera' && !cameraWaiting && (
                   <div className="h-2.5 w-full max-w-md overflow-hidden rounded-full bg-white/25" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(step.progress * 100)}>
                     <div className="h-full rounded-full bg-success transition-[width] duration-150" style={{ width: `${Math.round(step.progress * 100)}%` }} />
                   </div>
@@ -613,9 +662,13 @@ function Station({ site }) {
             </div>
           )}
           {stage.k === 'done' && (
-            <div className="flex flex-col items-center gap-3 text-center">
-              <CheckCircle2 className="size-16 text-success" />
-              <div className="font-display text-2xl font-semibold">{stage.text}</div>
+            <div className="flex w-full flex-col items-center gap-4 rounded-xl border bg-card px-6 py-10 text-center" role="status">
+              {stage.kind === 'warning' ? <ShieldAlert className="size-14 text-warning" aria-hidden="true" /> : stage.kind === 'duplicate' || stage.kind === 'manual' ? <Clock3 className="size-14 text-info" aria-hidden="true" /> : <CheckCircle2 className="size-14 text-success" aria-hidden="true" />}
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{stage.kind === 'registered' ? 'Registration complete' : stage.kind === 'duplicate' ? 'Already recorded' : stage.kind === 'warning' ? 'HR help needed' : stage.kind === 'manual' ? 'Waiting for HR' : 'Attendance recorded'}</p>
+              <div className="font-display text-2xl leading-snug font-semibold">{stage.text}</div>
+              {stage.kind === 'warning' && <p className="text-[13px] text-muted-foreground">A new registration was not saved. Ask HR to check the employee’s face record.</p>}
+              <div className="mt-2 flex flex-wrap justify-center gap-2"><Button variant="outline" size="lg" onClick={reset}>Back to site</Button>{stage.kind === 'registered' && <Button size="lg" disabled={!online} onClick={() => { clearTimeout(finishTimer.current); begin('PUNCH'); }}><ScanFace /> Punch now</Button>}</div>
+              <p className="text-[12px] text-muted-foreground">Returning to site attendance automatically.</p>
             </div>
           )}
         </section>

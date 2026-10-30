@@ -285,18 +285,40 @@ export function capture(video, { maxWidth = 640, quality = 0.9 } = {}) {
   return new Promise((resolve, reject) => c.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not capture the camera frame.'))), 'image/jpeg', quality));
 }
 
-export async function startCamera(video, facing = 'user') {
+export async function startCamera(video, facing = 'user', { isCurrent } = {}) {
   // A phone held upright gets an upright picture, so the face fills the screen instead of being cropped.
   const upright = window.innerHeight > window.innerWidth;
   const stream = await navigator.mediaDevices.getUserMedia({
     video: { facingMode: facing, width: { ideal: upright ? 480 : 640 }, height: { ideal: upright ? 640 : 480 } },
     audio: false,
   });
-  video.srcObject = stream;
-  await video.play();
-  return stream;
+  try {
+    // Permission can resolve after Cancel and a later attempt has started. Do
+    // not replace that attempt's video with an already obsolete stream.
+    if (isCurrent && !isCurrent()) throw new DOMException('Capture cancelled', 'AbortError');
+    video.srcObject = stream;
+    await video.play();
+    return stream;
+  } catch (error) {
+    // The caller only receives the stream after playback starts. If attaching or
+    // playing fails, release it here so retrying cannot leave the camera active.
+    stopCamera(stream);
+    try {
+      // A newer camera attempt may already own the element by now.
+      if (video.srcObject === stream) video.srcObject = null;
+    } catch {
+      // Preserve the original camera error for the screen's recovery guidance.
+    }
+    throw error;
+  }
 }
 
 export function stopCamera(stream) {
-  stream?.getTracks().forEach((t) => t.stop());
+  stream?.getTracks().forEach((t) => {
+    try {
+      t.stop();
+    } catch {
+      // Release the remaining tracks even if a disconnected device rejects one.
+    }
+  });
 }
