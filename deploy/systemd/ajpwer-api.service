@@ -1,0 +1,24 @@
+[Unit]
+Description=AJPWER API
+Wants=network-online.target
+After=network-online.target ajpwer-face.service
+
+[Service]
+Type=simple
+User=ajpwer
+Group=ajpwer
+WorkingDirectory=/opt/ajpwer/backend
+EnvironmentFile=/etc/ajpwer/runtime.env
+ExecStart=/usr/bin/node src/server.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/ajpwer
+
+[Install]
+WantedBy=multi-user.target

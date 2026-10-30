@@ -1,0 +1,21 @@
+# Install as /etc/nginx/sites-available/ajpwer after replacing api.example.com.
+# Certbot adds the HTTPS listener after DNS points at the Lightsail static IP.
+server {
+    listen 80;
+    server_name api.example.com;
+    client_max_body_size 20m;
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:4000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # One trusted hop; do not forward an untrusted incoming X-Forwarded-For.
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_read_timeout 60s;
+    }
+    location /face-models/ {
+        proxy_pass http://127.0.0.1:4000;
+        proxy_set_header Host $host;
+    }
+    location / { return 404; }
+}
