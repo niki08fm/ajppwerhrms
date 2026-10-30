@@ -87,7 +87,7 @@ export default function Statutory() {
                 </tbody>
               </table>
               <p className="mt-2 text-[13px] text-muted-foreground">
-                Both rounded up to the rupee. Eligibility is decided once per April–September and October–March period on fixed gross; contribution is on earned gross.
+                Both rounded up to the rupee. Eligibility uses selected fixed ESI wages, excluding OT. Contributions use selected earned wages after LOP, with off-day pay. Overtime is {c.esi.include_overtime === false ? 'excluded by this configuration' : 'included (standard treatment)' }.
               </p>
             </CardBody>
           </Card>
@@ -245,6 +245,7 @@ function RatesDialog({ current, onClose }) {
     esi_ceiling: toRupeesInput(current.esi.ceiling),
     esi_emp: String(current.esi.employee_pct),
     esi_er: String(current.esi.employer_pct),
+    esi_include_ot: current.esi.include_overtime !== false ? 'include' : 'exclude',
     cap: String(current.recovery_cap_pct),
   });
   const save = useMutation({
@@ -260,7 +261,7 @@ function RatesDialog({ current, onClose }) {
           edli_pct: Number(f.edli),
           admin_pct: Number(f.admin),
         },
-        esi: { ceiling: toPaise(f.esi_ceiling), employee_pct: Number(f.esi_emp), employer_pct: Number(f.esi_er) },
+        esi: { ceiling: toPaise(f.esi_ceiling), employee_pct: Number(f.esi_emp), employer_pct: Number(f.esi_er), include_overtime: f.esi_include_ot === 'include' },
         recovery_cap_pct: Number(f.cap),
       }),
     onSuccess: () => {
@@ -319,6 +320,12 @@ function RatesDialog({ current, onClose }) {
         {money('esi_ceiling', 'ESI ceiling')}
         {num('esi_emp', 'ESI employee')}
         {num('esi_er', 'ESI employer')}
+        <Field label="Overtime in ESI contributions" className="sm:col-span-2" hint="Standard ESI treatment includes OT in contributions, but not in the eligibility ceiling. Confirm any exclusion with your payroll adviser.">
+          {(id) => <Select id={id} value={f.esi_include_ot} onChange={(e) => setF({ ...f, esi_include_ot: e.target.value })}>
+            <option value="include">Include overtime (standard)</option>
+            <option value="exclude">Exclude overtime</option>
+          </Select>}
+        </Field>
         {num('cap', 'Recovery cap')}
       </div>
     </Dialog>

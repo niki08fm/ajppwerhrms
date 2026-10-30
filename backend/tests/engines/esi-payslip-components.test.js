@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { structureCreateSchema } from '@ajpwer/shared';
+import { esiRatesSchema, structureCreateSchema } from '@ajpwer/shared';
 import { assemblePayslip } from '../../src/calculations/index.js';
 import { fullMonthTotals, OVERTIME, payslipInput, R, STANDARD_STRUCTURE } from './fixtures.js';
 
@@ -84,5 +84,56 @@ describe('ESI component schema compatibility', () => {
     expect(structure.components.find((c) => c.name === 'HRA').counts_as_esi_wages).toBe(true);
     expect(structure.components.find((c) => c.name === 'Conveyance').counts_as_esi_wages).toBe(false);
     expect(structure.components.at(-1).counts_as_esi_wages).toBe(false);
+  });
+});
+
+describe('Effective-dated OT contribution setting', () => {
+  const inputWithOT = () => payslipInput({
+    statutory: covered, divisor: 30, overtime_rules: OVERTIME.rules,
+    attendance: fullMonthTotals('2026-09', 30, { ot_min: 60 }),
+  });
+  it('excludes OT from both ESI contributions only when explicitly configured, keeping OT earnings intact', () => {
+    const input = inputWithOT();
+    const standard = assemblePayslip(input);
+    const excluded = assemblePayslip({ ...input, rates: { ...input.rates, esi: { ...input.rates.esi, include_overtime: false } } });
+    expect(amount(excluded, 'OT')).toBeGreaterThan(0);
+    expect(amount(excluded, 'OT')).toBe(amount(standard, 'OT'));
+    expect(excluded.gross).toBe(standard.gross);
+    expect(excluded.statutory_gross).toBe(standard.statutory_gross);
+    expect(excluded.esi_wage).toBe(R(24000));
+    expect(standard.esi_wage - excluded.esi_wage).toBe(amount(excluded, 'OT'));
+    expect(amount(excluded, 'ESI')).toBe(R(180));
+    expect(amount(excluded, 'ER_ESI')).toBe(R(780));
+    expect(excluded.net - standard.net).toBe(amount(standard, 'ESI') - amount(excluded, 'ESI'));
+    expect(amount(excluded, 'PF')).toBe(amount(standard, 'PF'));
+    expect(amount(excluded, 'PT')).toBe(amount(standard, 'PT'));
+  });
+  it('keeps selected components, LOP and off-day wages when excluding OT', () => {
+    const input = payslipInput({
+      components: selected, statutory: covered, divisor: 30,
+      attendance: fullMonthTotals('2026-09', 30, { paid_days: 24, lop_days: 6, ot_min: 60 }),
+      overtime_rules: OVERTIME.rules,
+      offday_work: [{ date: '2026-09-06', kind: 'WEEKLY_OFF', rate_pct: 200, base: 'GROSS', day_paid: true }],
+    });
+    const result = assemblePayslip({ ...input, rates: { ...input.rates, esi: { ...input.rates.esi, include_overtime: false } } });
+    expect(result.esi_wage).toBe(R(14240));
+    expect(amount(result, 'ESI')).toBe(R(107));
+    expect(amount(result, 'ER_ESI')).toBe(R(463));
+    expect(amount(result, 'OFFDAY')).toBe(R(800));
+    expect(amount(result, 'OT')).toBe(R(140));
+  });
+  it('explicit inclusion and legacy rates produce identical contributions', () => {
+    const input = inputWithOT();
+    expect(assemblePayslip({ ...input, rates: { ...input.rates, esi: { ...input.rates.esi, include_overtime: true } } })).toEqual(assemblePayslip(input));
+  });
+});
+
+
+describe('ESI OT setting compatibility', () => {
+  it('defaults existing rate rows to standard OT inclusion and preserves explicit exclusion', () => {
+    const rates = { ceiling: R(21000), employee_pct: 0.75, employer_pct: 3.25 };
+    expect(esiRatesSchema.parse(rates).include_overtime).toBe(true);
+    expect(esiRatesSchema.parse({ ...rates, include_overtime: false }).include_overtime).toBe(false);
+    expect(() => esiRatesSchema.parse({ ...rates, include_overtime: 'false' })).toThrow();
   });
 });

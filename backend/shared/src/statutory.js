@@ -33,6 +33,8 @@ export const esiRatesSchema = z
     ceiling: paise,
     employee_pct: percent,
     employer_pct: percent,
+    /** Standard ESI contribution wages include OT; exclusion must be explicitly configured. */
+    include_overtime: z.boolean().default(true),
   })
   .strict();
 
