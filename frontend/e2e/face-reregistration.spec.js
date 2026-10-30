@@ -221,7 +221,7 @@ async function selectApprovedEmployee(page) {
   await expect(page.getByText('HR has approved one re-registration. Your current face is replaced only after the new photos pass the checks.', { exact: true })).toBeVisible();
   await page.locator('form').screenshot({ path: '/tmp/face-reregistration-tablet.png' });
   await page.getByRole('button', { name: 'Start camera', exact: true }).click();
-  await expect(page.getByRole('img', { name: 'Eyes closed', exact: true })).toBeVisible();
+  await expect(page.getByRole('img', { name: 'Eye photo', exact: true })).toBeVisible();
   await expect(page.getByText('HR-approved re-registration. Your current face is replaced only after these photos pass the checks.', { exact: true })).toBeVisible();
 }
 
@@ -257,7 +257,7 @@ test('a failed face save shows recovery and leaves the HR permission available u
   expect(state.usable).toBe(true);
   state.failSave = false;
   await page.getByRole('button', { name: 'Try again', exact: true }).click();
-  await expect(page.getByRole('img', { name: 'Eyes closed', exact: true })).toBeVisible();
+  await expect(page.getByRole('img', { name: 'Eye photo', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Use these photos', exact: true }).click();
   await expect(page.getByText('Face registered. You can now punch at any site.', { exact: true })).toBeVisible();
   expect(state.usable).toBe(false);
@@ -280,7 +280,7 @@ test('a blocked registration cannot create manual attendance and starts a fresh 
   expect(state.usable).toBe(true);
   state.blockSave = false;
   await page.getByRole('button', { name: 'Try registration again', exact: true }).click();
-  await expect(page.getByRole('img', { name: 'Eyes closed', exact: true })).toBeVisible();
+  await expect(page.getByRole('img', { name: 'Eye photo', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Use these photos', exact: true }).click();
   await expect(page.getByText('Face registered. You can now punch at any site.', { exact: true })).toBeVisible();
   expect(state.usable).toBe(false);

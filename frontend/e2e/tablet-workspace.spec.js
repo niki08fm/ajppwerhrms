@@ -452,7 +452,7 @@ test('guided registration reviews four photos and uploads them once before retur
   await expect(page.getByRole('img', { name: 'Looking straight', exact: true })).toBeVisible();
   await expect(page.getByRole('img', { name: 'Turned left', exact: true })).toBeVisible();
   await expect(page.getByRole('img', { name: 'Turned right', exact: true })).toBeVisible();
-  await expect(page.getByRole('img', { name: 'Eyes closed', exact: true })).toBeVisible();
+  await expect(page.getByRole('img', { name: 'Eye photo', exact: true })).toBeVisible();
   // Guided capture is mocked, but the UI must still wait for the person's review before uploading.
   expect(state.writes).toEqual([{ path: '/punches/sessions', body: { purpose: 'REGISTER', employee_code: EMPLOYEE.code, name: EMPLOYEE.name, ...POSITION } }]);
   await page.getByRole('button', { name: 'Use these photos', exact: true }).click();

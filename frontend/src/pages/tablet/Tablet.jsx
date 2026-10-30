@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ArrowRight, Check, CheckCircle2, Clock3, CloudOff, EyeOff, Loader2, MapPin, RotateCcw, ScanFace, ShieldAlert, UserX } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, Clock3, CloudOff, Eye, EyeOff, Loader2, MapPin, RotateCcw, ScanFace, ShieldAlert, UserX } from 'lucide-react';
 import { api, ApiError, errorMessage } from '@/services/api';
 import { capture, loadGuidance, loadLandmarks, messageFor, startCamera, stopCamera, waitForBlink, waitForGoodFrame, waitForHeadTurn, waitForStraight } from '@/services/face';
 import { getPosition } from '@/services/location';
@@ -101,7 +101,7 @@ function useOval(video, active) {
   return oval;
 }
 
-const REGISTER_STEPS = ['Look straight', 'Turn left', 'Turn right', 'Blink'];
+const REGISTER_STEPS = ['Look straight', 'Small left turn', 'Small right turn', 'Eye photo'];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const newRequestId = () => `req-${crypto.randomUUID()}`;
@@ -231,7 +231,7 @@ function Station({ site }) {
       abort.current = new AbortController();
       const signal = abort.current.signal;
       const ok = await waitForGoodFrame(video.current, {
-        stable: 6,
+        stable: 3,
         onHint: (r) => {
           setHint(r.ok ? messageFor('HOLD_STILL') : r.message);
           setStep((st) => ({ ...st, good: r.ok }));
@@ -286,7 +286,7 @@ function Station({ site }) {
       const follow = {
         onHint: (h) => {
           setHint(h.message);
-          setStep((st) => ({ ...st, good: h.ok }));
+          setStep((st) => ({ ...st, good: h.ok, closeEyes: h.code === 'BLINK' }));
         },
         onProgress: (p) => setStep((st) => ({ ...st, progress: p })),
         signal,
@@ -317,7 +317,7 @@ function Station({ site }) {
         r.photos[name] = await capture(video.current);
       }
       setStep({ n: 4, progress: 0, good: false, blink: true, canSkip: false });
-      setHint(messageFor('BLINK'));
+      setHint(messageFor('BLINK_READY'));
       blinkSkip.current = { requested: false };
       const b = await waitForBlink(video.current, { fromYaw: r.frontYaw, skip: blinkSkip.current, onSlow: () => setStep((st) => ({ ...st, canSkip: true })), ...follow });
       if (!b) return stuck(4, 'BLINK_NOT_SEEN');
@@ -534,7 +534,7 @@ function Station({ site }) {
               )}
               {stage.k === 'camera' && step.blink && (
                 <div className="pointer-events-none absolute top-[14%] left-1/2 -translate-x-1/2 animate-pulse rounded-full bg-primary/90 p-4 text-primary-foreground shadow-lg" aria-hidden>
-                  <EyeOff className="size-10" />
+                  {step.closeEyes ? <EyeOff className="size-10" /> : <Eye className="size-10" />}
                 </div>
               )}
               {stage.k === 'camera' && (
@@ -576,7 +576,7 @@ function Station({ site }) {
                   ['front', 'Looking straight'],
                   ['left', 'Turned left'],
                   ['right', 'Turned right'],
-                  ['blink', 'Eyes closed'],
+                  ['blink', 'Eye photo'],
                 ].map(([k, label]) => (
                   <figure key={k}>
                     <img src={stage.urls[k]} alt={label} className="aspect-[4/3] w-full -scale-x-100 rounded-lg border object-cover" />

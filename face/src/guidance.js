@@ -141,14 +141,16 @@ const noFace = (r) => result(r.count ? 'MULTIPLE_FACES' : 'NO_FACE');
 
 /**
  * Registration step 1: one face, well placed and lit, looking at the camera (head turned no
- * more than maxYaw), held for `stable` looks in a row. Returns { box, yaw }, or null.
+ * more than maxYaw), held for `stable` good looks, tolerating a brief missed detection. Returns { box, yaw }, or null.
  */
-export async function waitForStraight(video, { onHint, onProgress, maxYaw = 12, stable = 10, intervalMs = 120, timeoutMs = 30_000, signal } = {}) {
+export async function waitForStraight(video, { onHint, onProgress, maxYaw = 12, stable = 4, intervalMs = 80, timeoutMs = 30_000, signal } = {}) {
   const until = Date.now() + timeoutMs;
   let good = 0;
+  let lastGoodAt = 0;
   while (Date.now() < until) {
     if (signal?.aborted) return null;
     const r = await readFace(video);
+    if (signal?.aborted) return null;
     let hint;
     if (r.count !== 1) hint = noFace(r);
     else {
@@ -156,9 +158,10 @@ export async function waitForStraight(video, { onHint, onProgress, maxYaw = 12, 
       hint = p ? result(p, r.box) : Math.abs(r.yaw) > maxYaw ? result('LOOK_AT_CAMERA', r.box) : { ok: true, code: 'OK', message: messageFor('HOLD_STILL'), box: r.box };
     }
     onHint?.(hint);
-    good = hint.ok ? good + 1 : 0;
+    good = hint.ok ? good + 1 : hint.code === 'NO_FACE' && Date.now() - lastGoodAt < 400 ? good : 0;
+    if (hint.ok) lastGoodAt = Date.now();
     onProgress?.(Math.min(1, good / stable));
-    if (good >= stable) return { box: r.box, yaw: r.yaw };
+    if (hint.ok && good >= stable) return { box: r.box, yaw: r.yaw };
     await pause(intervalMs);
   }
   return null;
@@ -169,7 +172,7 @@ export async function waitForStraight(video, { onHint, onProgress, maxYaw = 12, 
  * the straight picture (the server asks for 15°), then hold still. Turning the other way says so.
  * Returns { yaw }, or null.
  */
-export async function waitForHeadTurn(video, { fromYaw, direction, onHint, onProgress, minDeg = 20, intervalMs = 120, timeoutMs = 30_000, signal } = {}) {
+export async function waitForHeadTurn(video, { fromYaw, direction, onHint, onProgress, minDeg = 17, intervalMs = 80, timeoutMs = 30_000, signal } = {}) {
   const sign = direction === 'LEFT' ? 1 : -1;
   const ask = messageFor(direction === 'LEFT' ? 'TURN_LEFT' : 'TURN_RIGHT');
   const until = Date.now() + timeoutMs;
@@ -178,6 +181,7 @@ export async function waitForHeadTurn(video, { fromYaw, direction, onHint, onPro
   while (Date.now() < until) {
     if (signal?.aborted) return null;
     const r = await readFace(video);
+    if (signal?.aborted) return null;
     if (r.count !== 1) {
       onHint?.(noFace(r));
       [last, still] = [null, 0];
@@ -185,9 +189,9 @@ export async function waitForHeadTurn(video, { fromYaw, direction, onHint, onPro
       const turned = (r.yaw - fromYaw) * sign;
       onProgress?.(Math.max(0, Math.min(1, turned / minDeg)));
       if (turned >= minDeg) {
-        still = last !== null && Math.abs(r.yaw - last) < 4 ? still + 1 : 0;
+        still = last !== null && (last - fromYaw) * sign >= minDeg && Math.abs(r.yaw - last) < 6 ? still + 1 : 0;
         onHint?.({ ok: true, code: 'HOLD_STILL', message: messageFor('HOLD_STILL') });
-        if (still >= 2) return { yaw: r.yaw };
+        if (still >= 1) return { yaw: r.yaw };
       } else {
         still = 0;
         const code = turned <= -10 ? (direction === 'LEFT' ? 'TURN_OTHER_WAY_LEFT' : 'TURN_OTHER_WAY_RIGHT') : turned >= minDeg / 2 ? 'TURN_MORE' : null;
@@ -201,45 +205,64 @@ export async function waitForHeadTurn(video, { fromYaw, direction, onHint, onPro
 }
 
 /**
- * Registration step 4: eyes open, then closed for a moment, then open again, facing the
- * camera. The check looks a few times a second and a quick blink is shorter than that, so
- * the person is asked to keep their eyes closed for a moment: it counts when the eyes are
- * seen closed twice in a row, and the picture is taken then. Eye openness is compared with
- * this person's own open eyes. After `slowMs` without it, `onSlow()` fires so the screen can
- * offer to take the picture anyway; `skip.requested = true` does that. Returns { blob }, or null.
+ * Establish open eyes before asking for a brief close, then require reopening.
+ * One closed reading captures a natural blink on slower tablets. The existing
+ * optional fourth-photo fallback is available after four seconds, only with a
+ * single, well-placed face. Server-side pose, identity and liveness checks remain.
  */
-export async function waitForBlink(video, { fromYaw = 0, onHint, onProgress, onSlow, skip, slowMs = 10_000, intervalMs = 40, timeoutMs = 60_000, signal } = {}) {
+export async function waitForBlink(video, { fromYaw = 0, onHint, onProgress, onSlow, skip, slowMs = 4_000, intervalMs = 40, timeoutMs = 30_000, signal } = {}) {
   const started = Date.now();
   const until = started + timeoutMs;
-  let baseline = 0; // how open this person's eyes are
+  let baseline = 0;
   let seen = 0;
-  let shortOfBaseline = 0;
   let closed = null;
   let slow = false;
   while (Date.now() < until) {
     if (signal?.aborted) return null;
-    if (skip?.requested) return { blob: closed ?? (await capture(video)), manual: true };
-    if (!slow && Date.now() - started > slowMs) {
+    if (!slow && Date.now() - started >= slowMs) {
       slow = true;
       onSlow?.();
     }
     const r = await readFace(video);
-    if (r.count !== 1) onHint?.(noFace(r));
-    else if (Math.abs(r.yaw - fromYaw) > 15) onHint?.(result('LOOK_AT_CAMERA', r.box));
-    else if (!closed) {
-      // Open eyes set the baseline; readings far below it are closed eyes and never lower it.
-      if (baseline === 0 || r.eyes >= baseline * 0.85) baseline = baseline === 0 ? r.eyes : Math.max(baseline * 0.995, r.eyes);
-      seen++;
-      shortOfBaseline = seen >= 5 && r.eyes < baseline * 0.72 ? shortOfBaseline + 1 : 0;
-      onProgress?.(Math.min(0.5, shortOfBaseline / 4));
-      if (shortOfBaseline >= 2) {
+    if (signal?.aborted) return null;
+    const problem = r.count === 1 ? placement(video, r.box) : null;
+    if (r.count !== 1 || problem || Math.abs(r.yaw - fromYaw) > 15) {
+      onHint?.(r.count !== 1 ? noFace(r) : result(problem ?? 'LOOK_AT_CAMERA', r.box));
+      // Do not combine an old closed-eye photo with a different face/pose.
+      baseline = 0;
+      seen = 0;
+      closed = null;
+      onProgress?.(0);
+    } else if (slow && skip?.requested) {
+      const blob = await capture(video);
+      if (signal?.aborted) return null;
+      return { blob, manual: true };
+    } else if (seen < 3) {
+      onHint?.({ ok: false, code: 'BLINK_READY', message: messageFor('BLINK_READY') });
+      // Starting this step with eyes closed must not teach a closed baseline.
+      if (r.eyes >= 0.18) {
+        baseline = Math.max(baseline, r.eyes);
+        seen++;
+      } else {
+        seen = 0;
+        baseline = 0;
+      }
+      onProgress?.(seen / 10);
+      if (seen === 3) onHint?.({ ok: false, code: 'BLINK', message: messageFor('BLINK') });
+    } else if (!closed) {
+      if (r.eyes < baseline * 0.72) {
         closed = await capture(video);
-        onProgress?.(0.6);
+        if (signal?.aborted) return null;
+        onProgress?.(0.7);
         onHint?.({ ok: true, code: 'BLINK_OPEN', message: messageFor('BLINK_OPEN') });
-      } else onHint?.({ ok: false, code: 'BLINK', message: messageFor('BLINK') });
+      } else {
+        onHint?.({ ok: false, code: 'BLINK', message: messageFor('BLINK') });
+      }
     } else if (r.eyes > baseline * 0.82) {
       onProgress?.(1);
       return { blob: closed };
+    } else {
+      onHint?.({ ok: true, code: 'BLINK_OPEN', message: messageFor('BLINK_OPEN') });
     }
     await pause(intervalMs);
   }
@@ -256,20 +279,23 @@ function result(code, box = null) {
 }
 
 /**
- * Wait until the frame has looked right `stable` times in a row (or give up after timeoutMs).
- * `onProgress(0…1)` says how far through holding steady the person is; it falls back to 0
- * whenever the frame stops looking right, so they see they must stay put.
+ * Wait for `stable` good frames. A detector dropout under 400 ms can pause
+ * progress; a poor-quality/multiple-face frame or a longer loss resets it.
+ * The frame that completes capture must pass every check.
  */
 export async function waitForGoodFrame(video, { onHint, onProgress, stable = 3, intervalMs = 150, timeoutMs = 20_000, signal } = {}) {
   const until = Date.now() + timeoutMs;
   let good = 0;
+  let lastGoodAt = 0;
   while (Date.now() < until) {
     if (signal?.aborted) return null;
     const r = await checkFrame(video);
+    if (signal?.aborted) return null;
     onHint?.(r);
-    good = r.ok ? good + 1 : 0;
+    good = r.ok ? good + 1 : r.code === 'NO_FACE' && Date.now() - lastGoodAt < 400 ? good : 0;
+    if (r.ok) lastGoodAt = Date.now();
     onProgress?.(Math.min(1, good / stable));
-    if (good >= stable) return r;
+    if (r.ok && good >= stable) return r;
     await new Promise((res) => setTimeout(res, intervalMs));
   }
   return null;
