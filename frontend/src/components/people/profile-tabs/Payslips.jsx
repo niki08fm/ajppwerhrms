@@ -8,6 +8,7 @@ import { EmptyState, ErrorState, SkeletonBlock, SkeletonRows } from '@/component
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
 import { Select } from '@/components/ui/form';
+import { PayslipZipDownload } from '@/components/payroll/PayslipZipDownload';
 
 const STATE = { RUN: 'run, not locked', LOCKED: 'locked', PAID: 'paid' };
 /** Rupees, with paise only when there are any. */
@@ -70,6 +71,10 @@ export function PayslipsTab({ e }) {
               <ChevronRight />
             </Button>
           </div>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/25 px-4 py-3">
+          <p className="text-[12px] text-muted-foreground">PDF payslips · {months.length} {months.length === 1 ? 'month' : 'months'} in {year}</p>
+          <PayslipZipDownload employeeId={e.id} employeeCode={e.code} year={year} disabled={!months.length} />
         </div>
         {!months.length && (
           <EmptyState

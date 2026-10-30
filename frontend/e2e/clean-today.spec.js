@@ -4,15 +4,15 @@ const TODAY = '2026-10-06';
 const SITES = [{ id: 'north', name: 'North site' }, { id: 'south', name: 'South site' }, { id: 'workshop', name: 'Workshop' }];
 const DEPARTMENTS = [{ id: 'engineering', name: 'Engineering' }, { id: 'operations', name: 'Operations' }];
 const PEOPLE = [
-  { id: 'anita', name: 'Anita Rao', dept_id: 'engineering', sites: ['north'], current_site_id: 'north', views: ['in', 'onsite', 'late'], late_min: 15 },
+  { id: 'anita', name: 'Anita Rao', dept_id: 'engineering', sites: ['north'], current_site_id: 'north', views: ['in', 'onsite', 'late'], late_min: 15, worked_min: 540 },
   { id: 'ravi', name: 'Ravi Kumar', dept_id: 'operations', sites: ['south'], current_site_id: 'south', views: ['in', 'onsite', 'ot'], ot_min: 95 },
   // One employee moved sites: only the latest open site counts as current.
   { id: 'kiran', name: 'Kiran Reddy', dept_id: 'operations', sites: ['south', 'north'], current_site_id: 'north', views: ['in', 'onsite', 'ot'], ot_min: 65 },
-  { id: 'neha', name: 'Neha Verma', dept_id: 'engineering', sites: ['north'], current_site_id: null, views: ['in', 'early'], early_min: 30, open_now: false, out_min: 1020 },
+  { id: 'neha', name: 'Neha Verma', dept_id: 'engineering', sites: ['north'], current_site_id: null, views: ['in', 'early', 'shortfall'], early_min: 30, shift_shortfall_min: 30, worked_min: 510, open_now: false, out_min: 1020 },
   { id: 'meera', name: 'Meera Shah', dept_id: 'engineering', sites: [], current_site_id: null, views: ['absent'], open_now: false },
   { id: 'vijay', name: 'Vijay Das', dept_id: 'operations', sites: [], current_site_id: null, views: ['leave'], expected: false, open_now: false },
 ].map((person, index) => ({ code: `TEST${index + 1}`, expected: true, open_now: true, in_min: 540,
-  out_min: null, ot_min: 0, late_min: 0, early_min: 0, ...person }));
+  out_min: null, ot_min: 0, late_min: 0, early_min: 0, shift_shortfall_min: 0, ...person }));
 
 async function mockToday(page, { manySites = false, empty = false } = {}) {
   const errors = [];
@@ -47,20 +47,39 @@ async function mockToday(page, { manySites = false, empty = false } = {}) {
   return errors;
 }
 
-test('Today starts with four priorities and keeps secondary attendance available on demand', async ({ page }) => {
+test('Today keeps arrival delays, unfinished shifts and leave visible beneath the main counts', async ({ page }) => {
   const errors = await mockToday(page);
   await page.goto('/');
   const summary = page.getByRole('region', { name: 'Attendance summary', exact: true });
-  await expect(summary.getByRole('button')).toHaveCount(5); // four numbers and the disclosure
-  await expect(page.getByRole('region', { name: 'Additional attendance', exact: true })).toHaveCount(0);
-  await summary.getByRole('button', { name: 'More attendance detail', exact: true }).click();
-  const additional = page.getByRole('region', { name: 'Additional attendance', exact: true });
-  await expect(additional.getByRole('button')).toHaveCount(3);
-  await additional.getByRole('button', { name: /^Late in/ }).click();
+  await expect(summary.getByRole('button')).toHaveCount(7); // four main counts and three compact checks
+  const checks = page.getByRole('region', { name: 'Attendance checks', exact: true });
+  await expect(checks.getByRole('button', { name: /^Shift not finished/ })).toBeVisible();
+  await expect(checks.getByRole('button', { name: /^On leave/ })).toBeVisible();
+  await checks.getByRole('button', { name: /^Late in/ }).click();
   const drawer = page.getByRole('dialog');
   await expect(drawer).toContainText('Anita Rao');
   await expect(drawer).not.toContainText('Ravi Kumar');
+  await expect(drawer).toContainText('15m late');
   await expect(drawer.getByRole('button', { name: 'Open in Attendance' })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test('unfinished shifts show actual shortfall without counting arrival delay as unfinished work', async ({ page }) => {
+  const errors = await mockToday(page);
+  await page.goto('/');
+  await page.getByRole('combobox', { name: 'Site', exact: true }).selectOption('north');
+  const shortfall = page.getByRole('region', { name: 'Attendance checks' }).getByRole('button', { name: /^Shift not finished/ });
+  await expect(shortfall).toContainText('1');
+  await shortfall.click();
+  const drawer = page.getByRole('dialog');
+  await expect(drawer).toContainText('Neha Verma');
+  await expect(drawer).toContainText('30m short of required shift');
+  // Anita arrived late, but has worked the full shift. Ravi/Kiran are still on site.
+  await expect(drawer).not.toContainText('Anita Rao');
+  await expect(drawer).not.toContainText('Ravi Kumar');
+  await expect(drawer).not.toContainText('Kiran Reddy');
+  await drawer.getByRole('button', { name: 'Open in Attendance' }).click();
+  await expect(page).toHaveURL(/\/attendance\?date=2026-10-06&view=shortfall&site=north/);
   expect(errors).toEqual([]);
 });
 
@@ -119,7 +138,11 @@ test('less-used tools stay reachable and a deep link opens its navigation group'
   const errors = await mockToday(page);
   await page.goto('/');
   const nav = page.getByRole('navigation', { name: 'Main', exact: true });
-  await expect(nav.getByRole('link', { name: 'Loans and advances', exact: true })).toHaveCount(0);
+  await expect(nav.getByRole('link', { name: 'Monthly payroll', exact: true })).toHaveAttribute('href', '/payroll');
+  await expect(nav.getByRole('link', { name: 'Held salaries', exact: true })).toHaveAttribute('href', '/held-salaries');
+  await expect(nav.getByRole('link', { name: 'Loans and advances', exact: true })).toHaveAttribute('href', '/money');
+  await expect(nav.getByRole('link', { name: 'Exits and settlement', exact: true })).toHaveAttribute('href', '/exits');
+  await expect(nav.getByRole('link', { name: 'Hiring and onboarding', exact: true })).toHaveCount(0);
   await nav.getByRole('button', { name: 'More tools', exact: true }).click();
   await expect(nav.getByRole('link', { name: 'Loans and advances', exact: true })).toBeVisible();
   await expect(nav.getByRole('link', { name: 'Hiring and onboarding', exact: true })).toBeVisible();
@@ -136,11 +159,13 @@ test('the focused overview and navigation remain usable on a phone', async ({ pa
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Today', exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await page.getByRole('button', { name: 'More attendance detail', exact: true }).click();
-  await expect(page.getByRole('region', { name: 'Additional attendance' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Attendance checks' }).getByRole('button', { name: /^Late in/ })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Attendance checks' }).getByRole('button', { name: /^Shift not finished/ })).toBeVisible();
   await page.getByRole('button', { name: 'Open navigation', exact: true }).click();
   const nav = page.getByRole('navigation', { name: 'Main', exact: true });
+  await expect(nav.getByRole('link', { name: 'Monthly payroll', exact: true })).toBeVisible();
+  await expect(nav.getByRole('link', { name: 'Loans and advances', exact: true })).toBeVisible();
   await nav.getByRole('button', { name: 'More tools', exact: true }).click();
-  await expect(nav.getByRole('link', { name: 'Exits and settlement', exact: true })).toBeVisible();
+  await expect(nav.getByRole('link', { name: 'Hiring and onboarding', exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 });

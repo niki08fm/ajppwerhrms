@@ -112,9 +112,11 @@ async function mockAttendance(page, { readOnly = false, frozen = false, frozenPa
     }
     else if (/^\/employees\/[^/]+$/.test(path)) {
       const employee = employees.find((item) => item.id === path.split('/')[2]);
-      data = { ...employee, status: 'ACTIVE', joined_on: '2024-01-01', updated_at: TODAY, designation: 'Coordinator', read_only: false, gender: 'MALE', phone: '', salary: null, pay_group: group, identity: {}, face: { enrolled: false }, onboarding: { required_left: 0 }, rules: { shift: { name: 'General', start_min: 540, end_min: 1080 } } };
-    } else if (path.endsWith('/leave-balances')) data = { types: [], year: { start: '2026-01', end: '2026-12' } };
+      data = { ...employee, status: 'ACTIVE', joined_on: '2024-01-01', updated_at: TODAY, designation: 'Coordinator', read_only: false, gender: 'MALE', phone: '', salary: null, pay_group: group, identity: {}, face: { enrolled: false }, onboarding: { required_left: 0 }, rules: { pay_group: group, calendar_method: 'ACTUAL', weekly_off: ['SUN'], policies: [], shift: { name: 'General', start_min: 540, end_min: 1080 } } };
+    } else if (path.endsWith('/face-registration')) data = { face_registered: false };
+    else if (path.endsWith('/leave-balances')) data = { types: [], year: { start: '2026-01', end: '2026-12' } };
     else if (path.endsWith('/hold')) data = { current: null, history: [], open_months: [] };
+    else if (path.endsWith('/payslips')) data = [];
     else if (path === '/advances-loans') data = { rows: [] };
     else if (path === '/payroll/periods') { data = [{ ym: MONTH, state: 'DRAFT' }]; meta = { suggested: MONTH }; }
     else if (path === `/payroll/periods/${MONTH}`) data = { ym: MONTH, state: 'DRAFT', steps_submitted: frozen || frozenPayroll ? [1] : [], step_log: [] };
@@ -161,23 +163,28 @@ const drawerMonthTotals = (page) => attendanceDrawer(page).getByRole('region', {
 const dayButton = (page, dayNumber) => calendar(page).getByRole('button', { name: new RegExp(`, ${dayNumber} October 2026:`) });
 const clean = (state) => { expect(state.errors).toEqual([]); expect(state.unexpected).toEqual([]); };
 
-test('profile calendar shows month totals and corrects the selected day without a drawer or navigation', async ({ page }) => {
+test('profile calendar keeps totals compact and corrects a selected day in its attendance drawer', async ({ page }) => {
   const state = await mockAttendance(page);
   await page.goto(`/people/${EMPLOYEE_A}?tab=attendance`);
   await expect(calendar(page)).toBeVisible();
+  await expect(selectedDay(page)).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Monthly attendance totals', exact: true })).toContainText('35 min');
   await expect(page.getByText('35 min', { exact: true }).first()).toBeVisible();
   await expect(page.getByText(/35 late minutes/)).toBeVisible();
   await dayButton(page, 7).click();
   await expect(selectedDay(page)).toContainText('8h 40m');
   await expect(correction(page)).toBeVisible();
-  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(attendanceDrawer(page)).toBeVisible();
   await correction(page).getByRole('radio', { name: 'Full day', exact: true }).click();
   await correction(page).getByLabel('Correction reason').fill('Confirmed completed shift');
   await correction(page).getByRole('button', { name: 'Save correction', exact: true }).click();
   await expect.poll(() => state.writes.length).toBe(1);
   expect(state.writes[0].body).toMatchObject({ employee_id: EMPLOYEE_A, work_date: '2026-10-07', mode: 'MARK', status: 'PRESENT' });
   await expect(page.getByText('15 min', { exact: true }).first()).toBeVisible();
-  await expect(page).toHaveURL(new RegExp(`/people/${EMPLOYEE_A}\\?tab=attendance$`));
+  await expect(page).toHaveURL(new RegExp(`/people/${EMPLOYEE_A}\\?tab=attendance&day=2026-10-07$`));
+  await attendanceDrawer(page).getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(attendanceDrawer(page)).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Monthly attendance totals', exact: true })).toContainText('15 min');
   clean(state);
 });
 
@@ -233,6 +240,7 @@ test('crossing a month in the drawer hides stale calendar cells and shows the se
 test('switching calendar days does not carry a draft or show a delayed previous day as the current day', async ({ page }) => {
   const state = await mockAttendance(page, { delayedDay: '2026-10-07' });
   await page.goto(`/people/${EMPLOYEE_A}?tab=attendance`);
+  await dayButton(page, 11).click();
   await correction(page).getByLabel('Correction reason').fill('Draft for today');
   await dayButton(page, 7).click();
   await dayButton(page, 8).click();
@@ -241,6 +249,64 @@ test('switching calendar days does not carry a draft or show a delayed previous 
   await expect(correction(page).getByLabel('Correction reason')).toHaveValue('');
   await page.waitForTimeout(650);
   await expect(selectedDay(page)).toContainText('Thursday, 8 October 2026');
+  expect(state.writes).toEqual([]);
+  clean(state);
+});
+
+test('the employee profile has a direct current-day correction action and keeps profile editing separate', async ({ page }) => {
+  const state = await mockAttendance(page);
+  await page.goto(`/people/${EMPLOYEE_A}`);
+  await expect(page.getByRole('button', { name: 'Edit details', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Correct attendance', exact: true }).click();
+  await expect(attendanceDrawer(page)).toBeVisible();
+  await expect(selectedDay(page)).toContainText('Sunday, 11 October 2026');
+  await expect(correction(page)).toBeVisible();
+  await attendanceDrawer(page).getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Attendance', exact: true })).toHaveAttribute('aria-selected', 'true');
+  expect(state.writes).toEqual([]);
+  clean(state);
+});
+
+test('profile month selection hides stale cells and does not fetch a day until one is selected', async ({ page }) => {
+  const state = await mockAttendance(page, { delayedMonth: '2026-09' });
+  await page.goto(`/people/${EMPLOYEE_A}?tab=attendance`);
+  await expect(calendar(page)).toBeVisible();
+  await expect(page.getByLabel('Attendance month', { exact: true })).toHaveValue(MONTH);
+  await page.getByRole('button', { name: 'Previous attendance month', exact: true }).click();
+  await expect(page.getByLabel('Attendance month', { exact: true })).toHaveValue('2026-09');
+  expect(await calendar(page).getByRole('button', { name: /October 2026/ }).count()).toBe(0);
+  await expect(calendar(page).getByRole('button', { name: /30 September 2026/ })).toBeVisible();
+  expect(state.reads.filter(({ path }) => path === '/attendance/day')).toEqual([]);
+  await calendar(page).getByRole('button', { name: /30 September 2026/ }).click();
+  await expect(selectedDay(page)).toContainText('Wednesday, 30 September 2026');
+  expect(state.reads.filter(({ path }) => path === '/attendance/day').map(({ query }) => query.date)).toEqual(['2026-09-30']);
+  expect(state.writes).toEqual([]);
+  clean(state);
+});
+
+test('profile attendance withholds correction entry and attendance requests without read access', async ({ page }) => {
+  const state = await mockAttendance(page, { noAttendance: true });
+  await page.goto(`/people/${EMPLOYEE_A}?tab=attendance`);
+  await expect(page.getByRole('heading', { name: 'You do not have access to this', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Correct attendance', exact: true })).toHaveCount(0);
+  expect(state.reads.filter(({ path }) => path === '/attendance/day' || /^\/employees\/[^/]+\/attendance$/.test(path))).toEqual([]);
+  expect(state.writes).toEqual([]);
+  clean(state);
+});
+
+test('a phone profile deep link reveals the selected tab without moving the page vertically', async ({ page }) => {
+  const state = await mockAttendance(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`/people/${EMPLOYEE_A}?tab=payslips`);
+  const active = page.getByRole('tab', { name: 'Payslips', exact: true });
+  await expect(active).toHaveAttribute('aria-selected', 'true');
+  await expect.poll(() => active.evaluate((element) => {
+    const selected = element.getBoundingClientRect();
+    const strip = element.closest('[role="tablist"]').getBoundingClientRect();
+    return selected.left >= strip.left && selected.right <= strip.right;
+  })).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect(await page.getByRole('main').evaluate((element) => element.scrollTop)).toBe(0);
   expect(state.writes).toEqual([]);
   clean(state);
 });

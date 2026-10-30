@@ -12,7 +12,10 @@ browser; no server is required for that preview. GitHub displays HTML as source.
 ## Today
 
 Four primary figures show arrivals, current headcount, overtime and absence.
-**More attendance detail** reveals late arrivals, early departures and leave.
+**Late in**, **Shift not finished** and **On leave** remain visible in a compact
+row. Select one to see names and minutes. Arrival delay and required-shift
+shortfall stay separate; people still on site are not counted as finished short
+shifts.
 Choose a site to switch the same headcount card to its departments. Select a
 number or bar to open the scoped people list, then attendance correction.
 Company-wide absence and leave remain labelled when viewing one site.
@@ -20,7 +23,10 @@ Company-wide absence and leave remain labelled when viewing one site.
 Sites and Approvals have matching cards. Long headcount lists start with five
 rows; **Show all** preserves the chosen date and site. One attendance curve
 shows the company total or the selected site. Less frequent navigation remains
-under **More tools**.
+under **More tools**. Payroll, held salaries, loans and exits/settlement are
+grouped together under **Payroll**.
+
+[Attendance correction, payroll navigation and payslip ZIP guide](follow-up/README.md)
 
 **Before**
 
@@ -109,8 +115,9 @@ Face/site API checks use the isolated test database. Camera resource tests mock
 browser streams. The Python service tests retain the existing models; its two
 real-photo tests require separately supplied test images.
 
-Validated: production frontend build, 59 browser checks, 405 engine checks,
-66 face/site API checks and 26 Python checks passed (two photo checks skipped).
+The [follow-up guide](follow-up/README.md) records the latest attendance, payroll
+and ZIP checks. The initial face work also passed 66 face/site API checks and
+26 Python checks (two photo checks skipped).
 
 These checks verify the workflow and safety boundaries. Camera quality,
 recognition accuracy and low-light behavior still require a real device trial.

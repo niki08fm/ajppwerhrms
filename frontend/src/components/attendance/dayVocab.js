@@ -23,6 +23,7 @@ export const VIEW_DEFS = [
   { key: 'absent', today: 'Absent', past: 'Absent', subToday: 'no punch, no leave', subPast: 'no punch, no leave', tone: 'bad' },
   { key: 'late', today: 'Late in', past: 'Late in', subToday: 'after the grace time', subPast: 'after the grace time', tone: 'warn' },
   { key: 'early', today: 'Left early', past: 'Left early', subToday: 'under the full day', subPast: 'under the full day', tone: 'bad' },
+  { key: 'shortfall', today: 'Shift not finished', past: 'Shift not finished', subToday: 'below required shift hours', subPast: 'below required shift hours', tone: 'bad' },
   { key: 'leave', today: 'On leave', past: 'On leave', subToday: 'approved leave', subPast: 'approved leave', tone: 'muted' },
 ];
 

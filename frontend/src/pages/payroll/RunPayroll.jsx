@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Play } from 'lucide-react';
-import { COMPANIES, GENERATE_STEP, STEP } from '@ajpwer/shared';
+import { COMPANIES, GENERATE_STEP, LAST_REVIEW_STEP, STEP } from '@ajpwer/shared';
 import { api } from '@/services/api';
 import { monthLabel } from '@/utils';
 import { PageHeader } from '@/components/bits';
@@ -18,18 +18,19 @@ export function usePeriod(ym) {
 }
 
 const DESCRIBE = {
-  1: 'Every day for everyone in this payroll. Correct the days that need a look, then submit to freeze the month.',
-  2: 'Who joined and who is leaving this month, and how many days each is paid.',
-  3: "Settle what would stop pay going out, hold anyone's salary, and release earlier holds.",
-  4: 'Full and final settlements this payroll can settle — paid in it, paid separately, or kept for later.',
-  5: 'Bonuses, incentives, reimbursements and one-off deductions for this month.',
-  6: 'Works out every payslip, the bank file and the statutory reports. Then lock, and mark paid after the transfer.',
+  [STEP.ATTENDANCE]: 'Select an employee to review and correct attendance in the side panel. Submit when the month is ready.',
+  [STEP.JOINERS]: 'Review joining and leaving dates, and the days each person is paid.',
+  [STEP.ISSUES]: 'Resolve missing details and other issues that would stop payroll.',
+  [STEP.HELD]: 'Hold salaries, leave someone out of this payroll, or release an earlier hold.',
+  [STEP.FNF]: 'Review full and final settlements to pay now or keep for later.',
+  [STEP.ADHOC]: 'Add bonuses, reimbursements and one-off earnings or deductions.',
+  [STEP.GENERATE]: 'Generate payroll, review payslips and reports, then lock and mark paid after the transfer.',
 };
 
 /**
  * Payroll. Opening it shows the month at a glance and where it stopped; each step opens full
- * screen with the steps along the top, is reviewed and submitted, and leads to the next. After
- * the fifth, the payroll is generated with all its reports.
+ * screen with the steps along the top, is reviewed and submitted, and leads to the next.
+ * Once every review is submitted, generate the payroll and its reports.
  */
 export default function RunPayroll() {
   const params = useParams();
@@ -51,7 +52,7 @@ export default function RunPayroll() {
       for (const [k, v] of Object.entries(patch)) (v === null || v === undefined ? x.delete(k) : x.set(k, String(v)));
       return x;
     });
-  const open = (n) => set({ step: n, tab: null });
+  const open = (n, tab = null) => set({ step: n, tab });
   const toOverview = () => set({ step: null, tab: null });
   const toMonth = (m) => nav(`/payroll/${m}${company ? `?company=${company}` : ''}`);
 
@@ -75,7 +76,7 @@ export default function RunPayroll() {
       <div className="flex flex-col gap-4">
         <PageHeader
           title="Payroll"
-          description="One payroll for both companies, for the calendar month. Five steps, then generate."
+          description={`Choose a month, review its ${LAST_REVIEW_STEP} steps, then generate payroll and download payslips.`}
           actions={
             <>
               <Segmented
@@ -101,7 +102,7 @@ export default function RunPayroll() {
     <div className="flex flex-col gap-4">
       <PageHeader
         crumbs={[{ label: 'Payroll', to: `/payroll/${ym}${company ? `?company=${company}` : ''}` }, { label: monthLabel(ym) }]}
-        title={shown === GENERATE_STEP ? 'Generate payroll' : `Step ${shown} · ${stepLabel(shown)}`}
+        title={shown === GENERATE_STEP ? generated ? 'Payroll reports and payslips' : 'Generate payroll' : `Step ${shown} · ${stepLabel(shown)}`}
         description={DESCRIBE[shown]}
         meta={<PeriodChip state={p.state} />}
         actions={

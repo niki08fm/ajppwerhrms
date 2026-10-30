@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowUpRight, ChevronDown, ChevronRight, Clock3, MapPin, UserCheck, UserX } from 'lucide-react';
+import { ArrowUpRight, ChevronRight, Clock3, MapPin, UserCheck, UserX } from 'lucide-react';
 import { addDays } from '@ajpwer/shared';
 import { api } from '@/services/api';
 import { cn, hhmm, mins } from '@/utils';
@@ -89,10 +89,9 @@ function TodayBody({ d, site, dept, set, nav, updatedAt, onPerson, drawer }) {
   const siteName = (id) => d.sites.find((s) => s.id === id)?.name ?? 'a site';
   const deptName = (id) => d.departments.find((x) => x.id === id)?.name ?? 'a department';
   const [panel, setPanel] = useState(null);
-  const [moreAttendance, setMoreAttendance] = useState(false);
   const primaryKeys = new Set(['in', isToday ? 'onsite' : 'nopunch', 'ot', 'absent']);
   const primaryViews = views.filter((view) => primaryKeys.has(view.key));
-  const additionalViews = views.filter((view) => !primaryKeys.has(view.key));
+  const attendanceChecks = ['late', 'shortfall', 'leave'].map((key) => views.find((view) => view.key === key));
 
   // Department first; then site. Absence and leave belong to no site, so they stay company-wide.
   const inDept = useMemo(() => d.people.filter((p) => !dept || p.dept_id === dept), [d.people, dept]);
@@ -170,7 +169,7 @@ function TodayBody({ d, site, dept, set, nav, updatedAt, onPerson, drawer }) {
       </div>
       {dept && <div className="text-[13px]"><button type="button" className="rounded-full border bg-card px-3 py-1.5 text-primary hover:bg-accent" onClick={() => set({ dept: null })}>{deptName(dept)} · Clear department</button></div>}
 
-      {/* Four daily decisions first. Less frequent checks are one action away. */}
+      {/* Main counts and time exceptions remain visible without expanding the page. */}
       <section aria-label="Attendance summary">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {primaryViews.map((v) => {
@@ -192,18 +191,13 @@ function TodayBody({ d, site, dept, set, nav, updatedAt, onPerson, drawer }) {
           );
         })}
       </div>
-      <div className="mt-3 flex items-center justify-between gap-3 text-[13px]">
-        <button type="button" aria-expanded={moreAttendance} aria-controls="today-additional-attendance" onClick={() => setMoreAttendance((open) => !open)} className="inline-flex min-h-8 items-center gap-1.5 rounded-md px-1 text-muted-foreground hover:text-foreground">
-          {moreAttendance ? 'Less attendance detail' : 'More attendance detail'}<ChevronDown aria-hidden className={cn('size-3.5 transition-transform', moreAttendance && 'rotate-180')} />
-        </button>
-        <Link to={attendanceLink()} className="inline-flex min-h-8 items-center gap-1.5 font-medium text-primary hover:underline">Open attendance<ArrowUpRight aria-hidden className="size-3.5" /></Link>
-      </div>
-      {moreAttendance && <div id="today-additional-attendance" role="region" aria-label="Additional attendance" className="mt-2 grid gap-2 rounded-xl border bg-card p-3 sm:grid-cols-3">
-        {additionalViews.map((view) => <button key={view.key} type="button" onClick={() => show(view.key)} className="flex items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-muted">
-          <span><span className="block text-sm font-medium">{view.label}</span><span className="block text-[12px] text-muted-foreground">{site && view.key === 'leave' ? dept ? 'All sites · department' : 'All sites · company' : view.sub}</span></span>
-          <span className="text-xl font-semibold num" style={{ color: listOf(view.key).length ? view.colour : 'var(--muted-foreground)' }}>{listOf(view.key).length}</span>
+      <div role="region" aria-label="Attendance checks" className="mt-3 grid gap-px overflow-hidden rounded-lg border bg-border sm:grid-cols-3">
+        {attendanceChecks.map((view) => <button key={view.key} type="button" onClick={() => show(view.key)} className="group flex min-w-0 items-center justify-between gap-3 bg-card px-4 py-3 text-left hover:bg-accent/60 focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-ring">
+          <span className="min-w-0"><span className="block text-sm font-medium">{view.label}</span><span className="block text-[12px] text-muted-foreground">{site && view.key === 'leave' ? dept ? 'All sites · department' : 'All sites · company' : view.sub}</span></span>
+          <span className="flex shrink-0 items-center gap-2"><span className="text-lg font-semibold num" style={{ color: listOf(view.key).length ? view.colour : 'var(--muted-foreground)' }}>{listOf(view.key).length}</span><ChevronRight aria-hidden className="size-3.5 text-muted-foreground group-hover:text-primary" /></span>
         </button>)}
-      </div>}
+      </div>
+      <div className="mt-2 flex justify-end text-[13px]"><Link to={attendanceLink()} className="inline-flex min-h-8 items-center gap-1.5 font-medium text-primary hover:underline">Open attendance<ArrowUpRight aria-hidden className="size-3.5" /></Link></div>
       </section>
 
       <div className="grid items-stretch gap-4 lg:grid-cols-2">
@@ -291,6 +285,7 @@ function PeoplePanel({ panel, d, label, siteName, deptName, link, onPerson, onCl
     const k = panel?.key;
     if ((k === 'in' || k === 'onsite') && p.ot_min > 0) return { t: `${mins(p.ot_min)} overtime`, c: 'text-warning-foreground dark:text-warning' };
     if (k === 'late' || (!k && p.views.includes('late'))) return { t: p.late_min ? `${mins(p.late_min)} late` : 'Late in', c: 'text-warning-foreground dark:text-warning' };
+    if (k === 'shortfall') return { t: `${mins(p.shift_shortfall_min)} short of required shift`, c: 'text-destructive' };
     if (k === 'early') return { t: p.early_min ? `Left ${mins(p.early_min)} early` : 'Left early', c: 'text-destructive' };
     if (k === 'ot') return { t: p.ot_min ? `${mins(p.ot_min)} overtime` : 'In overtime', c: 'text-warning-foreground dark:text-warning' };
     if (p.views.includes('absent')) return { t: 'No punch, no leave', c: 'text-destructive' };

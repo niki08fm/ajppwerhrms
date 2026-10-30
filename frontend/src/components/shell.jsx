@@ -74,15 +74,15 @@ const NAV = [
     group: 'Payroll',
     items: [
       { to: '/payroll', label: 'Monthly payroll', icon: <Banknote /> },
+      { to: '/held-salaries', label: 'Held salaries', icon: <PauseCircle /> },
+      { to: '/money', label: 'Loans and advances', icon: <HandCoins /> },
+      { to: '/exits', label: 'Exits and settlement', icon: <UserMinus /> },
     ],
   },
 ];
 
 const MORE_TOOLS = [
   { to: '/offers', label: 'Hiring and onboarding', icon: <UserPlus /> },
-  { to: '/exits', label: 'Exits and settlement', icon: <UserMinus /> },
-  { to: '/held-salaries', label: 'Held salaries', icon: <PauseCircle /> },
-  { to: '/money', label: 'Loans and advances', icon: <HandCoins /> },
   { to: '/analytics', label: 'Analytics', icon: <BarChart3 /> },
   { to: '/documents', label: 'Documents', icon: <FileCheck2 /> },
   { to: '/audit', label: 'Audit log', icon: <ScrollText /> },

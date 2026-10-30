@@ -5,6 +5,7 @@ import * as employeeController from '../controllers/employee.controller.js';
 import * as exitController from '../controllers/exit.controller.js';
 import * as holdController from '../controllers/hold.controller.js';
 import * as faceRegistrationController from '../controllers/face-registration.controller.js';
+import { employeePayslipsZip } from '../controllers/payslip-export.controller.js';
 
 export const employeesRouter = Router();
 
@@ -33,6 +34,7 @@ employeesRouter.get('/:id/tax', requirePerm('salary.read'), employeeController.g
 employeesRouter.get('/:id/attendance', requirePerm('attendance.read'), employeeController.getAttendance);
 employeesRouter.get('/:id/payslip-preview', requirePerm('salary.read'), employeeController.getPayslipPreview);
 employeesRouter.get('/:id/payslips', requirePerm('payroll.read'), employeeController.listPayslips);
+employeesRouter.get('/:id/payslips.zip', requirePerm('payroll.read', 'reports.export'), employeePayslipsZip);
 employeesRouter.get('/:id/leave-balances', requirePerm('attendance.read'), employeeController.getLeaveBalances);
 employeesRouter.get('/:id/timeline', requirePerm('people.read'), employeeController.getTimeline);
 

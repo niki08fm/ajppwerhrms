@@ -6,7 +6,7 @@ import { computeMonths } from '../services/attendance.service.js';
 import { dayRegister } from '../services/register.service.js';
 import { heldBackList } from '../services/payroll.service.js';
 import { holidaysBetween } from '../services/rules.service.js';
-import { inView, isExpected, liveFigures, minutesNow, VIEWS } from '../services/dayview.service.js';
+import { completedShiftShortfall, inView, isExpected, liveFigures, minutesNow, VIEWS } from '../services/dayview.service.js';
 import { KINDS, WINDOW_DAYS, waitingItems } from '../services/approvals.service.js';
 
 const today = () => istDate(new Date());
@@ -238,6 +238,8 @@ export const getOverview = asyncHandler(async (req, res) => {
         worked_min: live.worked_min,
         late_min: r.day.late_min,
         early_min: r.open_now ? 0 : r.day.early_min,
+        required_shift_min: r.day.required_shift_min,
+        shift_shortfall_min: completedShiftShortfall(r),
         ot_min: live.ot_min,
         open_now: r.open_now,
         current_site_id: r.current_site_id,

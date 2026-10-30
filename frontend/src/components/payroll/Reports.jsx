@@ -12,6 +12,7 @@ import { EmptyState, ErrorState, Notice, SkeletonRows } from '@/components/state
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/form';
+import { PayslipZipDownload } from './PayslipZipDownload';
 
 const REPORTS = [
   ['summary', 'Summary'],
@@ -111,6 +112,7 @@ export function Reports({ ym, period, company }) {
           )}
           <span className="text-[13px] text-muted-foreground num">{rep && tab !== 'summary' && `${rep.rows.length.toLocaleString('en-IN')} rows${q ? ` matching “${q}”` : ''}`}</span>
           <div className="flex-1" />
+          {tab === 'payslips' && <PayslipZipDownload ym={ym} company={company} q={q} disabled={r.isLoading || r.isError || !rep?.rows.length} />}
           <Button variant="outline" size="sm" loading={exporting === 'csv'} onClick={() => exp('csv')}>
             <Download /> CSV
           </Button>

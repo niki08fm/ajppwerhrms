@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useQueries, useQuery } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, Download, FileSpreadsheet, AlertTriangle } from 'lucide-react';
+import { ChevronLeft, ChevronRight, FileSpreadsheet, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
-import { addMonths } from '@ajpwer/shared';
+import { addMonths, GENERATE_STEP, LAST_REVIEW_STEP, STEP } from '@ajpwer/shared';
 import { api, download, errorMessage } from '@/services/api';
 import { useLookups } from '@/hooks/useLookups';
 import { cn, inr, monthLabel } from '@/utils';
@@ -10,6 +10,7 @@ import { Chip, ErrorState, SkeletonBlock } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
 import { currentStep, StepTracker, stepLabel } from './Tracker';
+import { PayslipZipDownload } from './PayslipZipDownload';
 
 export const useSummary = (ym, enabled = true) =>
   useQuery({ queryKey: ['payroll-summary', ym], queryFn: () => api.get(`/payroll/periods/${ym}/summary`).then((r) => r.data), enabled: !!ym && enabled, staleTime: 60_000 });
@@ -23,15 +24,15 @@ function monthState(p, ym, meta) {
   if (ym > meta.current) return { text: 'Upcoming', tone: 'text-muted-foreground' };
   if (!p) return { text: ym === meta.current ? 'Month not over' : 'Not started', tone: 'text-muted-foreground' };
   if (p.state !== 'DRAFT') return { text: STATE_WORD[p.state], tone: p.state === 'PAID' ? 'text-success' : 'text-primary' };
-  const n = p.steps_submitted.filter((s) => s <= 5).length;
-  return { text: n ? `In progress · ${n} of 5` : 'Not started', tone: n ? 'text-warning-foreground dark:text-warning' : 'text-muted-foreground' };
+  const n = p.steps_submitted.filter((s) => s <= LAST_REVIEW_STEP).length;
+  return { text: n ? `In progress · ${n} of ${LAST_REVIEW_STEP}` : 'Not started', tone: n ? 'text-warning-foreground dark:text-warning' : 'text-muted-foreground' };
 }
 
 /** The reports offered once a month is generated, with the format each is downloaded in. */
 const REPORT_TILES = [
   ['register', 'Salary register', 'Every person, every component'],
   ['bank', 'Bank transfer', 'Who is paid and how much; held salaries left out'],
-  ['payslips', 'Payslips', 'One per person, printable'],
+  ['payslips', 'Payslips', 'Download one PDF per employee in a ZIP folder'],
   ['pf', 'PF (ECR)', 'For the EPFO portal'],
   ['esi', 'ESI', 'For the ESIC portal'],
   ['pt', 'Professional tax', 'By state'],
@@ -45,6 +46,7 @@ const REPORT_TILES = [
  * what needs attention, and — once generated — its reports.
  */
 export function PayrollOverview({ ym, period, periods, meta, company, onOpen, onMonth }) {
+  const [moreReports, setMoreReports] = useState(false);
   const { data: lk } = useLookups();
   const today = lk?.today ?? new Date().toISOString().slice(0, 10);
   const byYm = Object.fromEntries(periods.map((p) => [p.period_ym, p]));
@@ -81,14 +83,14 @@ export function PayrollOverview({ ym, period, periods, meta, company, onOpen, on
   const attention = [];
   if (!generated) {
     attention.push(
-      cur === 6
-        ? { title: 'Generate the payroll', note: 'All five steps are submitted', chip: 'Ready', tone: 'success', step: 6 }
+      cur === GENERATE_STEP
+        ? { title: 'Generate the payroll', note: 'All review steps are submitted', chip: 'Ready', tone: 'success', step: GENERATE_STEP }
         : { title: `Step ${cur} · ${stepLabel(cur)}`, note: 'Where this month stopped', chip: 'Next step', tone: 'warning', step: cur },
     );
-  } else if (period.state === 'RUN') attention.push({ title: 'Lock the payroll', note: 'Generated, not locked: payslips can still change', chip: 'Next', tone: 'warning', step: 6 });
-  else if (period.state === 'LOCKED') attention.push({ title: 'Mark it paid', note: 'Once the bank transfer has gone', chip: 'Next', tone: 'warning', step: 6 });
-  if (summary.data?.errors) attention.push({ title: `${summary.data.errors} payslip${summary.data.errors > 1 ? 's' : ''} cannot be worked out`, note: 'Fix them or hold them in step 3', chip: 'Blocking', tone: 'destructive', step: 3 });
-  if (s?.on_hold) attention.push({ title: `${s.on_hold} salar${s.on_hold > 1 ? 'ies' : 'y'} on hold`, note: `${inr(s.on_hold_net)} kept out of the bank file`, chip: 'Held', tone: 'info', step: 3 });
+  } else if (period.state === 'RUN') attention.push({ title: 'Lock the payroll', note: 'Generated, not locked: payslips can still change', chip: 'Next', tone: 'warning', step: GENERATE_STEP });
+  else if (period.state === 'LOCKED') attention.push({ title: 'Mark it paid', note: 'Once the bank transfer has gone', chip: 'Next', tone: 'warning', step: GENERATE_STEP });
+  if (summary.data?.errors) attention.push({ title: `${summary.data.errors} payslip${summary.data.errors > 1 ? 's' : ''} cannot be worked out`, note: 'Open Issues to fix them', chip: 'Blocking', tone: 'destructive', step: STEP.ISSUES });
+  if (s?.on_hold) attention.push({ title: `${s.on_hold} salar${s.on_hold > 1 ? 'ies' : 'y'} on hold`, note: `${inr(s.on_hold_net)} kept out of the bank file`, chip: 'Held', tone: 'info', step: STEP.HELD });
   // Statutory dues on this month's pay: TDS by the 7th of the next month, PF and ESI by the 15th.
   if (ym < meta.current) {
     const next = addMonths(ym, 1);
@@ -166,27 +168,28 @@ export function PayrollOverview({ ym, period, periods, meta, company, onOpen, on
             title={`Reports and files · ${monthLabel(ym)}`}
             description={company ? `${company === 'TP' ? 'Techpi' : 'AJ Power'} only. Switch to both companies at the top for everyone.` : 'Made from the generated payroll. Pick a company at the top to download only its people.'}
             actions={
-              <Button size="sm" variant="outline" onClick={() => onOpen(6)}>
+              <Button size="sm" variant="outline" onClick={() => onOpen(GENERATE_STEP)}>
                 Open all reports
               </Button>
             }
           />
           <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-3">
-            {REPORT_TILES.map(([k, name, note]) => (
+            {REPORT_TILES.filter(([key]) => moreReports || ['payslips', 'register', 'bank'].includes(key)).map(([k, name, note]) => (
               <div key={k} className="flex flex-col gap-2 rounded-lg border bg-muted/30 px-4 py-3">
                 <div className="font-semibold">{name}</div>
                 <div className="flex-1 text-[13px] text-muted-foreground">{note}</div>
                 <div className="flex gap-2">
-                  <Button size="sm" variant="outline" loading={exporting === `${k}xlsx`} onClick={() => exp(k, 'xlsx')}>
+                  {k === 'payslips' ? <PayslipZipDownload ym={ym} company={company} /> : <Button size="sm" variant="outline" loading={exporting === `${k}xlsx`} onClick={() => exp(k, 'xlsx')}>
                     <FileSpreadsheet /> Excel
-                  </Button>
-                  <Button size="sm" variant="ghost" loading={exporting === `${k}csv`} onClick={() => exp(k, 'csv')}>
-                    <Download /> CSV
+                  </Button>}
+                  <Button size="sm" variant="ghost" onClick={() => onOpen(GENERATE_STEP, k)}>
+                    View {k === 'payslips' ? 'payslips' : 'report'}
                   </Button>
                 </div>
               </div>
             ))}
           </div>
+          <div className="border-t px-4 py-3"><Button size="sm" variant="ghost" aria-expanded={moreReports} onClick={() => setMoreReports((show) => !show)}>{moreReports ? 'Fewer reports' : 'Statutory and other reports'}</Button></div>
         </Card>
       )}
 

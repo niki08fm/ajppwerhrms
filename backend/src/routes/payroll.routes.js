@@ -3,6 +3,7 @@ import { requirePerm } from '../middleware/auth.js';
 import { idempotent } from '../middleware/idempotency.js';
 import * as payrollController from '../controllers/payroll.controller.js';
 import * as holdController from '../controllers/hold.controller.js';
+import { periodPayslipsZip } from '../controllers/payslip-export.controller.js';
 
 export const payrollRouter = Router();
 
@@ -48,3 +49,4 @@ payrollRouter.post('/payroll/periods/:ym/mark-paid', requirePerm('payroll.pay'),
 payrollRouter.get('/payroll/reports', requirePerm('payroll.read'), payrollController.listReports);
 payrollRouter.get('/payroll/periods/:ym/report/:name', requirePerm('payroll.read'), payrollController.getReport);
 payrollRouter.get('/payroll/periods/:ym/payslips/:employeeId', requirePerm('payroll.read'), payrollController.getPayslip);
+payrollRouter.get('/payroll/periods/:ym/payslips.zip', requirePerm('payroll.read', 'reports.export'), periodPayslipsZip);

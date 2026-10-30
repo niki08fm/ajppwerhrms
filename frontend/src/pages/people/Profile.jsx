@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Lock } from 'lucide-react';
+import { CalendarClock, Lock } from 'lucide-react';
 import { formatINR } from '@ajpwer/shared';
 import { api } from '@/services/api';
 import { useLookups } from '@/hooks/useLookups';
+import { useSession } from '@/context/SessionContext';
 import { hhmm, longDate, monthLabel } from '@/utils';
 import { Mono } from '@/components/bits';
 import { Chip, EmployeeStatusChip, ErrorState, SkeletonBlock } from '@/components/states';
@@ -80,11 +81,12 @@ function Fact({ label, value, sub, onClick }) {
 /** Who this is, where they stand today, and the things HR does to a person — always above the tabs. */
 function Header({ e, go, onAction }) {
   const { data: lk } = useLookups();
+  const { can } = useSession();
   const today = lk?.today;
   const month = today?.slice(0, 7);
   const hold = useHold(e.id);
   const leave = useQuery({ queryKey: ['emp-leave', e.id], queryFn: () => api.get(`/employees/${e.id}/leave-balances`).then((r) => r.data) });
-  const att = useQuery({ queryKey: ['emp-attendance', e.id, month], queryFn: () => api.get(`/employees/${e.id}/attendance`, { month }).then((r) => r.data), enabled: !!month });
+  const att = useQuery({ queryKey: ['emp-attendance', e.id, month], queryFn: () => api.get(`/employees/${e.id}/attendance`, { month }).then((r) => r.data), enabled: !!month && can('attendance.read') });
   const pay = useQuery({ queryKey: ['employee-pay', e.id], queryFn: () => api.get(`/employees/${e.id}/pay`).then((r) => r.data), enabled: !!e.salary });
   const money = useQuery({ queryKey: ['advances-loans', e.id], queryFn: () => api.get('/advances-loans', { q: e.code }).then((r) => r.data) });
 
@@ -125,6 +127,11 @@ function Header({ e, go, onAction }) {
         </div>
         {!e.read_only && (
           <div className="flex flex-wrap gap-2">
+            {can('attendance.read') && can('attendance.write') && (
+              <Button disabled={!today} onClick={() => onAction('attendance', today)}>
+                <CalendarClock /> Correct attendance
+              </Button>
+            )}
             <Button variant="outline" onClick={() => onAction('edit')}>
               Edit details
             </Button>
@@ -202,7 +209,20 @@ export default function Profile() {
   const [tab, movedSection] = TABS.some(([v]) => v === raw) ? [raw] : (MOVED[raw] ?? ['overview']);
   const section = sp.get('section') ?? movedSection;
   const [action, setAction] = useState(null);
+  const tabStrip = useRef(null);
   const q = useQuery({ queryKey: ['employee', id], queryFn: () => api.get(`/employees/${id}`).then((r) => r.data) });
+
+  // Deep links can select a tab beyond a phone's first few labels. Reveal that
+  // label horizontally without moving the employee or the page vertically.
+  useEffect(() => {
+    const list = tabStrip.current?.querySelector('[role="tablist"]');
+    const active = list?.querySelector('[role="tab"][data-state="active"]');
+    if (!list || !active) return;
+    const bounds = list.getBoundingClientRect();
+    const picked = active.getBoundingClientRect();
+    if (picked.left < bounds.left) list.scrollLeft -= bounds.left - picked.left + 4;
+    else if (picked.right > bounds.right) list.scrollLeft += picked.right - bounds.right + 4;
+  }, [id, tab, q.data]);
 
   // Land on the section an older link asked for.
   useEffect(() => {
@@ -222,6 +242,7 @@ export default function Profile() {
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   const e = q.data;
   const setTab = (t) => setSp({ tab: t }, { replace: true });
+  const startAction = (next, day) => next === 'attendance' ? setSp({ tab: 'attendance', day }, { replace: true }) : setAction(next);
   const onboardingFirst = e.status !== 'ACTIVE' && e.status !== 'NOTICE' && e.status !== 'EXITED';
   const close = () => setAction(null);
 
@@ -233,19 +254,21 @@ export default function Profile() {
         </Link>{' '}
         › <span className="font-medium text-foreground">{e.name}</span>
       </nav>
-      <Header e={e} go={setTab} onAction={setAction} />
+      <Header e={e} go={setTab} onAction={startAction} />
 
       <TabsRoot value={tab} onValueChange={setTab}>
-        <TabsList
-          tabs={TABS.map(([v, l]) => ({
-            value: v,
-            label: l,
-            badge:
-              v === 'overview' && e.onboarding.required_left > 0 && e.status !== 'ACTIVE' ? (
-                <span className="rounded-full bg-warning/25 px-1.5 text-[12px] leading-5 text-warning-foreground num">{e.onboarding.required_left}</span>
-              ) : undefined,
-          }))}
-        />
+        <div ref={tabStrip}>
+          <TabsList
+            tabs={TABS.map(([v, l]) => ({
+              value: v,
+              label: l,
+              badge:
+                v === 'overview' && e.onboarding.required_left > 0 && e.status !== 'ACTIVE' ? (
+                  <span className="rounded-full bg-warning/25 px-1.5 text-[12px] leading-5 text-warning-foreground num">{e.onboarding.required_left}</span>
+                ) : undefined,
+            }))}
+          />
+        </div>
 
         <div className="pt-5">
           <TabsContent value="overview">

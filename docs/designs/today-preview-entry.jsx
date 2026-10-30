@@ -13,7 +13,7 @@ const staff=[
  ['Priya Patel','south','eng',0,0],['Arun Nair','workshop','ops',0,0],['Deepa Roy','workshop','eng',45,0],
  ['Neha Verma','north','eng',0,0],['Manoj Singh','south','ops',0,20],['Meera Shah',null,'eng',0,0,'absent'],
  ['Sana Ali',null,'eng',0,0,'absent'],['Vijay Das',null,'ops',0,0,'leave'],['Ajay Paul',null,'ops',0,0,'leave']
-].map(([name,site,dept_id,ot_min,late_min,status],i)=>({id:`p${i}`,name,code:`EMP${String(i+1).padStart(3,'0')}`,sites:site?[site]:[],current_site_id:site&&i!==6?site:null,dept_id,ot_min,late_min,early_min:i===6?30:0,expected:status!=='leave',open_now:!!site&&i!==6,in_min:site?540+late_min:null,out_min:i===6?1020:null,status:status==='absent'?'ABSENT':status==='leave'?'ON_LEAVE':'PRESENT',views:status?[status]:['in',...(i!==6?['onsite']:['early']),...(ot_min?['ot']:[]),...(late_min?['late']:[])]}));
+].map(([name,site,dept_id,ot_min,late_min,status],i)=>({id:`p${i}`,name,code:`EMP${String(i+1).padStart(3,'0')}`,sites:site?[site]:[],current_site_id:site&&i!==6?site:null,dept_id,ot_min,late_min,early_min:i===6?60:0,required_shift_min:site?540:0,shift_shortfall_min:i===6?60:0,expected:status!=='leave',open_now:!!site&&i!==6,in_min:site?540+late_min:null,out_min:i===6?1020:null,status:status==='absent'?'ABSENT':status==='leave'?'ON_LEAVE':'PRESENT',views:status?[status]:['in',...(i!==6?['onsite']:['early','shortfall']),...(ot_min?['ot']:[]),...(late_min?['late']:[])]}));
 // Kiran moved from South to North today; current headcount must use North only.
 staff[2].sites=['south','north'];
 window.previewStaff=staff;

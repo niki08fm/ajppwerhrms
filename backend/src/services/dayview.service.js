@@ -1,4 +1,5 @@
 import { istMidnight } from '@ajpwer/shared';
+import { shiftShortfall } from './attendance-summary.service.js';
 
 /**
  * One vocabulary for a day, shared by the Today screen and the Attendance register,
@@ -11,9 +12,10 @@ import { istMidnight } from '@ajpwer/shared';
  *   absent   no punch and no leave on a working day
  *   late     punched in after the grace period
  *   early    left before the day was done (under the standard hours)
+ *   shortfall completed work below the required shift, excluding unsettled punches
  *   leave    approved leave
  */
-export const VIEWS = ['in', 'onsite', 'nopunch', 'ot', 'absent', 'late', 'early', 'leave'];
+export const VIEWS = ['in', 'onsite', 'nopunch', 'ot', 'absent', 'late', 'early', 'shortfall', 'leave'];
 
 const IN_STATUSES = ['PRESENT', 'HALF_DAY', 'SHORT', 'MISSING_PUNCH', 'HOLIDAY_WORKED', 'OFF_WORKED'];
 const NOT_EXPECTED = ['WEEKLY_OFF', 'HOLIDAY', 'NOT_JOINED', 'EXITED', 'ON_LEAVE'];
@@ -44,6 +46,9 @@ export function liveFigures(r, nowMin) {
 export const isIn = (r) => r.open_now || IN_STATUSES.includes(r.day.status);
 export const isExpected = (r) => !NOT_EXPECTED.includes(r.day.status) || isIn(r);
 
+/** A running shift is not unfinished work; use the same rule as the month's Late minutes. */
+export const completedShiftShortfall = (r) => r.open_now ? 0 : shiftShortfall(r.day);
+
 /** Does a register row belong to a view? `live` holds liveFigures() for the row. */
 export function inView(view, r, live) {
   switch (view) {
@@ -61,6 +66,8 @@ export function inView(view, r, live) {
       return r.day.late_min > 0;
     case 'early':
       return !r.open_now && r.day.early_min > 0;
+    case 'shortfall':
+      return completedShiftShortfall(r) > 0;
     case 'leave':
       return r.day.status === 'ON_LEAVE';
     default:

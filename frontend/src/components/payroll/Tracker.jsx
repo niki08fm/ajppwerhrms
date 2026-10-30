@@ -4,7 +4,7 @@ import { cn, longDate } from '@/utils';
 import { Chip } from '@/components/states';
 import { Card } from '@/components/ui/card';
 
-/** The first step not yet submitted, or 6 (generate) when all five are. */
+/** The first review not yet submitted, or the generate stage when all are ready. */
 export function currentStep(period) {
   for (let s = 1; s <= LAST_REVIEW_STEP; s++) if (!period.steps_submitted.includes(s)) return s;
   return GENERATE_STEP;
@@ -39,7 +39,7 @@ export function StepTracker({ period, selected, onOpen, notes = {} }) {
         ? 'Payslips are final. Mark it paid once the bank transfer has gone.'
         : 'Check the generated payroll, then lock it.'
     : cur === GENERATE_STEP
-      ? 'All five steps are submitted — generate the payroll.'
+      ? 'All review steps are submitted — generate the payroll.'
       : `Next: step ${cur} · ${stepLabel(cur)}${notes[cur] ? ` — ${notes[cur]}` : ''}`;
 
   return (
