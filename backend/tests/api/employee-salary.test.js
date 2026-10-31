@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { esiRatesSchema } from '@ajpwer/shared';
 import { prisma } from '../../src/config/db.js';
 import { toDbDate } from '../../src/utils/dbDates.js';
 import { buildFixture, R } from './fixture.js';
@@ -67,7 +68,7 @@ describe('Salary agreements belong to employees', () => {
     expect(pay.status).toBe(200);
     expect(pay.body.data).toMatchObject({ salary: null, preview: null });
     const configured = await prisma.statutoryRates.findFirstOrThrow({ orderBy: { valid_from: 'desc' } });
-    expect(pay.body.data.rates).toEqual({ pf: configured.pf, esi: configured.esi });
+    expect(pay.body.data.rates).toEqual({ pf: configured.pf, esi: esiRatesSchema.parse(configured.esi) });
     expect(await rows()).toEqual([]);
     expect((await f.agent.get(salaryPath())).body.data).toEqual([]);
     const result = await f.agent.post(salaryPath()).send(body('2025-02-01'));

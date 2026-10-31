@@ -5,6 +5,7 @@ import {
   CALENDAR_METHODS,
   holidaySchema,
   istDate,
+  lastOfMonth,
   parsePolicyRules,
   payGroupPatchSchema,
   payGroupSchema,
@@ -132,7 +133,7 @@ async function commonPtState() {
  * declarations). "% of CTC" components run on the agreed CTC, or on the CTC a
  * gross works out to.
  */
-async function sampleAt(components, sample) {
+async function sampleInputs(sample) {
   const date = today();
   const [rates, slabs, regimes, ptState] = await Promise.all([
     ratesOn(prisma, date).catch(() => ({ ...STATUTORY_MINIMUM_RATES })),
@@ -140,6 +141,11 @@ async function sampleAt(components, sample) {
     regimesOn(prisma, date).catch(() => null),
     sample.pt_state ? Promise.resolve(sample.pt_state) : commonPtState(),
   ]);
+  return { date, rates, slabs, regimes, ptState };
+}
+
+async function sampleAt(components, sample, inputs = null) {
+  const { date, rates, slabs, regimes, ptState } = inputs ?? await sampleInputs(sample);
   const regime = regimes?.NEW ?? SEED_TAX_REGIMES.find((r) => r.code === 'NEW');
   const breakup = salaryPreview({
     mode: sample.mode,
@@ -160,17 +166,19 @@ async function sampleAt(components, sample) {
 
 const AT_SAMPLE_GROSS = { mode: 'GROSS', amount: SAMPLE_GROSS, pf_enabled: true, esi_enabled: true };
 
-async function structureView(id) {
-  const s = await prisma.salaryStructure.findUniqueOrThrow({
+async function structureView(id, options = {}) {
+  const s = options.row ?? await prisma.salaryStructure.findUniqueOrThrow({
     where: { id },
     include: { components: { where: { deleted_at: null }, orderBy: { seq: 'asc' } } },
   });
   const components = toComponentDefs(s.components);
-  const referenced = await prisma.payslip.count({ where: { employee: { salaries: { some: { structure_id: id } } } }, take: 1 }).catch(() => 0);
-  const used = (await prisma.employeeSalary.count({ where: { structure_id: id } })) > 0;
   const d = toDbDate(today());
-  const people = await prisma.employeeSalary.count({ where: { structure_id: id, deleted_at: null, valid_from: { lte: d }, OR: [{ valid_to: null }, { valid_to: { gte: d } }] } });
-  const at = await sampleAt(components, AT_SAMPLE_GROSS);
+  // Any payslip reference through a salary row already implies used=true.
+  const [used, people, at] = await Promise.all([
+    options.used !== undefined ? options.used : prisma.employeeSalary.count({ where: { structure_id: id } }).then((n) => n > 0),
+    options.people !== undefined ? options.people : prisma.employeeSalary.count({ where: { structure_id: id, deleted_at: null, valid_from: { lte: d }, OR: [{ valid_to: null }, { valid_to: { gte: d } }] } }),
+    sampleAt(components, AT_SAMPLE_GROSS, options.inputs),
+  ]);
   const sample = at.breakup.structure;
   return {
     id: s.id,
@@ -180,7 +188,7 @@ async function structureView(id) {
     components,
     /** People paid on this structure today */
     people,
-    immutable: used || referenced > 0,
+    immutable: used,
     sample: {
       gross: SAMPLE_GROSS,
       annual_ctc: at.breakup.ctc.annual_ctc,
@@ -193,8 +201,18 @@ async function structureView(id) {
 }
 
 export const listStructures = asyncHandler(async (_req, res) => {
-  const rows = await prisma.salaryStructure.findMany({ where: { deleted_at: null }, orderBy: [{ name: 'asc' }, { created_at: 'desc' }], select: { id: true } });
-  res.json({ data: await Promise.all(rows.map((r) => structureView(r.id))) });
+  const rows = await prisma.salaryStructure.findMany({ where: { deleted_at: null }, orderBy: [{ name: 'asc' }, { created_at: 'desc' }], include: { components: { where: { deleted_at: null }, orderBy: { seq: 'asc' } } } });
+  if (!rows.length) return res.json({ data: [] });
+  const ids = rows.map((row) => row.id);
+  const d = toDbDate(today());
+  const [usedRows, peopleRows, inputs] = await Promise.all([
+    prisma.employeeSalary.groupBy({ by: ['structure_id'], where: { structure_id: { in: ids } }, _count: { _all: true } }),
+    prisma.employeeSalary.groupBy({ by: ['structure_id'], where: { structure_id: { in: ids }, deleted_at: null, valid_from: { lte: d }, OR: [{ valid_to: null }, { valid_to: { gte: d } }] }, _count: { _all: true } }),
+    sampleInputs(AT_SAMPLE_GROSS),
+  ]);
+  const used = new Set(usedRows.map((row) => row.structure_id));
+  const people = new Map(peopleRows.map((row) => [row.structure_id, row._count._all]));
+  res.json({ data: await Promise.all(rows.map((row) => structureView(row.id, { row, used: used.has(row.id), people: people.get(row.id) ?? 0, inputs }))) });
 });
 
 export const getStructure = asyncHandler(async (req, res) => {
@@ -254,20 +272,22 @@ export const createStructure = asyncHandler(async (req, res) => {
 
 // ─── Pay groups ──────────────────────────────────────────────────────────────
 
-async function payGroupView(id) {
-  const g = await prisma.payGroup.findUniqueOrThrow({
+const payGroupViewInclude = {
+  shift: true,
+  policies: { where: { deleted_at: null }, include: { policy: true } },
+  _count: { select: { employees: { where: { deleted_at: null, status: { in: ['ACTIVE', 'NOTICE', 'ONBOARDING'] } } } } },
+};
+
+async function payGroupView(id, options = {}) {
+  const g = options.row ?? await prisma.payGroup.findUniqueOrThrow({
     where: { id },
-    include: {
-      shift: true,
-      policies: { where: { deleted_at: null }, include: { policy: true } },
-      _count: { select: { employees: { where: { deleted_at: null, status: { in: ['ACTIVE', 'NOTICE', 'ONBOARDING'] } } } } },
-    },
+    include: payGroupViewInclude,
   });
   const date = today();
   const attached = g.policies.filter((x) => !x.policy.deleted_at).map((x) => toAttachedPolicy(x.policy));
   const kindsNow = new Set(attached.filter((p) => p.valid_from <= date && (!p.valid_to || p.valid_to >= date)).map((p) => p.kind));
   const ym = ymOf(date);
-  const hol = [...(await holidaysBetween(prisma, `${ym}-01`, `${ym}-31`)).keys()];
+  const hol = options.holidays ?? [...(await holidaysBetween(prisma, `${ym}-01`, lastOfMonth(ym))).keys()];
   return {
     id: g.id,
     name: g.name,
@@ -287,8 +307,12 @@ async function payGroupView(id) {
 }
 
 export const listPayGroups = asyncHandler(async (_req, res) => {
-  const rows = await prisma.payGroup.findMany({ where: { deleted_at: null }, orderBy: { name: 'asc' }, select: { id: true } });
-  res.json({ data: await Promise.all(rows.map((r) => payGroupView(r.id))) });
+  const ym = ymOf(today());
+  const [rows, holidays] = await Promise.all([
+    prisma.payGroup.findMany({ where: { deleted_at: null }, orderBy: { name: 'asc' }, include: payGroupViewInclude }),
+    holidaysBetween(prisma, `${ym}-01`, lastOfMonth(ym)),
+  ]);
+  res.json({ data: await Promise.all(rows.map((row) => payGroupView(row.id, { row, holidays: [...holidays.keys()] }))) });
 });
 
 export const getPayGroup = asyncHandler(async (req, res) => {

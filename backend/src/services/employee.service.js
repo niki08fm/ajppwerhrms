@@ -60,10 +60,10 @@ export function onboardingView(tasks) {
  * structure belongs to the employee's salary effective on this date.
  */
 export async function rulesThatApply(db, payGroupId, date, salaryStructureId = null) {
-  const rules = await payGroupRules(db, payGroupId);
-  const structure = salaryStructureId
-    ? await db.salaryStructure.findUnique({ where: { id: salaryStructureId }, select: { id: true, name: true } })
-    : null;
+  const [rules, structure] = await Promise.all([
+    payGroupRules(db, payGroupId),
+    salaryStructureId ? db.salaryStructure.findUnique({ where: { id: salaryStructureId }, select: { id: true, name: true } }) : null,
+  ]);
   const policies = POLICY_KINDS.map((kind) => {
     const p = pickPolicy(rules.policies, kind, date);
     return p

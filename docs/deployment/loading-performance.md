@@ -62,3 +62,33 @@ For this follow-up, run the AWS update commands above **and** promote the new ma
 frontend commit to Production in Vercel (or let the configured production branch deploy).
 Then refresh the app. Unlike the first backend-only batching fix, the smaller sidebar
 request needs the new frontend. No migration, reset or dependency installation is needed.
+
+## Bundled setup and employee-profile improvements
+
+Salary-structure lists now load components in bulk, share one statutory preview context,
+and aggregate current/history salary counts instead of fetching each structure and its
+rates separately. Immutability is still based on any salary use, including historical
+or future agreements. A payslip reference through an employee salary already implies
+that salary use, so the redundant payslip-count query is removed. Detail responses and
+preview calculations match the list responses in regression tests.
+
+Pay-group lists now load their relationships in bulk and reuse one monthly holiday read.
+Monthly holiday ranges end on the actual last day of the month. The same rules, active
+headcounts, policy warnings and divisor calculations remain in the response.
+
+Opening an employee profile performs its masked identity-read audit and salary lookup
+concurrently, but waits for both before replying. Pay-group rules and salary-structure
+labels are also fetched concurrently. Permissions and identity auditing are retained;
+these changes do not cache employee identity information or alter payroll calculations.
+
+Validation for this final pass: production build, 452 engine checks and 73 scoped API
+checks pass. API checks compare list/detail output, observe constant shared preview and
+holiday reads, and verify salary revisions, ESI choices, offers, immutable structures
+and identity audits. The ESI legacy-rate test now uses the schema's default OT-inclusion
+field introduced by the earlier ESI-setting commit.
+
+Deploy this final branch commit once on AWS, using the commands above, and promote the
+same commit in Vercel. It includes the earlier lighter sidebar frontend too, so separate
+deployment of preceding performance commits is unnecessary. No database migration,
+package changes, model downloads or employee-data replacement are required. Live speed
+still depends on request latency and workload; no localhost-equivalent timing is claimed.

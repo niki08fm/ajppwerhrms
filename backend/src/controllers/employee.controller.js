@@ -377,8 +377,10 @@ function assertWritable(e) {
 export const getEmployee = asyncHandler(async (req, res) => {
   const e = await mustLoad(req.params.id);
   // Every read of the PII table is logged, not just writes.
-  await auditReq(req, { action: 'pii.read', entity_type: 'employee_identity', entity_id: e.id, detail: { employee_id: e.id, masked: true } });
-  const view = await employeeView(prisma, e, today(), false);
+  const [, view] = await Promise.all([
+    auditReq(req, { action: 'pii.read', entity_type: 'employee_identity', entity_id: e.id, detail: { employee_id: e.id, masked: true } }),
+    employeeView(prisma, e, today(), false),
+  ]);
   const rules = await rulesThatApply(prisma, e.pay_group_id, today(), view.salary?.structure_id ?? null);
   res.json({ data: { ...view, rules } });
 });
