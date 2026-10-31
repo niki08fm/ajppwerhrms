@@ -23,7 +23,7 @@ function hrPunches(date, t) {
  */
 export async function dayRegister(db, date, employeeIds, today, opts = {}) {
   const d = toDbDate(date);
-  const employees = await db.employee.findMany({
+  const employees = opts.loaded ? opts.loaded.employees.filter((e) => fromDbDate(e.joined_on) <= date && (!e.last_day || fromDbDate(e.last_day) >= date)) : await db.employee.findMany({
     where: {
       deleted_at: null,
       status: { in: ['ACTIVE', 'NOTICE', 'EXITED'] },
@@ -35,22 +35,37 @@ export async function dayRegister(db, date, employeeIds, today, opts = {}) {
     orderBy: { name: 'asc' },
   });
   const ids = employees.map((e) => e.id);
-  const [punches, overrides, leaves, holidays, travel] = await Promise.all([
+  const [punches, overrides, leaves, holidays, travel] = opts.loaded ? [
+    opts.loaded.punches.get(date) ?? [],
+    opts.loaded.overrides.get(date) ?? [],
+    opts.loaded.leaves.filter((l) => fromDbDate(l.from_date) <= date && fromDbDate(l.to_date) >= date),
+    opts.loaded.holidays, opts.loaded.travel,
+  ] : await Promise.all([
     db.punch.findMany({ where: { employee_id: { in: ids }, work_date: d }, orderBy: { punched_at: 'asc' } }),
     db.attendanceOverride.findMany({ where: { employee_id: { in: ids }, work_date: d, deleted_at: null } }),
     db.leaveRequest.findMany({ where: { employee_id: { in: ids }, status: 'APPROVED', deleted_at: null, from_date: { lte: d }, to_date: { gte: d } } }),
     holidaysBetween(db, date, date),
     travelMinutes(db, ids, date, date),
   ]);
-  const rulesFor = payGroupRulesCache(db);
+  const rulesFor = opts.rulesFor ?? payGroupRulesCache(db);
+  const punchesByEmployee = new Map();
+  for (const p of punches) {
+    const rows = punchesByEmployee.get(p.employee_id) ?? [];
+    rows.push(p);
+    punchesByEmployee.set(p.employee_id, rows);
+  }
+  const overridesByEmployee = new Map();
+  for (const o of overrides) if (!overridesByEmployee.has(o.employee_id)) overridesByEmployee.set(o.employee_id, o);
+  const leavesByEmployee = new Map();
+  for (const l of leaves) if (!leavesByEmployee.has(l.employee_id)) leavesByEmployee.set(l.employee_id, l);
   const rows = [];
   for (const e of employees) {
     const rules = await rulesFor(e.pay_group_id);
     const policies = resolvePolicies(rules.policies, date);
-    const leave = leaves.find((l) => l.employee_id === e.id);
+    const leave = leavesByEmployee.get(e.id);
     const leavePolicy = pickPolicy(rules.policies, 'LEAVE', date)?.rules;
     const times = opts.times ?? null;
-    const ep = times ? hrPunches(date, times) : punches.filter((p) => p.employee_id === e.id).map(toEnginePunch);
+    const ep = times ? hrPunches(date, times) : (punchesByEmployee.get(e.id) ?? []).map(toEnginePunch);
     const isHoliday = holidays.has(date);
     const isOff = rules.weekly_off.includes(dayName(date));
     const day = computeDay({
@@ -76,7 +91,7 @@ export async function dayRegister(db, date, employeeIds, today, opts = {}) {
       shift_break_min: rules.shift.break_min,
     });
     const computed = { status: day.status, day_value: day.day_value, worked_min: day.worked_min, ot_min: day.ot_min, late_min: day.late_min, early_min: day.early_min, due_out_min: day.due_out_min, required_shift_min: day.required_shift_min, shift_shortfall_min: day.shift_shortfall_min };
-    const o = overrides.find((x) => x.employee_id === e.id);
+    const o = overridesByEmployee.get(e.id);
     // A correction settles the day: it is no longer flagged as left early.
     const eff = o
       ? { ...day, status: o.status, day_value: Number(o.day_value), worked_min: o.worked_min, ot_min: o.ot_min, late_min: o.late_min, early_min: 0, overridden: true, flags: [...day.flags, 'OVERRIDDEN'] }
@@ -114,4 +129,48 @@ export async function dayRegister(db, date, employeeIds, today, opts = {}) {
     });
   }
   return rows;
+}
+
+
+/** Fetch one date range once, then run the same day engine for each requested date. */
+export async function dayRegisters(db, dates, employeeIds, today) {
+  if (!dates.length) return new Map();
+  const ordered = [...new Set(dates)];
+  const sorted = [...ordered].sort();
+  const from = sorted[0];
+  const to = sorted.at(-1);
+  const employees = await db.employee.findMany({
+    where: {
+      deleted_at: null, status: { in: ['ACTIVE', 'NOTICE', 'EXITED'] },
+      joined_on: { lte: toDbDate(to) },
+      OR: [{ last_day: null }, { last_day: { gte: toDbDate(from) } }],
+      ...(employeeIds ? { id: { in: employeeIds } } : {}),
+    },
+    select: { id: true, code: true, name: true, designation: true, pay_group_id: true, joined_on: true, last_day: true, department: { select: { id: true, name: true, colour: true } } },
+    orderBy: { name: 'asc' },
+  });
+  if (!employees.length) return new Map(ordered.map((date) => [date, []]));
+  const ids = employees.map((e) => e.id);
+  const range = { gte: toDbDate(from), lte: toDbDate(to) };
+  const rulesFor = payGroupRulesCache(db);
+  const [punches, overrides, leaves, holidays, travel] = await Promise.all([
+    db.punch.findMany({ where: { employee_id: { in: ids }, work_date: range }, orderBy: { punched_at: 'asc' } }),
+    db.attendanceOverride.findMany({ where: { employee_id: { in: ids }, work_date: range, deleted_at: null } }),
+    db.leaveRequest.findMany({ where: { employee_id: { in: ids }, status: 'APPROVED', deleted_at: null, from_date: { lte: toDbDate(to) }, to_date: { gte: toDbDate(from) } } }),
+    holidaysBetween(db, from, to),
+    travelMinutes(db, ids, from, to),
+    Promise.all([...new Set(employees.map((e) => e.pay_group_id))].map(rulesFor)),
+  ]);
+  const byDate = (rows) => {
+    const grouped = new Map();
+    for (const row of rows) {
+      const date = fromDbDate(row.work_date);
+      const batch = grouped.get(date) ?? [];
+      batch.push(row);
+      grouped.set(date, batch);
+    }
+    return grouped;
+  };
+  const loaded = { employees, punches: byDate(punches), overrides: byDate(overrides), leaves, holidays, travel };
+  return new Map(await Promise.all(ordered.map(async (date) => [date, await dayRegister(db, date, employeeIds, today, { loaded, rulesFor })])));
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { waitingItems } from '../../src/services/approvals.service.js';
+import { invalidateApprovalsCache, waitingItems } from '../../src/services/approvals.service.js';
 
 /**
  * The Approvals list: one list of what waits on HR, built from face exceptions, the day
@@ -155,5 +155,53 @@ describe('waiting items', () => {
       expect(after.some((item) => item.kind === 'manual')).toBe(false);
       expect(sheet.status).toBe('EXPIRED');
     } finally { vi.useRealTimers(); }
+  });
+});
+
+
+describe('concurrent approval reads', () => {
+  it('shares one calculation for simultaneous sidebar and Today requests', async () => {
+    invalidateApprovalsCache();
+    const db = mockDb();
+    const read = vi.fn(register);
+    const [sidebar, today] = await Promise.all([waitingItems(db, NOW, { register: read }), waitingItems(db, NOW, { register: read })]);
+    expect(sidebar).toEqual(today);
+    expect(read).toHaveBeenCalledTimes(7);
+    await waitingItems(db, NOW, { register: read });
+    expect(read).toHaveBeenCalledTimes(7);
+  });
+  it('does not reuse a different database cache', async () => {
+    invalidateApprovalsCache();
+    const read = vi.fn(register);
+    await waitingItems(mockDb(), NOW, { register: read });
+    await waitingItems(mockDb(), NOW, { register: read });
+    expect(read).toHaveBeenCalledTimes(14);
+  });
+  it('does not let an old build repopulate the cache after invalidation', async () => {
+    invalidateApprovalsCache();
+    const db = mockDb();
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    let first = true;
+    const read = vi.fn(async () => { if (first) await gate; return []; });
+    const before = waitingItems(db, NOW, { register: read });
+    await Promise.resolve();
+    invalidateApprovalsCache();
+    first = false;
+    const after = await waitingItems(db, NOW, { register: read });
+    release();
+    await before;
+    const calls = read.mock.calls.length;
+    expect(await waitingItems(db, NOW, { register: read })).toEqual(after);
+    expect(read).toHaveBeenCalledTimes(calls);
+  });
+  it('allows retry after a failed shared calculation', async () => {
+    invalidateApprovalsCache();
+    const db = mockDb();
+    const read = vi.fn(async () => { throw new Error('Temporary DB failure'); });
+    const failed = await Promise.allSettled([waitingItems(db, NOW, { register: read }), waitingItems(db, NOW, { register: read })]);
+    expect(failed.every((result) => result.status === 'rejected')).toBe(true);
+    read.mockImplementation(register);
+    expect(await waitingItems(db, NOW, { register: read })).toHaveLength(6);
   });
 });

@@ -2,7 +2,7 @@ import { addDays, istDate, ymOf } from '@ajpwer/shared';
 import { fromDbDate, toDbDate } from '../utils/dbDates.js';
 import { attendanceFrozen, effectiveTravel } from './attendance.service.js';
 import { leaveTypesInUse } from './leave.service.js';
-import { dayRegister } from './register.service.js';
+import { dayRegister, dayRegisters } from './register.service.js';
 import { listManualAttendanceSheets } from './manual-attendance.service.js';
 
 /**
@@ -25,9 +25,13 @@ export const WINDOW_DAYS = 7;
 
 const TTL_MS = 10_000;
 let memo = null;
+let pending = null;
+let generation = 0;
 
 export function invalidateApprovalsCache() {
   memo = null;
+  pending = null;
+  generation++;
 }
 
 const dept = (d) => (d ? { id: d.id, name: d.name, colour: d.colour ?? null } : null);
@@ -38,20 +42,30 @@ const person = (e) => (e ? { id: e.id, code: e.code, name: e.name, department: d
  * decision. `register` is there for tests.
  */
 export async function waitingItems(db, now, { fresh = false, register = dayRegister } = {}) {
-  if (!fresh && memo && memo.now === now && Date.now() - memo.at < TTL_MS && !memo.items.some((item) => item.kind === 'manual' && Date.parse(item.detail.expires_at) <= Date.now())) return memo.items;
-  const items = await build(db, now, register);
-  memo = { now, at: Date.now(), items };
-  return items;
+  if (fresh) invalidateApprovalsCache();
+  if (memo && memo.db === db && memo.register === register && memo.now === now && Date.now() - memo.at < TTL_MS && !memo.items.some((item) => item.kind === 'manual' && Date.parse(item.detail.expires_at) <= Date.now())) return memo.items;
+  // Today and the navigation badge request the same list concurrently. Share
+  // pending work, but never reuse it across DBs, dates, or an invalidation.
+  if (pending && pending.db === db && pending.register === register && pending.now === now) return pending.promise;
+  const entry = { db, register, now, generation, promise: build(db, now, register) };
+  pending = entry;
+  try {
+    const items = await entry.promise;
+    if (pending === entry && generation === entry.generation) memo = { db, register, now, at: Date.now(), items };
+    return items;
+  } finally {
+    if (pending === entry) pending = null;
+  }
 }
 
 async function build(db, now, register) {
   const dates = Array.from({ length: WINDOW_DAYS }, (_, i) => addDays(now, -i));
   const frozen = new Map();
-  for (const ym of new Set(dates.map(ymOf))) frozen.set(ym, (await attendanceFrozen(db, ym)).frozen);
+  await Promise.all([...new Set(dates.map(ymOf))].map(async (ym) => frozen.set(ym, (await attendanceFrozen(db, ym)).frozen)));
   const open = dates.filter((d) => !frozen.get(ymOf(d)));
 
   const [registers, sites, faces, changes, leaves, types, transfers, manualSheets] = await Promise.all([
-    Promise.all(open.map((d) => register(db, d, undefined, now).then((rows) => [d, rows]))),
+    register === dayRegister ? dayRegisters(db, open, undefined, now) : Promise.all(open.map((d) => register(db, d, undefined, now).then((rows) => [d, rows]))),
     db.site.findMany({ select: { id: true, name: true } }),
     db.faceException.findMany({ where: { status: 'PENDING', deleted_at: null }, include: { site: { select: { id: true, name: true } } }, orderBy: { occurred_at: 'desc' }, take: 300 }),
     db.siteChange.findMany({ where: { reviewed_at: null, status: { not: 'PENDING' }, work_date: { gte: toDbDate(addDays(now, -60)) } }, orderBy: { left_at: 'desc' }, take: 300 }),
