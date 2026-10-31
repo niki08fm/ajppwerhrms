@@ -8,18 +8,9 @@ import { heldBackList } from '../services/payroll.service.js';
 import { holidaysBetween } from '../services/rules.service.js';
 import { completedShiftShortfall, inView, isExpected, liveFigures, minutesNow, VIEWS } from '../services/dayview.service.js';
 import { KINDS, WINDOW_DAYS, waitingItems } from '../services/approvals.service.js';
-import { dashboardCache as cache } from '../utils/dashboard-cache.js';
+import { cachedDashboard as cached } from '../utils/dashboard-cache.js';
 
 const today = () => istDate(new Date());
-
-/** Small in-memory cache: the dashboard reads cached aggregates, never a full recompute per load. */
-async function cached(key, ttlMs, fn) {
-  const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < ttlMs) return hit.v;
-  const v = await fn();
-  cache.set(key, { at: Date.now(), v });
-  return v;
-}
 
 // Each card is its own endpoint so one failing card never blanks the rest.
 export const getToday = asyncHandler(async (_req, res) => {
@@ -114,7 +105,12 @@ export const getNetByMonth = asyncHandler(async (_req, res) => {
   res.json({ data: rows.map((r) => ({ period_ym: r.period_ym, state: r.state, ...(r.totals ?? {}) })) });
 });
 
-export const getPeople = asyncHandler(async (_req, res) => {
+export const getPeople = asyncHandler(async (req, res) => {
+  // Navigation only needs the badge, not salary, document or employee totals.
+  if (req.query.summary === 'approvals') {
+    const items = await waitingItems(prisma, today());
+    return res.json({ data: { approvals: { total: items.length } } });
+  }
   const [pipeline, leavers, held, pendingFace, pendingLeave, expiring, holds, unpaidHeld, waitingNow] = await Promise.all([
     prisma.employee.groupBy({ by: ['status'], _count: true, where: { deleted_at: null } }),
     prisma.employee.findMany({ where: { deleted_at: null, status: 'NOTICE' }, select: { id: true, code: true, name: true, last_day: true }, orderBy: { last_day: 'asc' }, take: 10 }),
@@ -250,7 +246,7 @@ export const getOverview = asyncHandler(async (req, res) => {
 
   // Names for the people on today's moves and on hold.
   const ids = [...new Set([...holds.map((h) => h.employee_id), ...moves.map((m) => m.employee_id)].filter(Boolean))];
-  const named = new Map((await prisma.employee.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, code: true } })).map((e) => [e.id, e]));
+  const named = new Map((ids.length ? await prisma.employee.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, code: true } }) : []).map((e) => [e.id, e]));
   const nameOf = (id) => named.get(id)?.name ?? people.find((p) => p.id === id)?.name ?? null;
 
   // What waits on HR: the same list the Approvals screen shows, counted by kind.

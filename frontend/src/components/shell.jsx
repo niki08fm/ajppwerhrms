@@ -156,7 +156,7 @@ function NavItem({ it, collapsed, onNavigate, badge }) {
 function Sidebar({ onNavigate, collapsed, onToggleCollapsed }) {
   const { can } = useSession();
   const settings = SETTINGS.filter((item) => !item.permission || can(item.permission));
-  const { data } = useQuery({ queryKey: ['dashboard', 'people'], queryFn: () => api.get('/dashboard/people').then((r) => r.data), staleTime: 60_000 });
+  const { data } = useQuery({ queryKey: ['dashboard', 'people', 'approvals'], queryFn: () => api.get('/dashboard/people', { summary: 'approvals' }).then((r) => r.data), staleTime: 60_000, enabled: can('people.read') });
   const pending = data?.approvals.total ?? (data?.approvals.face ?? 0) + (data?.approvals.leave ?? 0);
   const { pathname } = useLocation();
   const nav = useNavigate();

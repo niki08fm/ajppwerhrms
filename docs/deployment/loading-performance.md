@@ -37,3 +37,28 @@ running. The health endpoint verifies the process, not database performance. Com
 opening Today/Approvals before and after this update under the same network and data.
 If login, a report, or a different screen remains slow, measure that particular request
 rather than assuming this change resolves every endpoint or changing cloud plans first.
+
+## Follow-up: lighter navigation and shared dashboard reads
+
+The sidebar now asks `/dashboard/people?summary=approvals` for just the approval count,
+instead of waiting for the full people dashboard's employee pipeline, leavers, salary
+holds, unpaid wages, document expiry and separate face/leave counts. The full endpoint
+response remains available for existing callers. Sidebar fetching is disabled when the
+signed-in user lacks its existing `people.read` permission; endpoint permissions remain
+unchanged. Its query key stays under the existing dashboard/people invalidation prefix.
+
+Dashboard cache entries now share a pending read as well as a completed result. TTL
+starts when data becomes ready, failures are retryable and clearing the cache during
+an attendance change prevents the old result from being reinserted. Overview also skips
+an employee-name lookup when there are no moves/holds to name. Live attendance figures
+and statutory calculations are unchanged.
+
+Validation: 452 engine checks, 20 scoped API checks and 23 browser checks passed, plus
+the production frontend build. Passive Prisma observation verifies that the badge omits
+unrelated salary/document/people summary reads while matching the full Approvals count.
+These tests show reduced work; they do not establish a live latency target.
+
+For this follow-up, run the AWS update commands above **and** promote the new matching
+frontend commit to Production in Vercel (or let the configured production branch deploy).
+Then refresh the app. Unlike the first backend-only batching fix, the smaller sidebar
+request needs the new frontend. No migration, reset or dependency installation is needed.
