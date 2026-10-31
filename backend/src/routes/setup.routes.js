@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { requirePerm } from '../middleware/auth.js';
+import {previewDeletion,removeRecord} from '../controllers/record-deletion.controller.js';
 import * as setupController from '../controllers/setup.controller.js';
 
 export const setupRouter = Router();
@@ -11,10 +12,14 @@ setupRouter.post('/policies/:key/versions', requirePerm('setup.write'), setupCon
 setupRouter.patch('/policies/:key/versions/:version', requirePerm('setup.write'), setupController.updatePolicyVersion);
 setupRouter.delete('/policies/:key/versions/:version', requirePerm('setup.write'), setupController.deletePolicyVersion);
 setupRouter.get('/structures', requirePerm('setup.read'), setupController.listStructures);
+setupRouter.get('/structures/:id/deletion',requirePerm('setup.read','setup.write'),previewDeletion('structure'));
+setupRouter.delete('/structures/:id',requirePerm('setup.write'),removeRecord('structure'));
 setupRouter.get('/structures/:id', requirePerm('setup.read'), setupController.getStructure);
 setupRouter.post('/structures/validate', requirePerm('setup.read'), setupController.validateStructureDraft);
 setupRouter.post('/structures', requirePerm('setup.write'), setupController.createStructure);
 setupRouter.get('/pay-groups', requirePerm('setup.read'), setupController.listPayGroups);
+setupRouter.get('/pay-groups/:id/deletion',requirePerm('setup.read','setup.write'),previewDeletion('group'));
+setupRouter.delete('/pay-groups/:id',requirePerm('setup.write'),removeRecord('group'));
 setupRouter.get('/pay-groups/:id', requirePerm('setup.read'), setupController.getPayGroup);
 setupRouter.post('/pay-groups', requirePerm('setup.write'), setupController.createPayGroup);
 setupRouter.get('/pay-groups/:id/employees', requirePerm('people.read'), setupController.listPayGroupEmployees);

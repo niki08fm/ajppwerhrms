@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requirePerm } from '../middleware/auth.js';
 import { frames, upload } from '../middleware/upload.js';
+import {previewDeletion,removeRecord} from '../controllers/record-deletion.controller.js';
 import * as employeeController from '../controllers/employee.controller.js';
 import * as exitController from '../controllers/exit.controller.js';
 import * as holdController from '../controllers/hold.controller.js';
@@ -14,6 +15,8 @@ employeesRouter.get('/export', requirePerm('people.read', 'reports.export'), emp
 employeesRouter.post('/', requirePerm('people.write', 'salary.write'), employeeController.createEmployee);
 employeesRouter.post('/bulk', requirePerm('people.write', 'salary.write'), employeeController.bulkAction);
 employeesRouter.post('/salary-preview', requirePerm('salary.read'), employeeController.getSalaryPreview);
+employeesRouter.get('/:id/deletion',requirePerm('people.read','people.write','salary.write'),previewDeletion('employee'));
+employeesRouter.delete('/:id',requirePerm('people.write','salary.write'),removeRecord('employee'));
 employeesRouter.get('/:id', requirePerm('people.read'), employeeController.getEmployee);
 employeesRouter.get('/:id/identity', requirePerm('pii.read'), employeeController.getIdentity);
 employeesRouter.patch('/:id', requirePerm('people.write'), employeeController.updateEmployee);

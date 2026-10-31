@@ -60,7 +60,7 @@ export const api = {
   get: (path, params, headers) => request('GET', path + qs(params), undefined, headers),
   post: (path, body, headers) => request('POST', path, body ?? {}, headers),
   patch: (path, body) => request('PATCH', path, body),
-  del: (path) => request('DELETE', path),
+  del: (path, body) => request('DELETE', path, body),
 };
 
 /** Download a file endpoint (CSV/XLSX) with the session cookie. */

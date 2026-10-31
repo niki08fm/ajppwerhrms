@@ -1,7 +1,9 @@
+import {useSession} from '@/context/SessionContext';
+import DeleteRecordDialog from '@/components/DeleteRecordDialog';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Pencil, Plus, Users } from 'lucide-react';
+import { AlertTriangle, Pencil, Plus, Users, Trash2 } from 'lucide-react';
 import { CALENDAR_METHOD_INFO, POLICY_KIND_LABELS } from '@ajpwer/shared';
 import { api } from '@/services/api';
 import { hhmm } from '@/utils';
@@ -13,6 +15,8 @@ import ManagePayGroupDialog from '@/components/setup/ManagePayGroupDialog';
 
 export default function PayGroups() {
   const nav = useNavigate();
+  const {can}=useSession();
+  const [removing,setRemoving]=useState(null);
   const [manage, setManage] = useState(null);
   const q = useQuery({ queryKey: ['pay-groups'], queryFn: () => api.get('/pay-groups').then((r) => r.data) });
   return (
@@ -52,6 +56,7 @@ export default function PayGroups() {
                 actions={
                   <>
                     <Button variant="outline" size="sm" onClick={() => setManage(g)}><Users /> Manage employees</Button>
+                    {can('setup.write')&&<Button variant="outline" size="sm" className="text-destructive" aria-label={`Delete pay group ${g.name}`} onClick={()=>setRemoving(g)}><Trash2/> Delete</Button>}
                     <Button variant="outline" size="sm" onClick={() => nav(`/setup/pay-groups/${g.id}/edit`)}><Pencil /> Edit</Button>
                   </>
                 }
@@ -105,6 +110,7 @@ export default function PayGroups() {
           ))}
         </div>
       )}
+      {removing&&<DeleteRecordDialog kind="group" id={removing.id} onClose={()=>setRemoving(null)} onManage={can('people.read')?()=>{setManage(removing);setRemoving(null);}:undefined}/>}
       {manage && <ManagePayGroupDialog group={q.data?.find((g) => g.id === manage.id) ?? manage} groups={q.data ?? []} onClose={() => setManage(null)} />}
     </div>
   );

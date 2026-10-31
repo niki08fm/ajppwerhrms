@@ -1,6 +1,10 @@
+import {useState} from 'react';
+import {useSession} from '@/context/SessionContext';
+import DeleteRecordDialog from '@/components/DeleteRecordDialog';
+import ManageStructureDialog from '@/components/setup/ManageStructureDialog';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Copy, Lock, Plus } from 'lucide-react';
+import { Copy, Lock, Plus, Trash2, Users } from 'lucide-react';
 import { describeComponentRule, formatINR } from '@ajpwer/shared';
 import { api } from '@/services/api';
 import { Money, PageHeader, ProportionBar } from '@/components/bits';
@@ -12,6 +16,8 @@ export const ruleOf = describeComponentRule;
 
 export default function Structures() {
   const nav = useNavigate();
+  const {can}=useSession();
+  const [removing,setRemoving]=useState(null),[managing,setManaging]=useState(null);
   const q = useQuery({ queryKey: ['structures'], queryFn: () => api.get('/structures').then((r) => r.data) });
   return (
     <div>
@@ -50,6 +56,8 @@ export default function Structures() {
                 }
                 actions={
                   <>
+                    {can('setup.write')&&can('people.read')&&<Button variant="outline" size="sm" onClick={()=>setManaging(s)}><Users/> Manage employees</Button>}
+                    {can('setup.write')&&<Button variant="outline" size="sm" className="text-destructive" aria-label={`Delete salary structure ${s.name}`} onClick={()=>setRemoving(s)}><Trash2/> Delete</Button>}
                     {s.immutable && (
                       <Chip tone="muted">
                         <Lock className="size-3" /> In use
@@ -110,6 +118,8 @@ export default function Structures() {
           ))}
         </div>
       )}
+      {removing&&<DeleteRecordDialog kind="structure" id={removing.id} onClose={()=>setRemoving(null)} onManage={can('people.read')?()=>{setManaging(removing);setRemoving(null);}:undefined}/>}
+      {managing&&<ManageStructureDialog structure={managing} onClose={()=>setManaging(null)}/>}
     </div>
   );
 }

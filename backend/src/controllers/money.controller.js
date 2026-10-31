@@ -7,6 +7,7 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { filterValues } from '../utils/list.js';
 import { prisma } from '../config/db.js';
 import { assertSettlementEditable } from '../services/exit.service.js';
+import { lockAssignments } from '../services/master-data-lock.js';
 import { computeSettlementFor, upsertSettlement } from '../services/settlement.service.js';
 
 // ─── Advances and loans ─────────────────────────────────────────────────────
@@ -72,6 +73,8 @@ export const createAdvance = asyncHandler(async (req, res) => {
   if (b.instalment > b.amount) throw new AppError('VALIDATION', 'The instalment cannot exceed the advance.', 422, 'instalment');
   const { actor, ip } = who(req);
   const a = await prisma.$transaction(async (tx) => {
+    await lockAssignments(tx);
+    if (!await tx.employee.findFirst({ where: { id: b.employee_id, deleted_at: null }, select: { id: true } })) throw notFound('That employee');
     const created = await tx.advance.create({
       data: { employee_id: b.employee_id, amount: BigInt(b.amount), reason: b.reason, granted_on: toDbDate(b.granted_on), instalment: BigInt(b.instalment), created_by: actor },
     });
@@ -86,6 +89,8 @@ export const createLoan = asyncHandler(async (req, res) => {
   const emi = divRound(b.principal, b.months, 'up');
   const { actor, ip } = who(req);
   const l = await prisma.$transaction(async (tx) => {
+    await lockAssignments(tx);
+    if (!await tx.employee.findFirst({ where: { id: b.employee_id, deleted_at: null }, select: { id: true } })) throw notFound('That employee');
     const created = await tx.loan.create({
       data: { employee_id: b.employee_id, loan_type: b.loan_type, principal: BigInt(b.principal), months: b.months, emi: BigInt(emi), started_on: toDbDate(b.started_on), created_by: actor },
     });

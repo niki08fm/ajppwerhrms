@@ -5,6 +5,7 @@ import { AppError, notFound } from '../utils/errors.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { prisma } from '../config/db.js';
 import { assertSettlementEditable, currentSettlement } from '../services/exit.service.js';
+import { lockAssignments } from '../services/master-data-lock.js';
 import { upsertSettlement } from '../services/settlement.service.js';
 
 /**
@@ -111,6 +112,8 @@ export const placeHold = asyncHandler(async (req, res) => {
   if (lastDay && b.from_ym > ymOf(lastDay)) throw new AppError('VALIDATION', `Their last day is ${lastDay}, before ${formatYearMonth(b.from_ym)}.`, 422, 'from_ym');
   const { actor, ip } = who(req);
   const hold = await prisma.$transaction(async (tx) => {
+    await lockAssignments(tx);
+    if (!await tx.employee.findFirst({ where: { id: e.id, deleted_at: null }, select: { id: true } })) throw notFound('That employee');
     const h = await tx.salaryHold.create({ data: { employee_id: e.id, from_ym: b.from_ym, reason: b.reason, created_by: actor } });
     await audit(tx, { actor, ip, action: 'salary.hold', entity_type: 'employee', entity_id: e.id, detail: { from_ym: b.from_ym, reason: b.reason } });
     return h;

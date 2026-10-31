@@ -1,5 +1,6 @@
 import { createReadStream, existsSync } from 'node:fs';
 import path from 'node:path';
+import {lockAssignments,assertAssignableGroup,assertAssignableStructure} from '../services/master-data-lock.js';
 import { z } from 'zod';
 import {
   documentCreateSchema,
@@ -206,6 +207,9 @@ export const createEmployee = asyncHandler(async (req, res) => {
   });
   const { actor, ip } = who(req);
   const created = await prisma.$transaction(async (tx) => {
+    await lockAssignments(tx);
+    await assertAssignableGroup(tx,b.pay_group_id);
+    await assertAssignableStructure(tx,b.salary.structure_id);
     await assertDepartmentAssignable(tx, b.department_id);
     const code = await nextEmployeeCode(tx);
     const e = await tx.employee.create({
@@ -294,6 +298,10 @@ export const bulkAction = asyncHandler(async (req, res) => {
   const { actor, ip } = who(req);
   await prisma.$transaction(
     async (tx) => {
+      await lockAssignments(tx);
+      if(b.action==='pay_group')await assertAssignableGroup(tx,b.value);
+      const current=await tx.employee.count({where:{id:{in:people.map(p=>p.id)},deleted_at:null,status:{not:'EXITED'}}});
+      if(current!==people.length)throw new AppError('STALE_UPDATE','Some employee records changed. Reload before applying this action.',409);
       for (const c of changes) {
         if (b.action === 'pay_group') await tx.employee.update({ where: { id: c.id }, data: { pay_group_id: b.value } });
         if (b.action === 'pt_state') await tx.employeeStatutory.update({ where: { employee_id: c.id }, data: { pt_state: b.value } });
@@ -407,9 +415,11 @@ export const updateEmployee = asyncHandler(async (req, res) => {
   if (core.dob !== undefined) data.dob = core.dob ? toDbDate(core.dob) : null;
   const { actor, ip } = who(req);
   await prisma.$transaction(async (tx) => {
+    await lockAssignments(tx);
+    if(core.pay_group_id)await assertAssignableGroup(tx,core.pay_group_id);
     // Guard the concurrency check inside the transaction too.
     if (core.department_id !== undefined) await assertDepartmentAssignable(tx, core.department_id);
-    const n1 = await tx.employee.updateMany({ where: { id: e.id, updated_at: e.updated_at ?? undefined }, data: data });
+    const n1 = await tx.employee.updateMany({ where: { id: e.id, deleted_at:null, updated_at: e.updated_at ?? undefined }, data: data });
     if (n1.count === 0) throw new AppError('STALE_UPDATE', 'Someone else changed this person since you opened the form. Reload and try again.', 409);
     const changes = diff(e, core);
     if (Object.keys(changes).length) await audit(tx, { actor, ip, action: 'employee.update', entity_type: 'employee', entity_id: e.id, detail: { changes } });

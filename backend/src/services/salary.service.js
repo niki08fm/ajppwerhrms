@@ -1,5 +1,6 @@
 import { addDays, addMonths, firstOfMonth, formatINR, formatYearMonth, lastOfMonth } from '@ajpwer/shared';
 import { ctcForGross, salaryPreview } from '../calculations/index.js';
+import {lockAssignments,assertAssignableStructure} from './master-data-lock.js';
 import { AppError } from '../utils/errors.js';
 import { fromDbDate, toDbDate } from '../utils/dbDates.js';
 import { ptSlabs, ratesOn, regimesOn, structureComponents } from './rules.service.js';
@@ -96,6 +97,7 @@ export function ctcBasisOf(salary, components, st, rates) {
  */
 export async function insertSalary(tx, employeeId, validFrom, row, actor) {
   await lockSalaryHistory(tx, employeeId);
+  await assertAssignableStructure(tx,row.structure_id);
   const before = await salaryRows(tx, employeeId);
   const current = await tx.employeeSalary.findFirst({
     where: { employee_id: employeeId, deleted_at: null, valid_from: { lte: toDbDate(validFrom) }, OR: [{ valid_to: null }, { valid_to: { gte: toDbDate(validFrom) } }] },
@@ -137,6 +139,7 @@ async function lockSalaryHistory(tx, employeeId) {
     SELECT p.id FROM payroll_period p
     WHERE EXISTS (SELECT 1 FROM payslip s WHERE s.period_id = p.id AND s.employee_id = ${employeeId}::uuid)
     ORDER BY p.id FOR UPDATE`;
+  await lockAssignments(tx);
   const [employee] = await tx.$queryRaw`
     SELECT id, status FROM employee WHERE id = ${employeeId}::uuid AND deleted_at IS NULL FOR UPDATE`;
   if (!employee) throw new AppError('NOT_FOUND', 'That employee was not found.', 404);
@@ -236,6 +239,7 @@ async function saveSalaryChanges(tx, before, after) {
 
 export async function editSalary(tx, employeeId, salaryId, validFrom, values) {
   await lockSalaryHistory(tx, employeeId);
+  if(values.structure_id)await assertAssignableStructure(tx,values.structure_id);
   const before = await salaryRows(tx, employeeId);
   const previous = before.find((row) => row.id === salaryId);
   if (!previous) throw new AppError('NOT_FOUND', 'That salary revision was not found.', 404);

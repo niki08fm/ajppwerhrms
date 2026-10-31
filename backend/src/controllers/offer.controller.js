@@ -7,6 +7,7 @@ import { prisma } from '../config/db.js';
 import { loadEmployee, markTask, nextEmployeeCode, onboardingView } from '../services/employee.service.js';
 import { issueLetter } from '../services/letter.service.js';
 import { resolveMonthlyGross } from '../services/salary.service.js';
+import { lockAssignments, assertAssignableGroup, assertAssignableStructure } from '../services/master-data-lock.js';
 import { assertDepartmentAssignable } from '../services/department.service.js';
 
 const today = () => istDate(new Date());
@@ -102,6 +103,9 @@ export const createOffer = asyncHandler(async (req, res) => {
   const { actor, ip } = who(req);
   const company = await prisma.company.findFirst();
   const out = await prisma.$transaction(async (tx) => {
+    await lockAssignments(tx);
+    await assertAssignableGroup(tx, b.pay_group_id);
+    await assertAssignableStructure(tx, b.structure_id);
     const dept = await assertDepartmentAssignable(tx, b.department_id);
     const code = await nextEmployeeCode(tx);
     const e = await tx.employee.create({
@@ -207,10 +211,13 @@ export const revokeOffer = asyncHandler(async (req, res) => {
  */
 async function onboardOffers(offerIds, joinedOn, actor, ip) {
   return prisma.$transaction(async (tx) => {
+    await lockAssignments(tx);
     const offers = await tx.offer.findMany({ where: { id: { in: offerIds }, deleted_at: null }, include: { employee: true } });
     if (offers.length !== new Set(offerIds).size) throw notFound('One of those offers');
     for (const offer of offers) {
       const name = offer.employee.name;
+      await assertAssignableGroup(tx, offer.employee.pay_group_id);
+      await assertAssignableStructure(tx, offer.structure_id);
       if (offer.revoked_on || offer.employee.deleted_at) throw new AppError('INVALID_TRANSITION', `The offer to ${name} was revoked.`, 409);
       if (offer.employee.status !== 'ACCEPTED') throw new AppError('INVALID_TRANSITION', `Mark the offer accepted before onboarding. ${name} is ${offer.employee.status.toLowerCase()}.`, 409);
       const date = joinedOn ?? fromDbDate(offer.employee.joined_on);

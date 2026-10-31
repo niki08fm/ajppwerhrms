@@ -34,6 +34,8 @@ import { randomUUID } from 'node:crypto';
 import { addDepartment, changeDepartment, listDepartmentSettings, removeDepartment } from '../services/department.service.js';
 import { editPolicyVersion, lockPolicyRulesRead, policyHistoryProtection, publishPolicyVersion, removePolicyVersion } from '../services/policy-history.service.js';
 
+import {lockAssignments} from '../services/master-data-lock.js';
+
 const today = () => istDate(new Date());
 
 const SAMPLE_GROSS = 24_000_00;
@@ -167,16 +169,17 @@ async function sampleAt(components, sample, inputs = null) {
 const AT_SAMPLE_GROSS = { mode: 'GROSS', amount: SAMPLE_GROSS, pf_enabled: true, esi_enabled: true };
 
 async function structureView(id, options = {}) {
-  const s = options.row ?? await prisma.salaryStructure.findUniqueOrThrow({
-    where: { id },
+  const s = options.row ?? await prisma.salaryStructure.findFirst({
+    where: { id, deleted_at:null },
     include: { components: { where: { deleted_at: null }, orderBy: { seq: 'asc' } } },
   });
+  if(!s)throw notFound('That salary structure');
   const components = toComponentDefs(s.components);
   const d = toDbDate(today());
   // Any payslip reference through a salary row already implies used=true.
   const [used, people, at] = await Promise.all([
     options.used !== undefined ? options.used : prisma.employeeSalary.count({ where: { structure_id: id } }).then((n) => n > 0),
-    options.people !== undefined ? options.people : prisma.employeeSalary.count({ where: { structure_id: id, deleted_at: null, valid_from: { lte: d }, OR: [{ valid_to: null }, { valid_to: { gte: d } }] } }),
+    options.people !== undefined ? options.people : prisma.employeeSalary.count({ where: { structure_id: id, deleted_at: null, employee:{deleted_at:null,status:{not:'EXITED'}}, valid_from: { lte: d }, OR: [{ valid_to: null }, { valid_to: { gte: d } }] } }),
     sampleAt(components, AT_SAMPLE_GROSS, options.inputs),
   ]);
   const sample = at.breakup.structure;
@@ -207,7 +210,7 @@ export const listStructures = asyncHandler(async (_req, res) => {
   const d = toDbDate(today());
   const [usedRows, peopleRows, inputs] = await Promise.all([
     prisma.employeeSalary.groupBy({ by: ['structure_id'], where: { structure_id: { in: ids } }, _count: { _all: true } }),
-    prisma.employeeSalary.groupBy({ by: ['structure_id'], where: { structure_id: { in: ids }, deleted_at: null, valid_from: { lte: d }, OR: [{ valid_to: null }, { valid_to: { gte: d } }] }, _count: { _all: true } }),
+    prisma.employeeSalary.groupBy({ by: ['structure_id'], where: { structure_id: { in: ids }, deleted_at: null, employee:{deleted_at:null,status:{not:'EXITED'}}, valid_from: { lte: d }, OR: [{ valid_to: null }, { valid_to: { gte: d } }] }, _count: { _all: true } }),
     sampleInputs(AT_SAMPLE_GROSS),
   ]);
   const used = new Set(usedRows.map((row) => row.structure_id));
@@ -361,6 +364,7 @@ export const updatePayGroup = asyncHandler(async (req, res) => {
   const b = payGroupPatchSchema.parse(req.body);
   const { actor, ip } = who(req);
   await prisma.$transaction(async (tx) => {
+    await lockAssignments(tx);
     await lockPolicyRulesRead(tx);
     const before = await tx.payGroup.findFirst({ where: { id: req.params.id, deleted_at: null }, include: { policies: { where: { deleted_at: null } } } });
     if (!before) throw notFound('That pay group');
@@ -407,6 +411,7 @@ export const movePayGroupEmployees = asyncHandler(async (req, res) => {
   const ids = [...new Set(inputIds)].sort();
   const { actor, ip } = who(req);
   const result = await prisma.$transaction(async (tx) => {
+    await lockAssignments(tx);
     const group = await tx.payGroup.findFirst({ where: { id: req.params.id, deleted_at: null }, select: { id: true } });
     if (!group) throw notFound('That pay group');
     // Lock in stable order so overlapping membership requests audit the actual prior group.

@@ -34,6 +34,8 @@ export function refreshEmployeePay(qc, employeeId) {
     qc.invalidateQueries({ queryKey: [key, employeeId] });
   for (const key of [
     'people',
+    'structures',
+    'deletion-preview',
     'pay-groups',
     'pay-group',
     'pay-group-employees',

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { CalendarClock, Lock } from 'lucide-react';
+import { CalendarClock, Lock, Trash2 } from 'lucide-react';
+import DeleteRecordDialog from '@/components/DeleteRecordDialog';
 import { formatINR } from '@ajpwer/shared';
 import { api } from '@/services/api';
 import { useLookups } from '@/hooks/useLookups';
@@ -158,6 +159,7 @@ function Header({ e, go, onAction }) {
           </div>
         )}
       </div>
+      {can('people.write')&&can('salary.write')&&<div className="flex justify-end px-5 pt-3"><Button variant="outline" size="sm" className="text-destructive" onClick={()=>onAction('delete')}><Trash2/> Delete employee</Button></div>}
       <div className="grid grid-cols-2 gap-2.5 p-5 md:grid-cols-3 xl:grid-cols-6">
         <Fact label="Joined" value={e.joined_on ? longDate(e.joined_on) : 'Not set yet'} sub={tenure(e.joined_on, today)} onClick={() => go('overview')} />
         <Fact label="Pay group · shift" value={e.pay_group.name} sub={shift ? `${shift.name} ${hhmm(shift.start_min)}–${hhmm(shift.end_min)}` : undefined} onClick={() => go('salary')} />
@@ -209,6 +211,7 @@ export default function Profile() {
   const [tab, movedSection] = TABS.some(([v]) => v === raw) ? [raw] : (MOVED[raw] ?? ['overview']);
   const section = sp.get('section') ?? movedSection;
   const [action, setAction] = useState(null);
+  const nav=useNavigate();
   const tabStrip = useRef(null);
   const q = useQuery({ queryKey: ['employee', id], queryFn: () => api.get(`/employees/${id}`).then((r) => r.data) });
 
@@ -298,6 +301,7 @@ export default function Profile() {
         </div>
       </TabsRoot>
 
+      {action==='delete'&&<DeleteRecordDialog kind="employee" id={e.id} onClose={close} onDeleted={()=>nav('/people',{replace:true})}/>}
       {action === 'edit' && <EditDialog e={e} onClose={close} />}
       {action === 'revise' && <ReviseDialog e={e} onClose={close} />}
       {action === 'advance' && <GrantDialog type="ADVANCE" employee={{ id: e.id, name: e.name }} onClose={close} />}
