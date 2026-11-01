@@ -148,7 +148,7 @@ export function EmployeeStatusChip({ status }) {
 
 const PERIOD_TONE = { DRAFT: 'muted', RUN: 'info', LOCKED: 'warning', PAID: 'success' };
 export function PeriodChip({ state }) {
-  return <Chip tone={PERIOD_TONE[state] ?? 'default'}>{state === 'RUN' ? 'Run, not locked' : state.charAt(0) + state.slice(1).toLowerCase()}</Chip>;
+  return <Chip tone={PERIOD_TONE[state] ?? 'default'}>{state === 'RUN' ? 'Generated · not locked' : state.charAt(0) + state.slice(1).toLowerCase()}</Chip>;
 }
 
 export function SeverityChip({ severity }) {

@@ -399,3 +399,77 @@
     max-width: 240px;
   }
 }
+
+/* Payroll is an operational workspace: quiet surfaces, compact context and one next action. */
+.payroll-workspace {
+  --payroll-rule: color-mix(in oklch, var(--border) 88%, var(--foreground) 12%);
+}
+.payroll-workspace > div:first-child {
+  margin-bottom: 0.5rem;
+}
+.payroll-workspace :is(h1, h2, h3, h4),
+.payroll-workspace .font-display,
+.payroll-dialog .font-display {
+  font-family: var(--font-sans);
+  letter-spacing: -0.02em;
+}
+.payroll-workspace h1 {
+  font-size: 27px;
+  letter-spacing: -0.025em;
+}
+.payroll-workspace :is(.payroll-month-summary, .payroll-checklist) {
+  box-shadow: none;
+  border-color: var(--payroll-rule);
+}
+.payroll-eyebrow {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.payroll-workspace .payroll-step[aria-current='step'] {
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+.payroll-workspace .payroll-review-footer {
+  border-color: color-mix(in oklch, var(--primary) 28%, var(--border));
+  box-shadow: 0 -3px 16px rgb(15 35 45 / 0.04), 0 2px 5px rgb(15 35 45 / 0.04);
+}
+.payroll-workspace .payroll-generate-figures > div {
+  background: var(--muted);
+  box-shadow: none;
+}
+.payroll-scope-note {
+  border-left: 2px solid var(--primary);
+  padding-left: 0.75rem;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.payroll-workspace .data-table thead th {
+  background: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.035em;
+}
+.payroll-workspace .data-table tbody td {
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+}
+.payroll-workspace .data-table tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--muted) 30%, var(--card));
+}
+.payroll-workspace .data-table tbody tr:hover {
+  background: var(--accent);
+}
+.payroll-report-context {
+  padding: 0.25rem 0;
+}
+
+.payroll-workspace .grid > .h-full.bg-card {
+  padding: 1rem;
+  box-shadow: none;
+}
+.payroll-workspace .grid > .h-full.bg-card > div:first-child {
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 500;
+}

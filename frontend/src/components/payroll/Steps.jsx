@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowRight, Lock, LockOpen, PauseCircle, Play, Plus, RotateCcw, Undo2, Users, Wallet } from 'lucide-react';
+import { ArrowRight, Lock, LockOpen, PauseCircle, Play, Plus, RotateCcw, Undo2, Users, Wallet, MoreHorizontal } from 'lucide-react';
 import { toast } from 'sonner';
 import { DAY_STATUS_LABELS, firstOfMonth, istDate, LAST_REVIEW_STEP, lastOfMonth, STEP } from '@ajpwer/shared';
 import { api, ApiError, errorMessage } from '@/services/api';
@@ -14,7 +14,7 @@ import { Chip, EmployeeStatusChip, EmptyState, ErrorState, LockedNotice, Notice,
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
 import { Field, Input, MoneyInput, Segmented, Select } from '@/components/ui/form';
-import { Checkbox, Dialog, Drawer } from '@/components/ui/overlay';
+import { Checkbox, Dialog, Drawer, Menu } from '@/components/ui/overlay';
 import { CorrectionDrawer } from '../attendance/CorrectionDrawer';
 import { SettlementPanel } from '../../pages/people/SettlementStatement';
 import { heldMonthStatus, HoldDialog, ReleaseDialog } from './HoldDialogs';
@@ -106,9 +106,9 @@ export function StepFooter({
   const nextLabel = n === LAST_REVIEW_STEP ? 'Continue to generate payroll' : `Continue to ${nextTask}`;
   const repeated = period.steps_submitted.filter(step => step >= n).sort((a, b) => a - b);
   return <>
-    <Card className="sticky bottom-3 z-10 flex flex-wrap items-center gap-3 px-5 py-3.5 shadow-md">
+    <Card className="payroll-review-footer sticky bottom-3 z-10 flex flex-wrap items-center gap-3 px-5 py-3.5 shadow-md">
       <div className="min-w-60 flex-1">
-        <div className="font-semibold">{submitted ? `Review complete${by ? ` · ${longDate(by.on)} · ${by.by}` : ''}` : reviewLoading ? 'Updating this review…' : reviewError ? 'This review could not be loaded' : blocked ? blockedNote : !canConfirm ? 'View-only access' : 'Ready to continue?'}</div>
+        <div className="font-semibold">{submitted ? `Review complete${by ? ` · ${longDate(by.on)} · ${by.by}` : ''}` : reviewLoading ? 'Updating this review…' : reviewError ? 'This review could not be loaded' : blocked ? blockedNote : !canConfirm ? 'View-only access' : submit.isPending ? 'Saving confirmation…' : `${stepLabel(n)} review`}</div>
         <div className="text-[13px] text-muted-foreground">
           {submitted ? locked ? 'Payslips have been generated. Return to the payroll overview to make changes.' : 'You can reopen this review if anything needs correcting.' : reviewError ? 'Try again above before confirming this review.' : reviewLoading ? 'Please wait for the latest information.' : blocked ? 'Resolve the items above before continuing.' : !canConfirm ? 'You can review these details. A payroll manager needs to confirm them.' : note ?? `Confirm this review to continue to ${nextTask}.`}
         </div>
@@ -122,7 +122,7 @@ export function StepFooter({
       })}>{label}<ArrowRight /></Button>}
       {submit.isError && <p role="alert" className="w-full text-sm text-destructive">{errorMessage(submit.error)}</p>}
     </Card>
-    <Dialog open={confirmReopen} onOpenChange={open => {
+    <Dialog className="payroll-dialog" open={confirmReopen} onOpenChange={open => {
       if (!reopen.isPending) setConfirmReopen(open);
     }} title="Reopen this review?" description={`${stepLabel(n)} · ${monthLabel(ym)}`} footer={<><Button variant="outline" disabled={reopen.isPending} onClick={() => setConfirmReopen(false)}>Keep review complete</Button><Button loading={reopen.isPending} disabled={locked} onClick={() => reopen.mutate({
         month: ym,
@@ -351,12 +351,13 @@ export function StepJoiners({ ym, period, onNext }) {
 // ─── Step 3: issues ────────────────────────────────────────────────────
 
 export function StepIssues({ ym, period, onNext }) {
+  const { can } = useSession();
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['payroll-issues', ym], queryFn: () => api.get(`/payroll/periods/${ym}/issues`).then((r) => r.data) });
   const [holding, setHolding] = useState(null);
   const [reason, setReason] = useState('');
   const [kindFilter, setKindFilter] = useState(null);
-  const locked = period.steps_submitted.includes(STEP.ISSUES) || period.state !== 'DRAFT';
+  const locked = !can('payroll.run') || period.steps_submitted.includes(STEP.ISSUES) || period.state !== 'DRAFT';
   const act = useMutation({
     mutationFn: async ({ ids, how }) => {
       if (how === 'LEAVE_OUT') return api.post(`/payroll/periods/${ym}/exclusions`, { employee_ids: ids, reason });
@@ -378,8 +379,8 @@ export function StepIssues({ ym, period, onNext }) {
     <>
       <Card className="overflow-hidden">
         <CardHeader
-          title={`Settle before paying${d ? ` · ${d.issues.length}` : ''}`}
-          description="Something would stop pay going out, or needs a look. Fix it, hold the salary (worked out, paid when released — enough for a missing bank account), or leave the person out of this month. Warnings pass through."
+          title={`Employee details to resolve${d ? ` · ${d.issues.length}` : ''}`}
+          description="Correct blocking details before continuing. Hold salary to delay payment while keeping its payslip, or leave an employee out of this month. Warnings can be reviewed and confirmed."
           actions={
             <span className="flex items-center gap-2">
               {d && <Chip tone={blocking ? 'warning' : 'success'}>{blocking ? `${blocking} blocking` : 'Nothing blocking'}</Chip>}
@@ -420,7 +421,7 @@ export function StepIssues({ ym, period, onNext }) {
                     </div>
                     <span className="flex flex-wrap gap-1.5">
                       <Link to={`/people/${r.employee_id}?tab=${r.fix_tab}`} target="_blank" className="rounded-md border px-2.5 py-1 text-[13px] hover:bg-accent">
-                        Fix it
+                        Open employee details
                       </Link>
                       {!locked && (
                         <>
@@ -457,7 +458,7 @@ export function StepIssues({ ym, period, onNext }) {
         blocked={blocking > 0}
         blockedNote={`${blocking} blocking issue${blocking === 1 ? '' : 's'} still to settle`}
       />
-      <Dialog
+      <Dialog className="payroll-dialog"
         open={!!holding}
         onOpenChange={(o) => !o && setHolding(null)}
         title={holding?.how === 'LEAVE_OUT' ? `Leave ${holding?.name} out of ${monthLabel(ym)}` : `Hold ${holding?.name}'s salary`}
@@ -486,12 +487,13 @@ export function StepIssues({ ym, period, onNext }) {
 // ─── Step 4: held salary ────────────────────────────────────────────────────
 
 export function StepHeld({ ym, period, onNext }) {
+  const { can } = useSession();
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['payroll-issues', ym], queryFn: () => api.get(`/payroll/periods/${ym}/issues`).then((r) => r.data) });
   const holds = useQuery({ queryKey: ['held-salaries'], queryFn: () => api.get('/held-salaries').then((r) => r.data) });
   const [holdingAny, setHoldingAny] = useState(false);
   const [releasing, setReleasing] = useState(null);
-  const locked = period.steps_submitted.includes(STEP.HELD) || period.state !== 'DRAFT';
+  const locked = !can('payroll.run') || period.steps_submitted.includes(STEP.HELD) || period.state !== 'DRAFT';
   const include = useMutation({
     mutationFn: (id) => api.del(`/payroll/periods/${ym}/exclusions/${id}`),
     onSuccess: () => refreshPeriod(qc, ym),
@@ -548,12 +550,12 @@ export function StepHeld({ ym, period, onNext }) {
                       </div>
                     )}
                   </div>
-                  {heldMonths.length > 0 && (
+                  {!locked && heldMonths.length > 0 && (
                     <Button size="sm" onClick={() => setReleasing(x)}>
                       Release
                     </Button>
                   )}
-                  {!x.released_at && !x.months.length && (
+                  {!locked && !x.released_at && !x.months.length && (
                     <Button size="sm" variant="outline" loading={stop.isPending && stop.variables?.id === x.id} onClick={() => stop.mutate(x)}>
                       Stop holding
                     </Button>
@@ -583,7 +585,7 @@ export function StepHeld({ ym, period, onNext }) {
         </Card>
       )}
 
-      <StepFooter reviewLoading={q.isFetching} reviewError={q.isError} period={period} n={STEP.HELD} ym={ym} onNext={onNext} label="Confirm held salaries" />
+      <StepFooter reviewLoading={q.isFetching || holds.isFetching} reviewError={q.isError || holds.isError} period={period} n={STEP.HELD} ym={ym} onNext={onNext} label="Confirm held salaries" />
       {holdingAny && h && <HoldDialog openMonths={h.open_months} onClose={() => { setHoldingAny(false); refreshPeriod(qc, ym); }} />}
       {releasing && h && <ReleaseDialog hold={releasing} openMonths={h.open_months} runMonths={h.run_months} onClose={() => { setReleasing(null); refreshPeriod(qc, ym); }} />}
     </>
@@ -599,6 +601,7 @@ const MODES = [
 ];
 
 export function StepFnf({ ym, period, onNext }) {
+  const { can } = useSession();
   const qc = useQueryClient();
   const { data: lk } = useLookups();
   const q = useQuery({ queryKey: ['payroll-fnf', ym], queryFn: () => api.get(`/payroll/periods/${ym}/fnf`).then((r) => r.data) });
@@ -705,7 +708,7 @@ export function StepFnf({ ym, period, onNext }) {
                             onChange={(m) => pick(r, m)}
                             options={MODES.map((m) => ({
                               ...m,
-                              disabled: !!closed || change.isPending || (m.value !== 'LATER' && notReady) || (m.value === 'SEPARATE' && r.net < 0),
+                              disabled: !can('payroll.run') || !!closed || change.isPending || (m.value !== 'LATER' && notReady) || (m.value === 'SEPARATE' && r.net < 0),
                             }))}
                           />
                         )}
@@ -761,7 +764,7 @@ export function StepFnf({ ym, period, onNext }) {
       >
         {editing && <SettlementPanel employeeId={editing.employee.id} />}
       </Drawer>
-      <Dialog
+      <Dialog className="payroll-dialog"
         open={!!separate}
         onOpenChange={(o) => !o && setSeparate(null)}
         title={separate ? `${separate.employee.name}'s F&F, paid separately` : ''}
@@ -771,7 +774,7 @@ export function StepFnf({ ym, period, onNext }) {
             <Button variant="outline" onClick={() => setSeparate(null)}>
               Cancel
             </Button>
-            <Button loading={change.isPending} disabled={!sep.paid_on || sep.payment_ref.trim().length < 2} onClick={() => change.mutate({ row: separate, mode: 'SEPARATE', paid: sep })}>
+            <Button loading={change.isPending} disabled={!can('payroll.run') || !sep.paid_on || sep.payment_ref.trim().length < 2} onClick={() => change.mutate({ row: separate, mode: 'SEPARATE', paid: sep })}>
               Record as paid separately
             </Button>
           </>
@@ -805,6 +808,7 @@ function usePeople() {
 }
 
 export function StepAdhoc({ ym, period, onNext }) {
+  const { can } = useSession();
   const qc = useQueryClient();
   const { data: lk } = useLookups();
   const q = useQuery({ queryKey: ['adhoc', ym], queryFn: () => api.get('/adhoc', { period: ym }) });
@@ -812,7 +816,7 @@ export function StepAdhoc({ ym, period, onNext }) {
   const loans = useQuery({ queryKey: ['advances-loans', 'all'], queryFn: () => api.get('/advances-loans').then((r) => r.data), retry: false });
   const [adding, setAdding] = useState(false);
   const [viewing, setViewing] = useState(null);
-  const locked = period.steps_submitted.includes(STEP.ADHOC) || period.state !== 'DRAFT';
+  const locked = !can('payroll.run') || period.steps_submitted.includes(STEP.ADHOC) || period.state !== 'DRAFT';
   const del = useMutation({
     mutationFn: (id) => api.del(`/adhoc/${id}`),
     onSuccess: () => {
@@ -842,6 +846,7 @@ export function StepAdhoc({ ym, period, onNext }) {
 
   return (
     <>
+      {loans.isError && <Notice tone="warning">Loan recoveries could not be loaded. <Button variant="link" size="sm" onClick={() => loans.refetch()}>Retry loan recoveries</Button></Notice>}
       <div className="grid gap-3 sm:grid-cols-3">
         <Stat label="Extra earnings" value={inr(plus)} sub="bonus, incentive, reimbursement" tone={plus ? 'success' : undefined} />
         <Stat label="One-off deductions" value={minus ? `−${inr(minus)}` : inr(0)} sub="damage, canteen, other" tone={minus ? 'destructive' : undefined} />
@@ -936,7 +941,7 @@ export function StepAdhoc({ ym, period, onNext }) {
           </div>
         )}
       </Card>
-      <StepFooter reviewLoading={q.isFetching} reviewError={q.isError} period={period} n={STEP.ADHOC} ym={ym} onNext={onNext} label="Confirm adjustments" />
+      <StepFooter reviewLoading={q.isFetching || loans.isFetching} reviewError={q.isError || loans.isError} period={period} n={STEP.ADHOC} ym={ym} onNext={onNext} label="Confirm adjustments" />
       <AdhocPeople item={viewing} text={viewing ? targetText(viewing) : ''} canRemove={!locked} removing={del.isPending} onRemove={() => viewing && del.mutate(viewing.id)} onClose={() => setViewing(null)} />
     </>
   );
@@ -1162,9 +1167,10 @@ function JobProgress({ jobId, ym, onEnd }) {
     if (j?.status === 'FAILED') {
       toast.error(j.error ?? 'Generating failed. Nothing was written.');
       refreshPeriod(qc, ym);
-      onEnd();
+      onEnd(j.error ?? 'Payroll generation did not finish. Review the error before trying again.');
     }
   }, [j?.status]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (q.isError) return <Notice tone="warning">The payroll status could not be checked. Generation may still be running. <Button variant="link" size="sm" onClick={() => q.refetch()}>Check status again</Button></Notice>;
   if (!j || j.status === 'DONE' || j.status === 'FAILED') return null;
   const pct = j.total ? Math.round((j.progress / j.total) * 100) : 5;
   return (
@@ -1199,6 +1205,10 @@ const CONFIRM = (ym, p) => ({
 });
 
 export function StepGenerate({ ym, period, company, onBack }) {
+  const { can } = useSession();
+  const canRun = can('payroll.run');
+  const canPay = can('payroll.pay');
+  const [jobError, setJobError] = useState(null);
   const qc = useQueryClient();
   const generated = period.state !== 'DRAFT';
   const [jobId, setJobId] = useState(period.running_job_id ?? null);
@@ -1211,10 +1221,12 @@ export function StepGenerate({ ym, period, company, onBack }) {
   const ready = Array.from({ length: LAST_REVIEW_STEP }, (_, i) => i + 1).every((s) => period.steps_submitted.includes(s));
   const run = useMutation({
     mutationFn: () => api.post(`/payroll/periods/${ym}/run`, {}, { 'Idempotency-Key': crypto.randomUUID() }),
+    onMutate: () => setJobError(null),
     onSuccess: (r) => setJobId(r.data.job_id),
-    onError: (e) => toast.error(errorMessage(e)),
+    onError: () => refreshPeriod(qc, ym),
   });
   const transition = useMutation({
+    onMutate: (action) => { if (action === 'rerun') setJobError(null); },
     mutationFn: (action) =>
       action === 'rerun'
         ? api.post(`/payroll/periods/${ym}/run`, {}, { 'Idempotency-Key': crypto.randomUUID() })
@@ -1228,15 +1240,16 @@ export function StepGenerate({ ym, period, company, onBack }) {
       qc.invalidateQueries({ queryKey: ['report'] });
       if (action === 'back-to-steps') onBack();
     },
-    onError: (e) => toast.error(errorMessage(e)),
   });
+  const askTransition = (action) => { transition.reset(); setConfirm(action); };
   const d = q.data;
   const conf = confirm && confirm !== 'mark-paid' ? CONFIRM(ym, period)[confirm] : null;
   const t = period.totals;
 
   return (
     <>
-      {jobId && <JobProgress jobId={jobId} ym={ym} onEnd={() => setJobId(null)} />}
+      {jobId && <JobProgress jobId={jobId} ym={ym} onEnd={(error) => { setJobError(error ?? null); setJobId(null); }} />}
+      {jobError && <p role="alert" className="rounded-md border border-destructive/25 bg-destructive/5 px-4 py-3 text-sm text-destructive">{jobError}</p>}
       {!generated ? (
         <Card>
           <CardHeader
@@ -1250,7 +1263,8 @@ export function StepGenerate({ ym, period, company, onBack }) {
               <ErrorState error={q.error} onRetry={() => q.refetch()} />
             ) : (
               <>
-                <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+                <p className="pt-4 text-xs text-muted-foreground">Preview · {monthLabel(ym)} · Both companies. Generating creates payslips; it does not transfer money.</p>
+                <div className="payroll-generate-figures grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
                   <Stat label="People" value={d.headcount} sub={d.on_hold ? `${d.on_hold} held` : 'nobody held'} />
                   <Stat label="Gross pay" value={<Money value={d.gross} />} />
                   <Stat label="Net pay" value={<Money value={d.net} />} sub={d.on_hold ? <>held, not in the bank file: <Money value={d.on_hold_net} /></> : undefined} />
@@ -1264,11 +1278,13 @@ export function StepGenerate({ ym, period, company, onBack }) {
                 )}
                 {d.errors.length > 0 && (
                   <Notice tone="destructive">
-                    {d.errors.length} payslip{d.errors.length > 1 ? 's' : ''} cannot be worked out: {d.errors.map((e) => `${e.name} — ${e.message}`).join('; ')}. Hold them or leave them out in step 3.
+                    {d.errors.length} payslip{d.errors.length > 1 ? 's' : ''} cannot be worked out: {d.errors.map((e) => `${e.name} — ${e.message}`).join('; ')}. Open Employee checks to resolve these errors, or review Held salaries before generating.
                   </Notice>
                 )}
+                {run.isError && <p role="alert" className="text-sm text-destructive">{errorMessage(run.error)}</p>}
+                {!canRun && <p className="text-sm text-muted-foreground">View-only access. A payroll manager can generate this month.</p>}
                 <div>
-                  <Button size="lg" disabled={!ready || d.errors.length > 0 || period.running || !!jobId} loading={run.isPending || period.running || !!jobId} onClick={() => run.mutate()}>
+                  <Button size="lg" disabled={!canRun || !ready || d.errors.length > 0 || q.isFetching || period.running || !!jobId} loading={run.isPending || period.running || !!jobId} onClick={() => run.mutate()}>
                     <Play /> Generate payroll
                   </Button>
                 </div>
@@ -1288,31 +1304,27 @@ export function StepGenerate({ ym, period, company, onBack }) {
                 {period.state === 'RUN' ? ' · check the change against last month, then lock.' : period.state === 'LOCKED' ? ' · mark it paid once the bank transfer has gone.' : ''}
               </div>
             </div>
-            {period.state === 'RUN' && (
+            {period.state === 'RUN' && canRun && (
               <>
-                <Button variant="outline" onClick={() => setConfirm('back-to-steps')}>
-                  <Undo2 /> Back to the steps
-                </Button>
-                <Button variant="outline" onClick={() => setConfirm('rerun')}>
-                  <RotateCcw /> Generate again
-                </Button>
-                <Button onClick={() => setConfirm('lock')}>
-                  <Lock /> Lock
-                </Button>
+                <Menu trigger={<Button variant="outline" disabled={transition.isPending || !!jobId}><MoreHorizontal /> More actions</Button>} items={[
+                  { label: 'Generate again', onSelect: () => askTransition('rerun') },
+                  { label: 'Back to the steps', destructive: true, onSelect: () => askTransition('back-to-steps') },
+                ]} />
+                <Button disabled={transition.isPending || !!jobId} onClick={() => askTransition('lock')}><Lock /> Lock</Button>
               </>
             )}
             {period.state === 'LOCKED' && (
               <>
-                <Button variant="outline" onClick={() => setConfirm('unlock')}>
+                <Button variant="outline" disabled={!canRun || transition.isPending} onClick={() => askTransition('unlock')}>
                   <LockOpen /> Unlock
                 </Button>
-                <Button onClick={() => setConfirm('mark-paid')}>
+                <Button disabled={!canPay || transition.isPending} onClick={() => askTransition('mark-paid')}>
                   <Wallet /> Mark paid
                 </Button>
               </>
             )}
-            {period.state === 'PAID' && (
-              <Button variant="outline" onClick={() => setConfirm('unmark-paid')}>
+            {period.state === 'PAID' && canPay && (
+              <Button variant="outline" onClick={() => askTransition('unmark-paid')}>
                 <Undo2 /> Unmark paid
               </Button>
             )}
@@ -1321,14 +1333,14 @@ export function StepGenerate({ ym, period, company, onBack }) {
         </>
       )}
       {conf && (
-        <Dialog
+        <Dialog className="payroll-dialog"
           open
-          onOpenChange={(o) => !o && setConfirm(null)}
+          onOpenChange={(o) => !o && !transition.isPending && setConfirm(null)}
           title={conf.title}
           description={conf.body}
           footer={
             <>
-              <Button variant="outline" onClick={() => setConfirm(null)}>
+              <Button variant="outline" disabled={transition.isPending} onClick={() => setConfirm(null)}>
                 Cancel
               </Button>
               <Button variant={conf.destructive ? 'destructive' : 'default'} loading={transition.isPending} onClick={() => transition.mutate(confirm)}>
@@ -1336,26 +1348,27 @@ export function StepGenerate({ ym, period, company, onBack }) {
               </Button>
             </>
           }
-        />
+        >{transition.isError && <p role="alert" className="text-sm text-destructive">{errorMessage(transition.error)}</p>}</Dialog>
       )}
       {confirm === 'mark-paid' && (
-        <Dialog
+        <Dialog className="payroll-dialog"
           open
-          onOpenChange={(o) => !o && setConfirm(null)}
+          onOpenChange={(o) => !o && !transition.isPending && setConfirm(null)}
           title={`Mark ${monthLabel(ym)} paid`}
-          description="Applies loan and advance recoveries, carries any capped excess into next month, freezes the settlements in it and exits those employees. A double submit cannot create two payment records."
+          description="Record a bank transfer that has already completed. This finalises payroll recoveries and settlements; it does not send money to the bank."
           footer={
             <>
-              <Button variant="outline" onClick={() => setConfirm(null)}>
+              <Button variant="outline" disabled={transition.isPending} onClick={() => setConfirm(null)}>
                 Cancel
               </Button>
-              <Button disabled={paymentRef.trim().length < 3} loading={transition.isPending} onClick={() => transition.mutate('mark-paid')}>
+              <Button disabled={!canPay || paymentRef.trim().length < 3} loading={transition.isPending} onClick={() => transition.mutate('mark-paid')}>
                 Mark paid
               </Button>
             </>
           }
         >
-          <Input autoFocus value={paymentRef} onChange={(e) => setPaymentRef(e.target.value)} placeholder="Bank payment reference, e.g. NEFT batch number" aria-label="Payment reference" />
+          <Field label="Payment reference" hint="Use the reference from the completed bank transfer.">{(id) => <Input id={id} autoFocus disabled={transition.isPending} value={paymentRef} onChange={(e) => setPaymentRef(e.target.value)} placeholder="Bank payment reference, e.g. NEFT batch number" aria-label="Payment reference" />}</Field>
+          {transition.isError && <p role="alert" className="mt-3 text-sm text-destructive">{errorMessage(transition.error)}</p>}
         </Dialog>
       )}
     </>

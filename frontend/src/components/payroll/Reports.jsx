@@ -2,8 +2,8 @@ import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Download, FileSpreadsheet, Printer, Search } from 'lucide-react';
-import { toast } from 'sonner';
 import { api, download, errorMessage } from '@/services/api';
+import { useSession } from '@/context/SessionContext';
 import { useDebounced } from '@/hooks';
 import { cn, monthLabel, istTime } from '@/utils';
 import { Money, Mono, PersonLink, Stat } from '@/components/bits';
@@ -31,6 +31,9 @@ const REPORTS = [
 
 /** Every report of a generated month, optionally for one company (`AJ` or `TP`). */
 export function Reports({ ym, period, company }) {
+  const { can } = useSession();
+  const [exportError, setExportError] = useState(null);
+  const scope = `${ym}:${company ?? 'all'}`;
   const [sp, setSp] = useSearchParams();
   const tab = sp.get('tab') ?? 'summary';
   const [text, setText] = useState('');
@@ -42,11 +45,12 @@ export function Reports({ ym, period, company }) {
   });
   const [exporting, setExporting] = useState(null);
   const exp = async (format) => {
+    setExportError(null);
     setExporting(format);
     try {
       await download(`/payroll/periods/${ym}/report/${tab}?format=${format}${company ? `&company=${company}` : ''}${q ? `&q=${encodeURIComponent(q)}` : ''}`, `payroll-${tab}-${ym}${company ? `-${company.toLowerCase()}` : ''}.${format}`);
     } catch (e) {
-      toast.error(errorMessage(e));
+      setExportError({ scope: `${scope}:${tab}`, message: errorMessage(e) });
     } finally {
       setExporting(null);
     }
@@ -59,6 +63,7 @@ export function Reports({ ym, period, company }) {
     });
 
   const rep = r.data;
+  const exportDisabled = !can('reports.export') || r.isFetching || r.isError || !rep || text !== q || !!exporting;
   const cols = useMemo(() => {
     if (!rep) return [];
     return rep.columns.map((c, i) => ({
@@ -79,13 +84,10 @@ export function Reports({ ym, period, company }) {
 
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-[14px] text-muted-foreground">
-        {monthLabel(ym)} was generated {istTime(period.run_at, true)} IST by {period.run_by}. Every figure below is read from that snapshot. Read{' '}
-        <button className="text-primary hover:underline" onClick={() => setTab('change')}>
-          Change vs last month
-        </button>{' '}
-        before locking.
-      </p>
+      <div className="payroll-report-context flex flex-wrap items-start justify-between gap-3">
+        <div><h2 className="text-lg font-semibold">{REPORTS.find(([key]) => key === tab)?.[1] ?? 'Payroll report'}</h2><p className="mt-1 text-xs text-muted-foreground">{monthLabel(ym)} · {company ? company === 'TP' ? 'Techpi' : 'AJ Power' : 'Both companies'} · Generated payroll figures</p></div>
+        <details className="max-w-lg text-xs text-muted-foreground"><summary className="cursor-pointer">Generated {istTime(period.run_at, true)} IST · {period.run_by}</summary><p className="mt-2">These figures come from the saved payroll. <button className="text-primary underline" onClick={() => setTab('change')}>Review changes against last month</button> before locking.</p></details>
+      </div>
       <div className="flex flex-wrap items-end justify-between gap-3 border-b">
       <div className="flex gap-1" role="tablist" aria-label="Common payroll reports">
         {REPORTS.slice(0,4).map(([k, l]) => (
@@ -119,14 +121,15 @@ export function Reports({ ym, period, company }) {
           )}
           <span className="text-[13px] text-muted-foreground num">{rep && tab !== 'summary' && `${rep.rows.length.toLocaleString('en-IN')} rows${q ? ` matching “${q}”` : ''}`}</span>
           <div className="flex-1" />
-          {tab === 'payslips' && <PayslipZipDownload ym={ym} company={company} q={q} disabled={r.isLoading || r.isError || !rep?.rows.length} />}
-          <Button variant="outline" size="sm" loading={exporting === 'csv'} onClick={() => exp('csv')}>
+          {tab === 'payslips' && <PayslipZipDownload ym={ym} company={company} q={q} disabled={exportDisabled || !rep?.rows.length} />}
+          <Button variant="outline" size="sm" disabled={exportDisabled} loading={exporting === 'csv'} onClick={() => exp('csv')}>
             <Download /> CSV
           </Button>
-          <Button variant="outline" size="sm" loading={exporting === 'xlsx'} onClick={() => exp('xlsx')}>
+          <Button variant="outline" size="sm" disabled={exportDisabled} loading={exporting === 'xlsx'} onClick={() => exp('xlsx')}>
             <FileSpreadsheet /> XLSX
           </Button>
         </div>
+        {exportError?.scope === `${scope}:${tab}` && <p role="alert" className="border-b px-4 py-3 text-sm text-destructive">{exportError.message}</p>}
         {r.isLoading ? (
           <SkeletonRows rows={10} />
         ) : r.isError ? (

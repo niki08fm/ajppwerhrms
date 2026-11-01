@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQueries, useQuery } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, FileSpreadsheet, AlertTriangle } from 'lucide-react';
+import { ChevronLeft, ChevronRight, FileSpreadsheet, AlertTriangle, ArrowRight, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
 import { addMonths, GENERATE_STEP, LAST_REVIEW_STEP, STEP } from '@ajpwer/shared';
 import { api, download, errorMessage } from '@/services/api';
@@ -8,6 +8,7 @@ import { useLookups } from '@/hooks/useLookups';
 import { cn, inr, monthLabel } from '@/utils';
 import { Chip, ErrorState, SkeletonBlock } from '@/components/states';
 import { Button } from '@/components/ui/button';
+import { Select } from '@/components/ui/form';
 import { Card, CardHeader } from '@/components/ui/card';
 import { currentStep, StepTracker, stepLabel } from './Tracker';
 import { PayslipZipDownload } from './PayslipZipDownload';
@@ -15,18 +16,8 @@ import { PayslipZipDownload } from './PayslipZipDownload';
 export const useSummary = (ym, enabled = true) =>
   useQuery({ queryKey: ['payroll-summary', ym], queryFn: () => api.get(`/payroll/periods/${ym}/summary`).then((r) => r.data), enabled: !!ym && enabled, staleTime: 60_000 });
 
-const STATE_WORD = { RUN: 'Generated', LOCKED: 'Locked', PAID: 'Paid' };
 const lakh = (p) => `₹${(p / 100 / 1e5).toFixed(1)}L`;
 const daysBetween = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86_400_000);
-
-/** A month card's state in words. */
-function monthState(p, ym, meta) {
-  if (ym > meta.current) return { text: 'Upcoming', tone: 'text-muted-foreground' };
-  if (!p) return { text: ym === meta.current ? 'Month not over' : 'Not started', tone: 'text-muted-foreground' };
-  if (p.state !== 'DRAFT') return { text: STATE_WORD[p.state], tone: p.state === 'PAID' ? 'text-success' : 'text-primary' };
-  const n = p.steps_submitted.filter((s) => s <= LAST_REVIEW_STEP).length;
-  return { text: n ? `In progress · ${n} of ${LAST_REVIEW_STEP}` : 'Not started', tone: n ? 'text-warning-foreground dark:text-warning' : 'text-muted-foreground' };
-}
 
 /** The reports offered once a month is generated, with the format each is downloaded in. */
 const REPORT_TILES = [
@@ -53,7 +44,7 @@ export function PayrollOverview({ ym, period, periods, meta, company, onOpen, on
   const generated = period.state !== 'DRAFT';
   const summary = useSummary(ym);
   const prevYm = addMonths(ym, -1);
-  const prevRun = byYm[prevYm] && byYm[prevYm].state !== 'DRAFT';
+  const prevRun = !!byYm[prevYm] && byYm[prevYm].state !== 'DRAFT';
   const prev = useSummary(prevYm, prevRun);
   const key = company ?? 'all';
   const s = summary.data?.[key];
@@ -70,7 +61,7 @@ export function PayrollOverview({ ym, period, periods, meta, company, onOpen, on
     })),
   });
   const bars = chartMonths.map((m, i) => {
-    const d = m === ym ? summary.data : chartQs[i].data;
+    const d = m === ym ? summary.data : byYm[m] && byYm[m].state !== 'DRAFT' ? chartQs[i].data : null;
     const t = d?.[key];
     return { m, t, estimate: m === ym && !generated };
   });
@@ -81,14 +72,6 @@ export function PayrollOverview({ ym, period, periods, meta, company, onOpen, on
 
   // What needs attention: the next step, then the money that cannot go, then statutory dues.
   const attention = [];
-  if (!generated) {
-    attention.push(
-      cur === GENERATE_STEP
-        ? { title: 'Generate the payroll', note: 'All review steps are submitted', chip: 'Ready', tone: 'success', step: GENERATE_STEP }
-        : { title: `Step ${cur} · ${stepLabel(cur)}`, note: 'Continue your review', chip: 'Next step', tone: 'warning', step: cur },
-    );
-  } else if (period.state === 'RUN') attention.push({ title: 'Review and lock payroll', note: 'Generated, not locked: payslips can still change', chip: 'Next', tone: 'warning', step: GENERATE_STEP });
-  else if (period.state === 'LOCKED') attention.push({ title: 'Mark it paid', note: 'Once the bank transfer has gone', chip: 'Next', tone: 'warning', step: GENERATE_STEP });
   if (summary.data?.errors) attention.push({ title: `${summary.data.errors} payslip${summary.data.errors > 1 ? 's' : ''} cannot be worked out`, note: 'Open Employee checks to resolve them', chip: 'Blocking', tone: 'destructive', step: STEP.ISSUES });
   if (s?.on_hold) attention.push({ title: `${s.on_hold} salar${s.on_hold > 1 ? 'ies' : 'y'} on hold`, note: `${inr(s.on_hold_net)} kept out of the bank file`, chip: 'Held', tone: 'info', step: STEP.HELD });
   // Statutory dues on this month's pay: TDS by the 7th of the next month, PF and ESI by the 15th.
@@ -120,47 +103,32 @@ export function PayrollOverview({ ym, period, periods, meta, company, onOpen, on
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap gap-3">
-        <Card className="flex flex-[2_1_520px] items-center gap-2 p-2.5">
-          <Button size="icon" variant="outline" aria-label="Earlier months" onClick={() => onMonth(addMonths(ym, -1))}>
-            <ChevronLeft />
-          </Button>
-          {[-1, 0, 1].map((o) => {
-            const m = addMonths(ym, o);
-            const st = monthState(byYm[m], m, meta);
-            const future = m > meta.current;
-            return (
-              <button
-                key={m}
-                type="button"
-                disabled={future}
-                onClick={() => onMonth(m)}
-                className={cn('flex-1 rounded-lg border px-3 py-2 text-left transition-colors disabled:cursor-default', o === 0 ? 'border-primary bg-primary/5' : 'hover:bg-accent/40')}
-              >
-                <div className="text-[13px] text-muted-foreground">{monthLabel(m)}</div>
-                <div className={cn('font-semibold', st.tone)}>{st.text}</div>
-              </button>
-            );
-          })}
-          <Button size="icon" variant="outline" aria-label="Later months" disabled={addMonths(ym, 1) > meta.current} onClick={() => onMonth(addMonths(ym, 1))}>
-            <ChevronRight />
-          </Button>
-        </Card>
-        {[
-          { label: 'People in this payroll', value: s ? s.headcount : '…', sub: s ? (s.on_hold ? `${s.on_hold} on hold` : 'No salaries on hold') : '' },
-          { label: 'Gross pay', value: s ? inr(s.gross) : '…', sub: change === null ? (generated ? 'as generated' : 'estimate until generated') : `${change >= 0 ? '+' : ''}${change.toFixed(1)}% on ${monthLabel(prevYm).split(' ')[0]}` },
-          { label: 'Net pay', value: s ? inr(s.net) : '…', sub: generated ? 'as generated' : 'estimate until generated', tone: 'text-success' },
-        ].map((k) => (
-          <Card key={k.label} className="flex-[1_1_180px] px-4 py-3.5">
-            <div className="text-[12px] font-semibold tracking-wide text-muted-foreground uppercase">{k.label}</div>
-            <div className={cn('mt-1 text-[24px] leading-tight font-semibold num', k.tone)}>{k.value}</div>
-            <div className="text-[12px] text-muted-foreground">{k.sub}</div>
-          </Card>
-        ))}
+      <Card className="payroll-month-summary overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b px-5 py-4">
+          <div><p className="payroll-eyebrow">Monthly payroll</p><h2 className="mt-1 text-xl font-semibold">{monthLabel(ym)}</h2><p className="mt-1 text-xs text-muted-foreground">{company ? company === 'TP' ? 'Techpi' : 'AJ Power' : 'Both companies'} · {generated ? 'Generated figures' : 'Estimates until payroll is generated'}</p></div>
+          <div className="flex items-center gap-2">
+            <Button size="icon" variant="outline" aria-label="Earlier months" onClick={() => onMonth(addMonths(ym, -1))}><ChevronLeft /></Button>
+            <Select aria-label="Payroll month" value={ym} onChange={(e) => onMonth(e.target.value)} className="w-44">
+              {[...new Set([...periods.map((p) => p.period_ym), ...chartMonths, ym, meta.current])].sort().reverse().map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
+            </Select>
+            <Button size="icon" variant="outline" aria-label="Later months" disabled={addMonths(ym, 1) > meta.current} onClick={() => onMonth(addMonths(ym, 1))}><ChevronRight /></Button>
+          </div>
+        </div>
+        <dl className="grid divide-y sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+          {[
+            ['People in this payroll', s?.headcount ?? '—', s ? s.on_hold ? `${s.on_hold} salaries on hold` : 'No salaries on hold' : 'Loading figures…'],
+            ['Gross pay', s ? inr(s.gross) : '—', change === null ? 'Before employee deductions' : `${change >= 0 ? '+' : ''}${change.toFixed(1)}% vs ${monthLabel(prevYm)}`],
+            ['Net pay', s ? inr(s.net) : '—', 'After employee deductions'],
+          ].map(([label, value, detail]) => <div key={label} className="px-5 py-4"><dt className="text-xs text-muted-foreground">{label}</dt><dd className="mt-1 text-[26px] font-semibold tracking-tight num">{value}</dd><p className="mt-1 text-xs text-muted-foreground">{detail}</p></div>)}
+        </dl>
+      </Card>
+      <div className="payroll-next-action flex flex-wrap items-center justify-between gap-4 rounded-lg border border-primary/25 bg-primary/[0.04] px-5 py-4">
+        <div><p className="payroll-eyebrow">{generated ? 'Next action' : cur === GENERATE_STEP ? 'Ready to generate' : `Next review · ${cur} of ${LAST_REVIEW_STEP}`}</p><h3 className="mt-1 text-base font-semibold">{generated ? period.state === 'PAID' ? 'Payroll is paid' : period.state === 'LOCKED' ? 'Record the completed bank payment' : 'Review reports before locking payroll' : cur === GENERATE_STEP ? 'All six reviews are confirmed' : stepLabel(cur)}</h3><p className="mt-1 text-sm text-muted-foreground">{generated ? period.state === 'PAID' ? `Payment reference: ${period.payment_ref ?? 'Recorded'}` : 'Download files from the generated payroll. Payment is recorded separately.' : 'Your confirmed reviews stay saved. Continue where you left off.'}</p></div>
+        {ym <= meta.suggested && <Button onClick={() => onOpen(generated ? GENERATE_STEP : cur)}>{generated ? 'Open the generated payroll' : cur === GENERATE_STEP ? 'Generate payroll' : `Continue · step ${cur}, ${stepLabel(cur)}`}<ArrowRight /></Button>}
       </div>
       {summary.isError && <ErrorState error={summary.error} onRetry={() => summary.refetch()} compact />}
 
-      <StepTracker period={period} onOpen={onOpen} />
+      <StepTracker period={period} onOpen={onOpen} detailed />
 
       {generated && (
         <Card>
@@ -193,12 +161,10 @@ export function PayrollOverview({ ym, period, periods, meta, company, onOpen, on
         </Card>
       )}
 
-      <div className="flex flex-wrap items-stretch gap-4">
-        <Card className="min-w-0 flex-[3_1_520px]">
-          <CardHeader
-            title="Payroll cost · last six months"
-            description={`What reached people, what was deducted from them, and what the company paid on top${company ? ` — ${company === 'TP' ? 'Techpi' : 'AJ Power'} only` : ''}.${!generated ? ` ${monthLabel(ym)} is an estimate until generated.` : ''}`}
-          />
+      <div className="grid items-start gap-4 lg:grid-cols-2">
+        <Card className="order-2 min-w-0 overflow-hidden"><details>
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-5 py-4 text-sm font-semibold">Payroll cost · last six months<ChevronDown className="size-4 text-muted-foreground" /></summary>
+          <p className="border-t px-5 pt-4 text-xs leading-relaxed text-muted-foreground">Net pay, employee deductions and employer contributions. {generated ? 'Generated months only.' : `${monthLabel(ym)} is an estimate.`}</p>
           <div className="px-5 pt-2 pb-4">
             {summary.isLoading ? (
               <SkeletonBlock className="h-56" />
@@ -248,9 +214,10 @@ export function PayrollOverview({ ym, period, periods, meta, company, onOpen, on
               </>
             )}
           </div>
-        </Card>
-        <Card className="min-w-0 flex-[2_1_340px]">
-          <CardHeader title="Needs attention" />
+        </details></Card>
+        <Card className="order-1 min-w-0">
+          <CardHeader title="Follow-up and due dates" description="Items to keep in view alongside the review checklist." />
+          {!attention.length && <p className="px-5 py-4 text-sm text-muted-foreground">No additional follow-up for this month.</p>}
           <ul className="divide-y">
             {attention.map((a) => (
               <li key={a.title} className="flex flex-wrap items-center gap-3 px-5 py-3">
