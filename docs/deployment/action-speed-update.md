@@ -51,4 +51,4 @@ curl --fail --retry 5 --retry-connrefused --retry-delay 2 \
 
 Deploy/promote the same commit to the Vercel production frontend so the request-header, parallel-loading and desktop changes are included. Refresh the app after deployment.
 
-If real actions remain slow afterward, use a browser Network trace to distinguish server processing, network travel, database wake-up and frontend rendering. These local tests do not measure the production AWS–Neon connection, cold starts or hardware face capture.
+If real actions remain slow afterward, use a browser Network trace to distinguish server processing, network travel, database wake-up and frontend rendering. These local tests do not measure production network latency or hardware face capture. Production now runs PostgreSQL on the Lightsail machine; see `deploy/README.md`.
