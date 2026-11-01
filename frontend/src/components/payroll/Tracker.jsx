@@ -35,19 +35,19 @@ const REVIEW_DETAIL = {
   7: 'Payslips, bank files and reports',
 };
 
-export function StepTracker({ period, selected, onOpen, notes = {}, detailed = false }) {
+export function StepTracker({ period, selected, onOpen, notes = {}, detailed = false, embedded = false }) {
   const cur = currentStep(period);
   const generated = period.state !== 'DRAFT';
   const done = (n) => n === GENERATE_STEP ? generated : period.steps_submitted.includes(n);
   const doneCount = period.steps_submitted.filter((n) => n <= LAST_REVIEW_STEP).length;
   return (
-    <Card className={cn('payroll-checklist overflow-hidden', detailed && 'payroll-checklist-detailed')}>
+    <Card className={cn('payroll-checklist overflow-hidden', detailed && 'payroll-checklist-detailed', embedded && 'rounded-none border-0 border-t shadow-none')}>
       <div className="flex flex-wrap items-center justify-between gap-2 border-b px-5 py-3">
-        <h3 className="text-sm font-semibold">{detailed ? 'Review checklist' : 'Payroll steps'}</h3>
+        <h3 className="text-sm font-semibold">{embedded ? 'Review this month' : detailed ? 'Review checklist' : 'Payroll steps'}</h3>
         <Chip tone={generated || doneCount === LAST_REVIEW_STEP ? 'success' : 'muted'}>{generated ? STATE_WORD[period.state] : `${doneCount} of ${LAST_REVIEW_STEP} steps done`}</Chip>
       </div>
       <nav aria-label="Payroll steps" className={cn('grid gap-2 p-3', detailed ? 'md:grid-cols-2' : 'sm:grid-cols-2 xl:grid-cols-7')}>
-        {PAYROLL_STEPS.map((s) => {
+        {PAYROLL_STEPS.filter((s) => !embedded || s.n <= LAST_REVIEW_STEP).map((s) => {
           const complete = done(s.n);
           const available = complete || generated || s.n === cur;
           const active = selected ? selected === s.n : !generated && s.n === cur;

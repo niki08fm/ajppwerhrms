@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft } from 'lucide-react';
@@ -35,6 +35,7 @@ const DESCRIBE = {
 export default function RunPayroll() {
   const params = useParams();
   const nav = useNavigate();
+  const [overviewAction, setOverviewAction] = useState(null);
   const [sp, setSp] = useSearchParams();
   const periods = useQuery({ queryKey: ['periods'], queryFn: () => api.get('/payroll/periods') });
   const ym = params.ym ?? periods.data?.meta.suggested;
@@ -52,8 +53,8 @@ export default function RunPayroll() {
       for (const [k, v] of Object.entries(patch)) (v === null || v === undefined ? x.delete(k) : x.set(k, String(v)));
       return x;
     });
-  const open = (n, tab = null) => set({ step: n, tab });
-  const toOverview = () => set({ step: null, tab: null });
+  const open = (n, tab = null, action = null) => { setOverviewAction(action); set({ step: n, tab }); };
+  const toOverview = () => { setOverviewAction(null); set({ step: null, tab: null }); };
   const toMonth = (m) => nav(`/payroll/${m}${company ? `?company=${company}` : ''}`);
 
   if (periods.isError) return <ErrorState error={periods.error} onRetry={() => periods.refetch()} />;
@@ -109,7 +110,7 @@ export default function RunPayroll() {
       {shown === STEP.HELD && <StepHeld ym={ym} period={p} onNext={next(STEP.HELD)} />}
       {shown === STEP.FNF && <StepFnf ym={ym} period={p} onNext={next(STEP.FNF)} />}
       {shown === STEP.ADHOC && <StepAdhoc ym={ym} period={p} onNext={next(STEP.ADHOC)} />}
-      {shown === GENERATE_STEP && <StepGenerate key={ym} ym={ym} period={p} company={company} onBack={toOverview} />}
+      {shown === GENERATE_STEP && <StepGenerate key={ym} ym={ym} period={p} company={company} onBack={toOverview} initialAction={overviewAction} />}
     </div>
   );
 }

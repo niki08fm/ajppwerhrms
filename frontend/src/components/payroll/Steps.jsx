@@ -1204,7 +1204,7 @@ const CONFIRM = (ym, p) => ({
   rerun: { title: `Generate ${monthLabel(ym)} again`, body: 'Works out every payslip again from current data and replaces the generated figures.', action: 'Generate again' },
 });
 
-export function StepGenerate({ ym, period, company, onBack }) {
+export function StepGenerate({ ym, period, company, onBack, initialAction }) {
   const { can } = useSession();
   const canRun = can('payroll.run');
   const canPay = can('payroll.pay');
@@ -1212,7 +1212,13 @@ export function StepGenerate({ ym, period, company, onBack }) {
   const qc = useQueryClient();
   const generated = period.state !== 'DRAFT';
   const [jobId, setJobId] = useState(period.running_job_id ?? null);
-  const [confirm, setConfirm] = useState(null);
+  const [confirm, setConfirm] = useState(() => {
+    if (period.running || period.running_job_id) return null;
+    if (initialAction === 'lock' && period.state === 'RUN' && canRun) return initialAction;
+    if (initialAction === 'unlock' && period.state === 'LOCKED' && canRun) return initialAction;
+    if (initialAction === 'mark-paid' && period.state === 'LOCKED' && canPay) return initialAction;
+    return null;
+  });
   const [paymentRef, setPaymentRef] = useState('');
   useEffect(() => {
     if (period.running_job_id) setJobId(period.running_job_id);

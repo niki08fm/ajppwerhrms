@@ -11,7 +11,7 @@ async function mockPayroll(page, { state = 'RUN', submitted = [1, 2, 3, 4, 5, 6]
     const url = new URL(route.request().url()), path = url.pathname.replace('/api/v1', '');
     requests.push({ path, params: Object.fromEntries(url.searchParams) });
     let data;
-    if (path === '/auth/me') data = { name: 'HR Admin', role: 'HR Admin', permissions: ['payroll.read', 'reports.export', 'people.read', 'attendance.read'] };
+    if (path === '/auth/me') data = { name: 'HR Admin', role: 'HR Admin', permissions: ['payroll.read', 'reports.export', 'people.read', 'attendance.read', 'payroll.run', 'payroll.pay'] };
     else if (path === '/lookups') data = { today: '2026-10-30', departments: [], pay_groups: [], sites: [] };
     else if (path === '/dashboard/people') data = { approvals: { total: 0 } };
     else if (path === '/payroll/periods') return route.fulfill({ json: { data: [period], meta: { suggested: YM, current: '2026-10' } } });
@@ -60,12 +60,11 @@ test('payslip shortcut preserves company and ZIP matches the searched month repo
   expect(state.errors).toEqual([]);
 });
 
-test('overview keeps three common reports visible and opens other reports on request', async ({ page }) => {
+test('overview shows statutory reports by default and can collapse them', async ({ page }) => {
   await mockPayroll(page);
   await page.goto(`/payroll/${YM}`);
   await expect(page.getByText('One per person, printable', { exact: true })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'View report', exact: true })).toHaveCount(2);
-  await page.getByRole('button', { name: 'Statutory and other reports', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'View report', exact: true })).toHaveCount(8);
   await expect(page.getByText('For the ESIC portal', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Fewer reports', exact: true }).click();
   await expect(page.getByText('For the ESIC portal', { exact: true })).toHaveCount(0);
@@ -74,7 +73,7 @@ test('overview keeps three common reports visible and opens other reports on req
 test('Adhoc remains the sixth review and generation follows all six reviews', async ({ page }) => {
   const state = await mockPayroll(page, { state: 'DRAFT', submitted: [1, 2, 3, 4, 5] });
   await page.goto(`/payroll/${YM}`);
-  await page.getByRole('button', { name: 'Continue · step 6, One-time adjustments', exact: true }).click();
+  await page.getByRole('button', { name: /One-time adjustments.*Ready/ }).click();
   await expect(page.getByRole('heading', { name: 'Step 6 · One-time adjustments', exact: true })).toBeVisible();
   await expect(page.getByText('Add this month’s bonuses, reimbursements and other one-time earnings or deductions.', { exact: true })).toBeVisible();
   expect(state.errors).toEqual([]);
