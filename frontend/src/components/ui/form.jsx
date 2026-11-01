@@ -3,7 +3,7 @@ import { cn } from '@/utils';
 
 /* Controls sit slightly inset: a cool fill, a quiet border, and a teal ring when focused. */
 const base =
-  'w-full rounded-md border border-border bg-background px-3 text-sm text-foreground transition-[border-color,box-shadow] placeholder:text-muted-foreground hover:border-muted-foreground/40 focus-visible:border-ring focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/20 disabled:cursor-not-allowed disabled:opacity-60 aria-[invalid=true]:border-destructive';
+  'ui-input w-full rounded-md border border-border bg-background px-3 text-sm text-foreground transition-[border-color,box-shadow] placeholder:text-muted-foreground hover:border-muted-foreground/40 focus-visible:border-ring focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/20 disabled:cursor-not-allowed disabled:opacity-60 aria-[invalid=true]:border-destructive';
 
 export const Input = forwardRef(({ className, ...props }, ref) => <input ref={ref} className={cn(base, 'h-9', className)} {...props} />);
 Input.displayName = 'Input';

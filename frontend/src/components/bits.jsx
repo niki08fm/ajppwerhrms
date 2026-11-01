@@ -34,7 +34,7 @@ export function PersonLink({ id, name, code, tab }) {
 
 export function PageHeader({ title, description, actions, crumbs, meta }) {
   return (
-    <div className="mb-6 flex flex-col gap-2">
+    <div className="page-header mb-6 flex flex-col gap-2">
       {crumbs && crumbs.length > 0 && (
         <nav aria-label="Breadcrumb" className="flex items-center gap-1 text-[13px] text-muted-foreground">
           {crumbs.map((c, i) => (

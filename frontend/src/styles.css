@@ -473,3 +473,143 @@
   letter-spacing: normal;
   font-weight: 500;
 }
+
+/* Alternative interface branches. Semantic status colours remain independent of brand. */
+@font-face{font-family:'Interface Plex';src:url('/interface/plex-400.woff2') format('woff2');font-weight:400;font-display:swap}
+@font-face{font-family:'Interface Plex';src:url('/interface/plex-500.woff2') format('woff2');font-weight:500;font-display:swap}
+@font-face{font-family:'Interface Plex';src:url('/interface/plex-600.woff2') format('woff2');font-weight:600;font-display:swap}
+@font-face{font-family:'Interface Plex';src:url('/interface/plex-700.woff2') format('woff2');font-weight:700;font-display:swap}
+@font-face{font-family:'Interface Inter';src:url('/interface/inter-400.woff2') format('woff2');font-weight:400;font-display:swap}
+@font-face{font-family:'Interface Inter';src:url('/interface/inter-500.woff2') format('woff2');font-weight:500;font-display:swap}
+@font-face{font-family:'Interface Inter';src:url('/interface/inter-600.woff2') format('woff2');font-weight:600;font-display:swap}
+@font-face{font-family:'Interface Inter';src:url('/interface/inter-700.woff2') format('woff2');font-weight:700;font-display:swap}
+:root[data-interface]{
+ --font-sans:'Interface Plex',system-ui,sans-serif;--font-display:var(--font-sans);--font-mono:ui-monospace,SFMono-Regular,Consolas,monospace;
+ --background:#f4f8fa;--foreground:#213c49;--card:#fff;--card-foreground:#213c49;--popover:#fff;--popover-foreground:#213c49;
+ --primary:#167b6f;--primary-foreground:#fff;--secondary:#eaf4f0;--secondary-foreground:#225d50;--muted:#f0f5f7;--muted-foreground:#627581;--accent:#e9f3f0;--accent-foreground:#1b5d51;
+ --border:#dce6eb;--input:#dce6eb;--ring:#167b6f;--radius:.45rem;
+ --sidebar:#102d3a;--sidebar-foreground:#e1ecf0;--sidebar-primary:#52c5b1;--sidebar-primary-foreground:#092f2c;--sidebar-accent:#1b414d;--sidebar-accent-foreground:#fff;--sidebar-border:#284753;--sidebar-ring:#63cfbd;
+ --chart-1:#258a79;--chart-2:#76b2a0;--chart-3:#a4cbbf;--chart-4:#f0ad48;--chart-5:#446b80;
+ --success:#277547;--success-foreground:#fff;--warning:#e8af35;--warning-foreground:#775516;--info:#33688b;--info-foreground:#fff;--destructive:#bf3546;--destructive-foreground:#fff;
+ --shadow-sm:0 2px 5px #16374808;--shadow-xs:0 1px 2px #16374806;
+}
+:root[data-interface='violet']{
+ --font-sans:'Interface Inter',system-ui,sans-serif;--background:#f8f7fc;--foreground:#2b2938;--card-foreground:#2b2938;--popover-foreground:#2b2938;
+ --primary:#6b49b4;--secondary:#f0eaf9;--secondary-foreground:#61458f;--muted:#f2eff8;--muted-foreground:#726b80;--accent:#eee7f8;--accent-foreground:#563482;
+ --border:#e6e1ef;--input:#e6e1ef;--ring:#7651bd;--sidebar:#211039;--sidebar-foreground:#e8def4;--sidebar-primary:#c6a3fa;--sidebar-primary-foreground:#291143;--sidebar-accent:#402364;--sidebar-border:#3d2856;--sidebar-ring:#c6a3fa;
+ --chart-1:#6d55b5;--chart-2:#a28bce;--chart-3:#d8ccef;--chart-4:#f0ad48;--chart-5:#84719f;
+}
+:root.dark[data-interface]{
+ --background:#10212c;--foreground:#e6eff3;--card:#182e3a;--card-foreground:#e6eff3;--popover:#1b3340;--popover-foreground:#e6eff3;
+ --primary:#72d2bd;--primary-foreground:#092f28;--secondary:#25483f;--secondary-foreground:#b9ebd9;--muted:#213946;--muted-foreground:#b1c1cb;--accent:#294b45;--accent-foreground:#d3f6e8;
+ --border:#35505e;--input:#35505e;--ring:#72d2bd;--sidebar:#0b202b;--sidebar-foreground:#e1ecf0;--sidebar-primary:#72d2bd;--sidebar-accent:#1b414d;--sidebar-border:#284753;
+ --success:#88d5a1;--warning:#e8b952;--warning-foreground:#f3d397;--destructive:#ff9eab;--info:#9dc9e8;
+}
+:root.dark[data-interface='violet']{
+ --background:#171122;--foreground:#ede7f5;--card:#241c32;--card-foreground:#ede7f5;--popover:#2d223d;--popover-foreground:#ede7f5;
+ --primary:#c5a3ff;--primary-foreground:#27153f;--secondary:#3b2a50;--secondary-foreground:#ddc8f8;--muted:#33283f;--muted-foreground:#c0b3ce;--accent:#433057;--accent-foreground:#edddff;
+ --border:#493858;--input:#493858;--ring:#c5a3ff;--sidebar:#170c28;--sidebar-foreground:#e8def4;--sidebar-primary:#c5a3ff;--sidebar-accent:#402364;--sidebar-border:#3d2856;
+}
+[data-interface] :is(h1,h2,h3,h4,.font-display){font-family:var(--font-sans);letter-spacing:-.025em}
+[data-interface] .page-header{margin-bottom:1.5rem}
+[data-interface] .page-header h1{font-size:27px;font-weight:600;line-height:1.3}
+[data-interface] .page-header p{max-width:62rem;font-size:13px}
+[data-interface] .ui-card{border-color:var(--border);border-radius:var(--radius);box-shadow:var(--shadow-sm)}
+[data-interface] .ui-card-header{padding:18px 22px}
+[data-interface] .ui-card-header h3{font-size:16px;font-weight:600}
+[data-interface] .ui-card-header p{font-size:12px;line-height:1.6}
+[data-interface] .ui-button{border-radius:5px;font-size:13px;letter-spacing:0;box-shadow:none}
+[data-interface] .ui-input{background-color:var(--card);border-color:var(--border);border-radius:5px;box-shadow:0 1px 2px #102d3a04}
+[data-interface] .ui-input:focus-visible{box-shadow:0 0 0 3px color-mix(in srgb,var(--ring) 14%,transparent)}
+[data-interface] [role='dialog']{border-color:var(--border);border-radius:9px}
+[data-interface] [role='dialog'] :is(h2,h3){font-size:19px;font-weight:600}
+[data-interface] .data-table thead th{background:var(--muted);font-size:11px;letter-spacing:.035em;color:var(--muted-foreground);font-weight:600}
+[data-interface] .data-table tbody td{padding-top:12px;padding-bottom:12px;font-size:13px}
+[data-interface] .data-table tbody tr:nth-child(even){background:color-mix(in srgb,var(--muted) 30%,var(--card))}
+[data-interface] .data-table tbody tr:hover{background:var(--accent)}
+[data-interface] .interface-sidebar:not(.w-16){width:224px}
+[data-interface] .interface-brand{height:72px}
+[data-interface] .interface-brand .font-display{font-size:20px;letter-spacing:.015em}
+[data-interface] .interface-nav-link{height:42px;border-radius:4px;font-size:13px}
+[data-interface] .interface-nav-link>svg{stroke-width:1.6}
+[data-interface] .interface-navigation>div:nth-child(3){gap:20px}
+[data-interface] .interface-navigation ul{gap:3px}
+[data-interface] .app-header{height:72px;padding-left:30px;padding-right:24px}
+[data-interface] .interface-org{display:none}
+[data-interface] .interface-content{padding:28px 30px}
+[data-interface] .app-header>button[aria-label='Search people']{max-width:490px;background:var(--background);border-color:var(--border);box-shadow:none}
+[data-interface='violet'] .app-header{background:#56368c;color:white;border-color:#56368c}
+[data-interface='violet'] .app-header .interface-org{display:flex;align-items:center;gap:8px;margin-right:18px;font-size:14px;font-weight:600;white-space:nowrap}
+[data-interface='violet'] .interface-org span{font-weight:400;color:#e1d7ef}
+[data-interface='violet'] .app-header>button[aria-label='Search people']{background:#faf8ff;color:#756d83;border-radius:30px;border-color:transparent}
+[data-interface='violet'] .app-header>button:not([aria-label='Search people']){color:#fff}
+[data-interface='violet'] .app-header button[aria-label='Account']>span:last-child>span{color:#fff}
+[data-interface='violet'] .interface-sidebar:not(.w-16){width:104px}
+[data-interface='violet'] .interface-sidebar .interface-brand{justify-content:center;padding:0}
+[data-interface='violet'] .interface-sidebar .interface-brand>div:last-child:not(:first-child){display:none}
+[data-interface='violet'] .interface-sidebar .interface-navigation>div:nth-child(3){gap:6px;padding:8px 5px}
+[data-interface='violet'] .interface-sidebar .interface-navigation>div:nth-child(3)>div>div{display:none}
+[data-interface='violet'] .interface-sidebar .interface-nav-link{flex-direction:column;height:auto;min-height:60px;gap:5px;justify-content:center;padding:8px 3px;font-size:10px;line-height:1.4;text-align:center}
+[data-interface='violet'] .interface-sidebar .interface-nav-link>span.flex-1{flex:0 1 auto;white-space:normal}
+[data-interface='violet'] .interface-sidebar button[aria-label='More tools'],[data-interface='violet'] .interface-sidebar button[aria-label='Settings']{height:auto;min-height:52px;padding:8px 3px;flex-direction:column;gap:5px;font-size:10px}
+[data-interface='violet'] .interface-sidebar button[aria-label='More tools']>span,[data-interface='violet'] .interface-sidebar button[aria-label='Settings']>span{flex:0 1 auto}
+[data-interface='violet'] .interface-sidebar button[aria-label='More tools']>svg:last-child,[data-interface='violet'] .interface-sidebar button[aria-label='Settings']>svg:last-child{display:none}
+[data-interface='violet'] .interface-sidebar button[aria-label='Start something new']{padding:0 5px;font-size:11px;gap:4px}
+[data-interface='violet'] .interface-sidebar button[aria-label='Start something new']>svg:last-child{display:none}
+[data-interface='violet'] .interface-sidebar [aria-label='More tools']+ul,[data-interface='violet'] .interface-sidebar [aria-label='Settings']+ul{margin-left:0;padding-left:0;border-left:0}
+[data-interface='violet'] .interface-sidebar .interface-navigation>div:last-child{padding-left:4px;padding-right:4px}
+[data-interface='violet'] .interface-sidebar .interface-navigation>div:last-child button{justify-content:center;font-size:10px;padding-left:0;padding-right:0;gap:4px}
+.payroll-overview-top{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:24px}
+.payroll-periods{display:flex;align-items:center;gap:12px}
+.payroll-period{flex:1;min-width:0;min-height:106px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:15px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--card);box-shadow:var(--shadow-sm);text-align:center}
+.payroll-period[aria-current='date']{border-color:var(--primary);background:color-mix(in srgb,var(--primary) 5%,var(--card))}
+.payroll-period small{font-size:12px;color:var(--muted-foreground)}
+.payroll-period strong{font-size:13px;font-weight:500}
+.payroll-period:disabled{opacity:.65;cursor:default}
+.payroll-overview-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.payroll-overview-metric{display:flex;align-items:center;gap:14px;padding:20px;min-width:0}
+.payroll-metric-icon{display:flex;align-items:center;justify-content:center;width:48px;height:52px;flex-shrink:0;border-radius:4px;background:color-mix(in srgb,var(--primary) 8%,var(--card));color:var(--primary)}
+.payroll-metric-icon.warning{background:color-mix(in srgb,var(--warning) 14%,var(--card));color:var(--warning-foreground)}
+.payroll-overview-metric dt{font-size:11px;color:var(--muted-foreground);margin-bottom:7px}
+.payroll-overview-metric dd{font-size:22px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.3}
+.payroll-verification{padding:22px 24px 25px}
+.payroll-verification-head{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:25px}
+.payroll-verification h2{font-size:17px;font-weight:600}
+.payroll-verification-head>div{display:flex;gap:12px;align-items:center}
+.payroll-verification-head>span{font-size:11px;color:var(--muted-foreground)}
+.payroll-verification-body{display:grid;grid-template-columns:minmax(0,2.2fr) minmax(260px,1fr);gap:25px;align-items:center}
+.payroll-review-timeline{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:0}
+.payroll-review-point{position:relative;text-align:left;min-width:0;padding:0 12px 0 0;border-radius:4px}
+.payroll-review-point::after{content:'';position:absolute;top:10px;left:22px;right:0;height:2px;background:color-mix(in srgb,var(--primary) 50%,var(--border))}
+.payroll-review-point:last-child::after{display:none}
+.payroll-review-node{position:relative;z-index:1;display:flex;align-items:center;justify-content:center;width:22px;height:22px;border:2px solid var(--primary);background:var(--card);color:var(--primary);border-radius:50%;margin-bottom:17px}
+.payroll-review-node.complete{background:var(--primary);color:var(--primary-foreground)}
+.payroll-review-node.issue{background:var(--warning);border-color:var(--warning);color:#442d07}
+.payroll-review-point strong{display:block;min-height:35px;font-size:12px;line-height:1.5;font-weight:500}
+.payroll-review-point small{display:block;font-size:11px;color:var(--muted-foreground);margin-top:6px}
+.payroll-review-point:disabled{cursor:default}
+.payroll-review-point:focus-visible{outline:2px solid var(--ring);outline-offset:5px}
+.payroll-verification-message{display:flex;align-items:center;gap:16px}
+.payroll-verification-message>svg{width:65px;height:75px;stroke-width:1.25;color:var(--primary);flex-shrink:0}
+.payroll-verification-message h3{font-size:18px;font-weight:600;line-height:1.45;margin-bottom:8px}
+.payroll-verification-message p{font-size:12px;line-height:1.7;color:var(--muted-foreground)}
+.payroll-generated-totals{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0}
+.payroll-generated-totals>div{padding:20px 24px;border-right:1px solid var(--border)}
+.payroll-generated-totals>div:last-child{border:0}
+.payroll-generated-totals dt{font-size:12px;color:var(--muted-foreground);margin-bottom:8px}
+.payroll-generated-totals dd{font-size:25px;font-weight:600;font-variant-numeric:tabular-nums}
+.payroll-cost-attention{display:grid;grid-template-columns:minmax(0,1.8fr) minmax(0,1fr);gap:24px;align-items:stretch}
+.payroll-cost-chart{height:300px;width:100%;padding:12px 12px 0 0}
+.payroll-cost-legend{display:flex;justify-content:center;flex-wrap:wrap;gap:14px;padding:12px 16px 20px;font-size:10px;color:var(--muted-foreground)}
+.payroll-cost-legend span{display:flex;align-items:center;gap:6px}
+.payroll-cost-legend i{width:9px;height:9px;border-radius:2px;display:inline-block}
+.payroll-attention-row{display:flex;align-items:center;gap:12px;padding:18px 22px;border-bottom:1px solid var(--border)}
+.payroll-attention-row:last-child{border-bottom:0}
+.payroll-report-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;padding:20px}
+.payroll-report-tile{display:flex;flex-direction:column;gap:10px;padding:18px;border:1px solid var(--border);border-radius:6px;background:var(--card);min-width:0}
+.payroll-report-tile>strong{font-size:13px;font-weight:500}
+.payroll-report-tile p{font-size:12px;color:var(--muted-foreground);flex:1}
+@media(max-width:1279px){.payroll-overview-top{grid-template-columns:1fr}.payroll-verification-body{grid-template-columns:1fr}.payroll-verification-message{border-top:1px solid var(--border);padding-top:16px}.payroll-verification-message>svg{height:45px;width:45px}.payroll-cost-attention{grid-template-columns:minmax(0,1.5fr) minmax(0,1fr)}}
+@media(max-width:767px){[data-interface] .interface-content{padding:20px 16px}[data-interface] .app-header{padding:0 12px;height:60px}[data-interface='violet'] .app-header .interface-org{display:none}.payroll-cost-attention{grid-template-columns:1fr}.payroll-review-timeline{grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.payroll-review-point::after{display:none}.payroll-review-point strong{min-height:0}.payroll-verification-head{align-items:flex-start;flex-direction:column}.payroll-report-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.payroll-overview-metric{padding:14px;gap:10px}.payroll-metric-icon{width:35px;height:40px}.payroll-generated-totals dd{font-size:20px}.payroll-generated-totals>div{padding:16px}.payroll-periods{gap:8px}.payroll-period{min-height:94px}}
+@media(max-width:479px){.payroll-generated-totals,.payroll-report-grid{grid-template-columns:1fr}.payroll-generated-totals>div{border-right:0;border-bottom:1px solid var(--border)}.payroll-overview-metrics{gap:10px}.payroll-metric-icon{display:none}.payroll-overview-metric dd{font-size:20px}.payroll-periods>.ui-button{width:28px;height:32px}.payroll-period{padding:12px 5px}.payroll-period strong{font-size:11px}.payroll-period small{font-size:11px}.payroll-verification{padding:18px}}
+@media(prefers-reduced-motion:reduce){[data-interface] *,[data-interface] *::before,[data-interface] *::after{scroll-behavior:auto!important;transition:none!important;animation-duration:.01ms!important}}

@@ -133,7 +133,7 @@ function NavItem({ it, collapsed, onNavigate, badge }) {
       onClick={onNavigate}
       className={({ isActive }) =>
         cn(
-          'relative flex h-9 items-center gap-3 rounded-md text-sm text-sidebar-foreground/75 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground [&_svg]:size-[18px] [&_svg]:shrink-0',
+          'interface-nav-link relative flex h-9 items-center gap-3 rounded-md text-sm text-sidebar-foreground/75 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground [&_svg]:size-[18px] [&_svg]:shrink-0',
           collapsed ? 'justify-center px-0' : 'px-3',
           isActive &&
             'bg-sidebar-accent font-medium text-sidebar-accent-foreground before:absolute before:inset-y-1.5 before:left-0 before:w-[3px] before:rounded-full before:bg-sidebar-primary [&_svg]:text-sidebar-primary',
@@ -169,8 +169,8 @@ function Sidebar({ onNavigate, collapsed, onToggleCollapsed }) {
   const showSettings = settingsOpen || inSettings;
   const showMore = moreOpen || inMore;
   return (
-    <nav aria-label="Main" className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
-      <div className={cn('flex h-14 shrink-0 items-center gap-2.5 border-b border-sidebar-border', collapsed ? 'justify-center px-2' : 'px-4')}>
+    <nav aria-label="Main" className="interface-navigation flex h-full flex-col bg-sidebar text-sidebar-foreground">
+      <div className={cn('interface-brand flex h-14 shrink-0 items-center gap-2.5 border-b border-sidebar-border', collapsed ? 'justify-center px-2' : 'px-4')}>
         <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground">
           <svg viewBox="0 0 32 32" className="size-5" aria-hidden>
             <path d="M17.5 5 9 18h6l-1.5 9L23 13h-6.2L17.5 5z" fill="currentColor" />
@@ -386,8 +386,8 @@ export function AppShell() {
   const qc = useQueryClient();
   const nav = useNavigate();
   return (
-    <div className="flex h-screen overflow-hidden">
-      <aside className={cn('hidden shrink-0 transition-[width] duration-200 lg:block', collapsed ? 'w-16' : 'w-64')}>
+    <div className="interface-shell flex h-screen overflow-hidden">
+      <aside className={cn('interface-sidebar hidden shrink-0 transition-[width] duration-200 lg:block', collapsed ? 'w-16' : 'w-64')}>
         <Sidebar
           collapsed={collapsed}
           onToggleCollapsed={() => {
@@ -410,6 +410,7 @@ export function AppShell() {
           <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMobileOpen(true)} aria-label="Open navigation">
             <MenuIcon />
           </Button>
+          <span className="interface-org">AJPWER <span>Workforce</span></span>
           <GlobalSearch />
           <div className="flex-1" />
           <ThemeToggle />
@@ -441,7 +442,7 @@ export function AppShell() {
             ]}
           />
         </header>
-        <main className="min-h-0 flex-1 overflow-y-auto px-4 py-6 lg:px-8">
+        <main className="interface-content min-h-0 flex-1 overflow-y-auto px-4 py-6 lg:px-8">
           <div className="mx-auto max-w-[1600px]">
             <Outlet />
           </div>

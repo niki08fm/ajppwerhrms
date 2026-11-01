@@ -6,7 +6,7 @@ const reviews = ['Confirm attendance', 'Confirm joiners and exits', 'Confirm emp
 test('one clear payroll journey confirms all reviews, generates, locks and records payment', async ({ page }) => {
   const state = await mockPayrollJourney(page);
   await page.goto(`/payroll/${YM}`);
-  await page.getByRole('button', { name: 'Continue · step 1, Attendance', exact: true }).click();
+  await page.getByRole('button', { name: /Attendance.*Ready to review/ }).click();
   for (const label of reviews) await page.getByRole('button', { name: label, exact: true }).click();
   await expect(page).toHaveURL(/step=7/);
   await page.getByRole('button', { name: 'Generate payroll', exact: true }).click();
@@ -116,8 +116,7 @@ test('a missing previous payroll is not fetched or displayed as a completed payr
   const state = await mockPayrollJourney(page, { stage: 2 });
   await page.goto(`/payroll/${YM}`);
   await expect(page.getByRole('button', { name: /September 2026.*In progress/ })).toBeVisible();
-  await page.getByText('Payroll cost · last six months', { exact: true }).click();
-  await expect(page.getByText('September 2026 is an estimate until generated.', { exact: false })).toBeVisible();
+  await expect(page.getByText('March 2026–August 2026 · Generated payrolls', { exact: true })).toBeVisible();
   expect(state.reads.filter((path) => path.endsWith('/summary'))).toEqual([`/payroll/periods/${YM}/summary`]);
 });
 

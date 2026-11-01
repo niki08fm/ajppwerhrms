@@ -2,13 +2,13 @@ import { useEffect } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Play } from 'lucide-react';
-import { COMPANIES, GENERATE_STEP, LAST_REVIEW_STEP, STEP } from '@ajpwer/shared';
+import { COMPANIES, GENERATE_STEP, STEP } from '@ajpwer/shared';
 import { api } from '@/services/api';
 import { monthLabel } from '@/utils';
 import { PageHeader } from '@/components/bits';
 import { ErrorState, PeriodChip, SkeletonBlock } from '@/components/states';
 import { Button } from '@/components/ui/button';
-import { Segmented } from '@/components/ui/form';
+import { Select } from '@/components/ui/form';
 import { PayrollOverview } from '../../components/payroll/Overview';
 import { StepAdhoc, StepAttendance, StepFnf, StepGenerate, StepHeld, StepIssues, StepJoiners } from '../../components/payroll/Steps';
 import { currentStep, StepTracker, stepLabel } from '../../components/payroll/Tracker';
@@ -76,16 +76,13 @@ export default function RunPayroll() {
       <div className="payroll-overview flex flex-col gap-4">
         <PageHeader
           title="Payroll"
-          description={`Choose a month, review its ${LAST_REVIEW_STEP} steps, then generate payroll and download payslips.`}
+          description={`Review ${monthLabel(ym)}, then generate payslips and reports.`}
           actions={
             <>
-              <Segmented
-                label="Company"
-                value={company ?? 'all'}
-                onChange={(v) => set({ company: v === 'all' ? null : v })}
-                options={[{ value: 'all', label: 'Both companies' }, ...COMPANIES.map((c) => ({ value: c.key, label: c.name }))]}
-              />
-              {ym <= periods.data.meta.suggested && <Button onClick={() => open(cta.step)}><Play /> {cta.label}</Button>}
+              <Select aria-label="Company" value={company ?? 'all'} className="w-44" onChange={e => set({ company: e.target.value === 'all' ? null : e.target.value })}>
+                <option value="all">Both companies</option>{COMPANIES.map(c => <option key={c.key} value={c.key}>{c.name}</option>)}
+              </Select>
+              {ym <= periods.data.meta.suggested && <Button disabled={!generated && cur !== GENERATE_STEP} onClick={() => open(cta.step)}><Play /> {generated ? cta.label : 'Generate payroll'}</Button>}
             </>
           }
         />
