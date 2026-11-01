@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, Lock, LockOpen, PauseCircle, Play, Plus, RotateCcw, Undo2, Users, Wallet } from 'lucide-react';
@@ -19,6 +19,7 @@ import { CorrectionDrawer } from '../attendance/CorrectionDrawer';
 import { SettlementPanel } from '../../pages/people/SettlementStatement';
 import { heldMonthStatus, HoldDialog, ReleaseDialog } from './HoldDialogs';
 import { Reports } from './Reports';
+import { cachePayrollPeriod } from '@/utils/payroll-workflow';
 import { stepLabel, submittedBy } from './Tracker';
 
 function refreshPeriod(qc, ym) {
@@ -29,64 +30,109 @@ function refreshPeriod(qc, ym) {
  * The bar under every step: submit it (and go on), or — once submitted — who did it, with
  * reopen and the way on. Reopening clears this step and every later one.
  */
-export function StepFooter({ period, n, ym, onNext, label, blocked, blockedNote, note }) {
+export function StepFooter({
+  period,
+  n,
+  ym,
+  onNext,
+  label,
+  blocked,
+  blockedNote,
+  note,
+  reviewLoading,
+  reviewError
+}) {
   const qc = useQueryClient();
+  const {
+    can
+  } = useSession();
+  const canConfirm = can('payroll.run');
+  const current = useRef({
+    ym,
+    n
+  });
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  current.current = {
+    ym,
+    n
+  };
+  const [confirmReopen, setConfirmReopen] = useState(false);
   const submitted = period.steps_submitted.includes(n);
-  const locked = period.state !== 'DRAFT';
+  const locked = period.state !== 'DRAFT' || period.running;
   const by = submittedBy(period, n);
+  const isCurrent = ({
+    month,
+    step
+  }) => mounted.current && current.current.ym === month && current.current.n === step;
   const submit = useMutation({
-    mutationFn: () => api.post(`/payroll/periods/${ym}/steps/${n}/submit`),
-    onSuccess: () => {
-      toast.success(`${stepLabel(n)} submitted`);
-      refreshPeriod(qc, ym);
-      onNext();
+    mutationFn: ({
+      month,
+      step
+    }) => api.post(`/payroll/periods/${month}/steps/${step}/submit`),
+    onSuccess: async (response, variables) => {
+      await cachePayrollPeriod(qc, variables.month, response);
+      refreshPeriod(qc, variables.month);
+      toast.success(`${stepLabel(variables.step)} confirmed for ${monthLabel(variables.month)}.`);
+      if (isCurrent(variables)) onNext();
     },
-    onError: (e) => toast.error(errorMessage(e)),
+    onError: error => toast.error(errorMessage(error))
   });
   const reopen = useMutation({
-    mutationFn: () => api.post(`/payroll/periods/${ym}/steps/${n}/reopen`),
-    onSuccess: () => {
-      toast.success(`${stepLabel(n)} reopened. The steps after it were cleared.`);
-      refreshPeriod(qc, ym);
+    mutationFn: ({
+      month,
+      step
+    }) => api.post(`/payroll/periods/${month}/steps/${step}/reopen`),
+    onSuccess: async (response, variables) => {
+      await cachePayrollPeriod(qc, variables.month, response);
+      refreshPeriod(qc, variables.month);
+      toast.success(`${stepLabel(variables.step)} is open for changes. Review the later steps again before generating payroll.`);
+      if (isCurrent(variables)) setConfirmReopen(false);
     },
-    onError: (e) => toast.error(errorMessage(e)),
+    onError: error => toast.error(errorMessage(error))
   });
-  const nextLabel = n === LAST_REVIEW_STEP ? 'Go to generate' : `Next: ${stepLabel(n + 1)}`;
-  return (
+  useEffect(() => {
+    setConfirmReopen(false);
+    submit.reset();
+    reopen.reset();
+  }, [ym, n]);
+  const nextStep = stepLabel(n + 1);
+  const nextTask = nextStep.charAt(0).toLowerCase() + nextStep.slice(1);
+  const nextLabel = n === LAST_REVIEW_STEP ? 'Continue to generate payroll' : `Continue to ${nextTask}`;
+  const repeated = period.steps_submitted.filter(step => step >= n).sort((a, b) => a - b);
+  return <>
     <Card className="sticky bottom-3 z-10 flex flex-wrap items-center gap-3 px-5 py-3.5 shadow-md">
       <div className="min-w-60 flex-1">
-        {submitted ? (
-          <>
-            <div className="font-semibold">Submitted{by ? ` ${longDate(by.on)} by ${by.by}` : ''}</div>
-            <div className="text-[13px] text-muted-foreground">
-              {locked ? 'The payroll has been generated. Go back to the steps from Generate to change this.' : 'Reopening clears this step and every step after it.'}
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="font-semibold">{blocked ? blockedNote : 'Reviewed?'}</div>
-            <div className="text-[13px] text-muted-foreground">{note ?? (blocked ? 'Submit once everything above is settled.' : `Submitting locks this step and opens ${stepLabel(n + 1)}.`)}</div>
-          </>
-        )}
+        <div className="font-semibold">{submitted ? `Review complete${by ? ` · ${longDate(by.on)} · ${by.by}` : ''}` : reviewLoading ? 'Updating this review…' : reviewError ? 'This review could not be loaded' : blocked ? blockedNote : !canConfirm ? 'View-only access' : 'Ready to continue?'}</div>
+        <div className="text-[13px] text-muted-foreground">
+          {submitted ? locked ? 'Payslips have been generated. Return to the payroll overview to make changes.' : 'You can reopen this review if anything needs correcting.' : reviewError ? 'Try again above before confirming this review.' : reviewLoading ? 'Please wait for the latest information.' : blocked ? 'Resolve the items above before continuing.' : !canConfirm ? 'You can review these details. A payroll manager needs to confirm them.' : note ?? `Confirm this review to continue to ${nextTask}.`}
+        </div>
       </div>
-      {submitted ? (
-        <>
-          {!locked && (
-            <Button variant="outline" className="border-destructive/40 text-destructive hover:bg-destructive/10" loading={reopen.isPending} onClick={() => reopen.mutate()}>
-              Reopen this step
-            </Button>
-          )}
-          <Button onClick={onNext}>
-            {nextLabel} <ArrowRight />
-          </Button>
-        </>
-      ) : (
-        <Button loading={submit.isPending} disabled={blocked || locked} onClick={() => submit.mutate()}>
-          {label} <ArrowRight />
-        </Button>
-      )}
+      {submitted ? <>
+        {!locked && canConfirm && <Button variant="outline" disabled={reopen.isPending} onClick={() => setConfirmReopen(true)}>Reopen review</Button>}
+        <Button onClick={onNext}>{nextLabel}<ArrowRight /></Button>
+      </> : <Button loading={submit.isPending} disabled={blocked || locked || reviewLoading || reviewError || !canConfirm} onClick={() => submit.mutate({
+        month: ym,
+        step: n
+      })}>{label}<ArrowRight /></Button>}
+      {submit.isError && <p role="alert" className="w-full text-sm text-destructive">{errorMessage(submit.error)}</p>}
     </Card>
-  );
+    <Dialog open={confirmReopen} onOpenChange={open => {
+      if (!reopen.isPending) setConfirmReopen(open);
+    }} title="Reopen this review?" description={`${stepLabel(n)} · ${monthLabel(ym)}`} footer={<><Button variant="outline" disabled={reopen.isPending} onClick={() => setConfirmReopen(false)}>Keep review complete</Button><Button loading={reopen.isPending} disabled={locked} onClick={() => reopen.mutate({
+        month: ym,
+        step: n
+      })}>Reopen review</Button></>}>
+      <p className="text-sm">Your saved entries will stay. These completed reviews will need to be checked again before you generate payroll:</p>
+      <ul className="my-3 list-disc space-y-1 pl-5 text-sm">{repeated.map(step => <li key={step}>{stepLabel(step)}</li>)}</ul>
+      {reopen.isError && <p role="alert" className="text-sm text-destructive">{errorMessage(reopen.error)}</p>}
+    </Dialog>
+  </>;
 }
 
 // ─── Step 1: attendance ─────────────────────────────────────────────────────
@@ -165,7 +211,7 @@ export function StepAttendance({ ym, period, onNext }) {
         </div>
       )}
       <Card>
-        <CardHeader title={`Attendance — ${monthLabel(ym)}`} description={canViewAttendance ? 'Select an employee or a flagged day to view and correct attendance in the side panel. Submitting freezes attendance until this step is reopened.' : 'Attendance details require attendance access. Payroll totals are shown below.'} />
+        <CardHeader title={`Attendance — ${monthLabel(ym)}`} description={canViewAttendance ? 'Select an employee or a flagged day to view and correct attendance in the side panel. Confirming completes the attendance review. Reopen it if you need to make corrections.' : 'Attendance details require attendance access. Payroll totals are shown below.'} />
         {q.isLoading ? (
           <SkeletonRows rows={10} cols={10} />
         ) : q.isError ? (
@@ -212,7 +258,7 @@ export function StepAttendance({ ym, period, onNext }) {
           onOpenChange={(value) => !value && setOpen(null)}
         />
       )}
-      <StepFooter period={period} n={STEP.ATTENDANCE} ym={ym} onNext={onNext} label="Submit attendance" blocked={manualCount > 0} blockedNote="Review manual attendance sheets first" note="Missing punch-outs pay half a day; short days pay nothing. Correct them above before submitting." />
+      <StepFooter reviewLoading={q.isFetching || (canViewAttendance && manualSheets.isFetching)} reviewError={q.isError || (canViewAttendance && manualSheets.isError)} period={period} n={STEP.ATTENDANCE} ym={ym} onNext={onNext} label="Confirm attendance" blocked={manualCount > 0} blockedNote="Review manual attendance sheets first" note="Check missing punches, paid days and overtime before confirming attendance." />
     </>
   );
 }
@@ -297,7 +343,7 @@ export function StepJoiners({ ym, period, onNext }) {
           )}
         </div>
       )}
-      <StepFooter period={period} n={STEP.JOINERS} ym={ym} onNext={onNext} label="Submit joiners and exits" />
+      <StepFooter reviewLoading={q.isFetching} reviewError={q.isError} period={period} n={STEP.JOINERS} ym={ym} onNext={onNext} label="Confirm joiners and exits" />
     </>
   );
 }
@@ -401,11 +447,13 @@ export function StepIssues({ ym, period, onNext }) {
       </Card>
 
       <StepFooter
+        reviewLoading={q.isFetching}
+        reviewError={q.isError}
         period={period}
         n={STEP.ISSUES}
         ym={ym}
         onNext={onNext}
-        label="Submit issues"
+        label="Confirm employee checks"
         blocked={blocking > 0}
         blockedNote={`${blocking} blocking issue${blocking === 1 ? '' : 's'} still to settle`}
       />
@@ -535,7 +583,7 @@ export function StepHeld({ ym, period, onNext }) {
         </Card>
       )}
 
-      <StepFooter period={period} n={STEP.HELD} ym={ym} onNext={onNext} label="Submit held salaries" />
+      <StepFooter reviewLoading={q.isFetching} reviewError={q.isError} period={period} n={STEP.HELD} ym={ym} onNext={onNext} label="Confirm held salaries" />
       {holdingAny && h && <HoldDialog openMonths={h.open_months} onClose={() => { setHoldingAny(false); refreshPeriod(qc, ym); }} />}
       {releasing && h && <ReleaseDialog hold={releasing} openMonths={h.open_months} runMonths={h.run_months} onClose={() => { setReleasing(null); refreshPeriod(qc, ym); }} />}
     </>
@@ -689,11 +737,13 @@ export function StepFnf({ ym, period, onNext }) {
         )}
       </Card>
       <StepFooter
+        reviewLoading={q.isFetching}
+        reviewError={q.isError}
         period={period}
         n={STEP.FNF}
         ym={ym}
         onNext={onNext}
-        label="Submit F&F"
+        label="Confirm final settlements"
         blocked={blocked}
         blockedNote="A settlement in this payroll has a blocking issue"
         note={blocked ? 'Fix it, or move that settlement to Later.' : undefined}
@@ -799,7 +849,7 @@ export function StepAdhoc({ ym, period, onNext }) {
       </div>
       <Card className="overflow-hidden">
         <CardHeader
-          title={`One-off items for ${monthLabel(ym)} · ${items.length}`}
+          title={`One-time adjustments · ${monthLabel(ym)} · ${items.length}`}
           description="Paid or deducted once, in this month only. Click an item to see who gets it."
           actions={
             !locked &&
@@ -816,7 +866,7 @@ export function StepAdhoc({ ym, period, onNext }) {
         ) : q.isError ? (
           <ErrorState error={q.error} onRetry={() => q.refetch()} />
         ) : !items.length && !active.length ? (
-          <EmptyState title="No one-off items" body="Bonuses, incentives, reimbursements and one-off deductions for this month go here. Submit the step if there are none." />
+          <EmptyState title="No adjustments this month" body="Bonuses, incentives, reimbursements and one-off deductions for this month go here. If there are no adjustments, confirm this review to continue." />
         ) : (
           <div className="overflow-x-auto">
             <table className="data-table w-full">
@@ -886,7 +936,7 @@ export function StepAdhoc({ ym, period, onNext }) {
           </div>
         )}
       </Card>
-      <StepFooter period={period} n={STEP.ADHOC} ym={ym} onNext={onNext} label="Submit adhoc" />
+      <StepFooter reviewLoading={q.isFetching} reviewError={q.isError} period={period} n={STEP.ADHOC} ym={ym} onNext={onNext} label="Confirm adjustments" />
       <AdhocPeople item={viewing} text={viewing ? targetText(viewing) : ''} canRemove={!locked} removing={del.isPending} onRemove={() => viewing && del.mutate(viewing.id)} onClose={() => setViewing(null)} />
     </>
   );
@@ -1169,10 +1219,11 @@ export function StepGenerate({ ym, period, company, onBack }) {
       action === 'rerun'
         ? api.post(`/payroll/periods/${ym}/run`, {}, { 'Idempotency-Key': crypto.randomUUID() })
         : api.post(`/payroll/periods/${ym}/${action}`, action === 'mark-paid' ? { payment_ref: paymentRef } : {}, action === 'mark-paid' ? { 'Idempotency-Key': `pay-${ym}-${paymentRef}` } : {}),
-    onSuccess: (r, action) => {
+    onSuccess: async (r, action) => {
       setConfirm(null);
+      await cachePayrollPeriod(qc,ym,r);
       if (action === 'rerun') setJobId(r.data.job_id);
-      else toast.success('Done. The change is in the audit log.');
+      else toast.success(action === 'lock' ? `${monthLabel(ym)} payroll locked. You can record the bank payment when it is complete.` : action === 'mark-paid' ? `${monthLabel(ym)} marked as paid. Payment reference: ${paymentRef}.` : action === 'unlock' ? `${monthLabel(ym)} payroll unlocked for corrections.` : action === 'unmark-paid' ? 'Payment status removed. Review the payment details before marking it paid again.' : 'Payroll is open for review.');
       refreshPeriod(qc, ym);
       qc.invalidateQueries({ queryKey: ['report'] });
       if (action === 'back-to-steps') onBack();
@@ -1189,8 +1240,8 @@ export function StepGenerate({ ym, period, company, onBack }) {
       {!generated ? (
         <Card>
           <CardHeader
-            title={ready ? `Everything is reviewed. Ready to generate ${monthLabel(ym)}.` : `Submit steps 1 to ${LAST_REVIEW_STEP} first`}
-            description="Generating works out every payslip from what was submitted, and makes the bank file and the statutory reports. Nothing is paid until you mark it paid."
+            title={ready ? `Everything is reviewed. Ready to generate ${monthLabel(ym)}.` : 'Complete the six reviews first'}
+            description="Generate payslips and reports from your confirmed reviews. Review the results before locking payroll and recording payment."
           />
           <div className="flex flex-col gap-4 px-5 pb-5">
             {q.isLoading ? (

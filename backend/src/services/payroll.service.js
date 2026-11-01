@@ -258,8 +258,10 @@ export async function computeIssues(db, ym) {
 export async function submitStep(ym, step, actor, ip) {
   return prisma.$transaction(
     async (tx) => {
-      const period = await getPeriod(tx, ym);
-      await tx.$queryRaw`SELECT id FROM payroll_period WHERE id = ${period.id}::uuid FOR UPDATE`;
+      const initial = await getPeriod(tx, ym);
+      await tx.$queryRaw`SELECT id FROM payroll_period WHERE id = ${initial.id}::uuid FOR UPDATE`;
+      const period = await tx.payrollPeriod.findUniqueOrThrow({where:{id:initial.id}});
+      if (period.running_job_id) throw new AppError('PAYROLL_RUNNING', 'Payroll is being generated. Wait for it to finish before changing a review.', 409);
       if (period.state !== 'DRAFT') throw new AppError('PERIOD_LOCKED', `${formatYearMonth(ym)} has been run. Take it back to its steps to change them.`, 409);
       if (step < 1 || step > LAST_REVIEW_STEP) throw new AppError('VALIDATION', `Steps 1 to ${LAST_REVIEW_STEP} are submitted; step ${GENERATE_STEP} is generating the payroll.`, 422);
       for (let s = 1; s < step; s++) {
@@ -309,7 +311,10 @@ export async function submitStep(ym, step, actor, ip) {
 /** Reopening a step clears it and every later step; earlier steps stay submitted. */
 export async function reopenStep(ym, step, actor, ip) {
   return prisma.$transaction(async (tx) => {
-    const period = await getPeriod(tx, ym);
+    const initial = await getPeriod(tx, ym);
+    await tx.$queryRaw`SELECT id FROM payroll_period WHERE id = ${initial.id}::uuid FOR UPDATE`;
+    const period = await tx.payrollPeriod.findUniqueOrThrow({where:{id:initial.id}});
+    if (period.running_job_id) throw new AppError('PAYROLL_RUNNING', 'Payroll is being generated. Wait for it to finish before changing a review.', 409);
     if (period.state !== 'DRAFT') throw new AppError('PERIOD_LOCKED', `${formatYearMonth(ym)} has been run. Take it back to its steps first.`, 409);
     const steps = period.steps_submitted.filter((s) => s < step);
     const log = [...(period.step_log ?? []), { step, action: 'reopen', by: actor, at: new Date().toISOString() }];

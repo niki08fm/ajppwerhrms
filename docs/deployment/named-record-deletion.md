@@ -14,7 +14,7 @@ For a normal employee departure, record their exit and complete F&F instead.
 
 ## Pay group
 
-1. Open **Setup → Pay groups** and select the group's **Delete** action.
+1. Open **Setup → Pay groups** and open **Actions → Delete pay group**.
 2. If employees still use it, select **Manage linked employees**.
 3. Select the employees, choose another pay group, and select **Move selected employees**. Their salary structures stay unchanged.
 4. Return to Delete and type the complete pay-group name to confirm.
@@ -23,7 +23,7 @@ Exited/deleted employees retain their historical group links. Old policy definit
 
 ## Salary structure
 
-1. Open **Setup → Salary structures** and select the structure's **Delete** action.
+1. Open **Setup → Salary structures** and open **Actions → Delete salary structure**.
 2. Select **Manage linked employees** to see current and future salary assignments.
 3. Use **Change salary structure** beside each employee to enter a salary revision with another structure and the appropriate effective date. Existing salary protection rules still apply.
 4. A future revision does not release the old structure until its current assignment ends. Change/remove any other future revisions that still use it. For an open hiring offer, revoke it in Hiring and issue a replacement offer with another structure; changing salary alone does not replace an offer.

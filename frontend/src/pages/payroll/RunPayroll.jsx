@@ -18,12 +18,12 @@ export function usePeriod(ym) {
 }
 
 const DESCRIBE = {
-  [STEP.ATTENDANCE]: 'Select an employee to review and correct attendance in the side panel. Submit when the month is ready.',
+  [STEP.ATTENDANCE]: 'Check paid days, absences and overtime. Open an employee to correct a day.',
   [STEP.JOINERS]: 'Review joining and leaving dates, and the days each person is paid.',
-  [STEP.ISSUES]: 'Resolve missing details and other issues that would stop payroll.',
+  [STEP.ISSUES]: 'Check bank, tax and statutory details. Resolve anything that would stop payroll.',
   [STEP.HELD]: 'Hold salaries, leave someone out of this payroll, or release an earlier hold.',
   [STEP.FNF]: 'Review full and final settlements to pay now or keep for later.',
-  [STEP.ADHOC]: 'Add bonuses, reimbursements and one-off earnings or deductions.',
+  [STEP.ADHOC]: 'Add this month’s bonuses, reimbursements and other one-time earnings or deductions.',
   [STEP.GENERATE]: 'Generate payroll, review payslips and reports, then lock and mark paid after the transfer.',
 };
 

@@ -26,7 +26,7 @@ const REPORTS = [
   ['department', 'By department'],
   ['change', 'Change vs last month'],
   ['settlements', 'Settlements'],
-  ['adhoc', 'Adhoc'],
+  ['adhoc', 'One-time adjustments'],
 ];
 
 /** Every report of a generated month, optionally for one company (`AJ` or `TP`). */

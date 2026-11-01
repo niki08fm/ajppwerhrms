@@ -112,7 +112,7 @@ export function OverviewTab({ e }) {
         <Card>
           <CardHeader
             title="Identity and bank"
-            description={full && fullId.data ? 'Full numbers shown. This view is in the log.' : 'Numbers only — no documents are stored. Every view is logged.'}
+            description={full && fullId.data ? 'Full details are visible. Access has been recorded.' : 'Sensitive numbers are hidden. Only authorised users can view full details.'}
             actions={
               can('pii.read') && (
                 <Button variant="ghost" size="sm" loading={fullId.isFetching} onClick={() => setFull(!full)}>
@@ -163,7 +163,7 @@ export function PayGroupRulesCard({ e }) {
   };
   return (
     <Card>
-      <CardHeader title={`Rules from ${r.pay_group.name}`} description="These policies apply independently of the employee’s salary structure." />
+      <CardHeader title="Working rules" description={`From the ${r.pay_group.name} pay group.`} />
       <CardBody className="pt-1">
         <Line label="Calendar">{CALENDAR_METHOD_INFO[r.calendar_method]?.label ?? r.calendar_method}</Line>
         <Line label="Weekly off">{r.weekly_off.length ? r.weekly_off.map((d) => d.charAt(0) + d.slice(1).toLowerCase()).join(', ') : 'None'}</Line>
@@ -171,11 +171,14 @@ export function PayGroupRulesCard({ e }) {
           {r.shift.name} {hhmm(r.shift.start_min)}–{hhmm(r.shift.end_min)}
         </Line>
         {ruleLine('ATTENDANCE', 'Attendance')}
+        <details className="mt-3">
+          <summary className="cursor-pointer py-1 text-sm font-medium text-primary">Overtime, leave and other policies</summary>
         {ruleLine('OVERTIME', 'Overtime')}
         {ruleLine('HOLIDAY_WORK', 'Holiday / week-off work')}
         {ruleLine('LEAVE', 'Leave')}
         {ruleLine('GRATUITY', 'Gratuity')}
         {r.policies.filter((p) => !['ATTENDANCE', 'OVERTIME', 'HOLIDAY_WORK', 'LEAVE', 'GRATUITY'].includes(p.kind)).map((p) => ruleLine(p.kind))}
+        </details>
         <Link to="/setup/pay-groups" className="mt-2 inline-block text-[13px] text-primary hover:underline">
           Open {r.pay_group.name} pay group →
         </Link>

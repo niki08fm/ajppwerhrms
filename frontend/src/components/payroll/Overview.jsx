@@ -85,11 +85,11 @@ export function PayrollOverview({ ym, period, periods, meta, company, onOpen, on
     attention.push(
       cur === GENERATE_STEP
         ? { title: 'Generate the payroll', note: 'All review steps are submitted', chip: 'Ready', tone: 'success', step: GENERATE_STEP }
-        : { title: `Step ${cur} · ${stepLabel(cur)}`, note: 'Where this month stopped', chip: 'Next step', tone: 'warning', step: cur },
+        : { title: `Step ${cur} · ${stepLabel(cur)}`, note: 'Continue your review', chip: 'Next step', tone: 'warning', step: cur },
     );
-  } else if (period.state === 'RUN') attention.push({ title: 'Lock the payroll', note: 'Generated, not locked: payslips can still change', chip: 'Next', tone: 'warning', step: GENERATE_STEP });
+  } else if (period.state === 'RUN') attention.push({ title: 'Review and lock payroll', note: 'Generated, not locked: payslips can still change', chip: 'Next', tone: 'warning', step: GENERATE_STEP });
   else if (period.state === 'LOCKED') attention.push({ title: 'Mark it paid', note: 'Once the bank transfer has gone', chip: 'Next', tone: 'warning', step: GENERATE_STEP });
-  if (summary.data?.errors) attention.push({ title: `${summary.data.errors} payslip${summary.data.errors > 1 ? 's' : ''} cannot be worked out`, note: 'Open Issues to fix them', chip: 'Blocking', tone: 'destructive', step: STEP.ISSUES });
+  if (summary.data?.errors) attention.push({ title: `${summary.data.errors} payslip${summary.data.errors > 1 ? 's' : ''} cannot be worked out`, note: 'Open Employee checks to resolve them', chip: 'Blocking', tone: 'destructive', step: STEP.ISSUES });
   if (s?.on_hold) attention.push({ title: `${s.on_hold} salar${s.on_hold > 1 ? 'ies' : 'y'} on hold`, note: `${inr(s.on_hold_net)} kept out of the bank file`, chip: 'Held', tone: 'info', step: STEP.HELD });
   // Statutory dues on this month's pay: TDS by the 7th of the next month, PF and ESI by the 15th.
   if (ym < meta.current) {
@@ -147,9 +147,9 @@ export function PayrollOverview({ ym, period, periods, meta, company, onOpen, on
           </Button>
         </Card>
         {[
-          { label: 'People in this payroll', value: s ? s.headcount : '…', sub: s ? (s.on_hold ? `${s.on_hold} on hold` : 'nobody on hold') : '' },
+          { label: 'People in this payroll', value: s ? s.headcount : '…', sub: s ? (s.on_hold ? `${s.on_hold} on hold` : 'No salaries on hold') : '' },
           { label: 'Gross pay', value: s ? inr(s.gross) : '…', sub: change === null ? (generated ? 'as generated' : 'estimate until generated') : `${change >= 0 ? '+' : ''}${change.toFixed(1)}% on ${monthLabel(prevYm).split(' ')[0]}` },
-          { label: 'Net to people', value: s ? inr(s.net) : '…', sub: generated ? 'as generated' : 'estimate until generated', tone: 'text-success' },
+          { label: 'Net pay', value: s ? inr(s.net) : '…', sub: generated ? 'as generated' : 'estimate until generated', tone: 'text-success' },
         ].map((k) => (
           <Card key={k.label} className="flex-[1_1_180px] px-4 py-3.5">
             <div className="text-[12px] font-semibold tracking-wide text-muted-foreground uppercase">{k.label}</div>

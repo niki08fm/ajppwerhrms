@@ -1,3 +1,4 @@
+import { payrollStepLabel } from '@/utils/payroll-workflow';
 import { Check } from 'lucide-react';
 import { GENERATE_STEP, LAST_REVIEW_STEP, PAYROLL_STEPS } from '@ajpwer/shared';
 import { cn, longDate } from '@/utils';
@@ -16,7 +17,7 @@ export function submittedBy(period, n) {
   return e ? { by: e.by, on: String(e.at).slice(0, 10) } : null;
 }
 
-export const stepLabel = (n) => PAYROLL_STEPS.find((s) => s.n === n)?.label ?? `Step ${n}`;
+export const stepLabel = payrollStepLabel;
 
 const STATE_WORD = { RUN: 'Generated', LOCKED: 'Locked', PAID: 'Paid' };
 
@@ -37,9 +38,9 @@ export function StepTracker({ period, selected, onOpen, notes = {} }) {
       ? `Paid${period.payment_ref ? ` · ref ${period.payment_ref}` : ''}`
       : period.state === 'LOCKED'
         ? 'Payslips are final. Mark it paid once the bank transfer has gone.'
-        : 'Check the generated payroll, then lock it.'
+        : 'Review the reports, then lock the payroll.'
     : cur === GENERATE_STEP
-      ? 'All review steps are submitted — generate the payroll.'
+      ? 'All six reviews are complete. You can generate payroll.'
       : `Next: step ${cur} · ${stepLabel(cur)}${notes[cur] ? ` — ${notes[cur]}` : ''}`;
 
   return (
@@ -61,11 +62,11 @@ export function StepTracker({ period, selected, onOpen, notes = {} }) {
             ? s.n === GENERATE_STEP
               ? STATE_WORD[period.state]
               : by
-                ? `Submitted ${longDate(by.on).replace(/ \d{4}$/, '')}`
-                : 'Submitted'
+                ? `Confirmed ${longDate(by.on).replace(/ \d{4}$/, '')}`
+                : 'Confirmed'
             : isCur
-              ? (notes[s.n] ?? 'To do now')
-              : 'Waiting';
+              ? (notes[s.n] ?? 'Start here')
+              : 'Not started';
           return (
             <div key={s.n} className={cn('flex items-start', i > 0 && 'min-w-0 flex-1')}>
               {i > 0 && <span aria-hidden className={cn('mt-[19px] h-0.5 min-w-4 flex-1 rounded-full', done(s.n - 1) ? 'bg-primary' : 'bg-border')} />}

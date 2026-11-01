@@ -25,7 +25,7 @@ export default function Exits() {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Exits and settlement"
-        description="Record an exit with its last working day — there is no notice period. On the person's exit screen, tick the checklist and process the F&F into a month's payroll, or record it as paid separately."
+        description="Record the last working day, complete clearance and choose how to pay the final settlement."
         actions={
           <Button onClick={() => setPicking(true)}>
             <UserMinus /> Record an exit
@@ -34,13 +34,13 @@ export default function Exits() {
       />
 
       <Card>
-        <CardHeader title="Leaving" description="Each F&F is worked out live until it is paid. Open a person to finish their exit." />
+        <CardHeader title="Leaving" description="Open an employee to review clearance, outstanding recoveries and their final settlement." />
         {q.isLoading ? (
           <SkeletonRows rows={5} />
         ) : q.isError ? (
           <ErrorState error={q.error} onRetry={() => q.refetch()} />
         ) : !q.data.open.length ? (
-          <EmptyState title="Nobody is leaving" body="Record an exit from here or from the person's Exit tab." />
+          <EmptyState title="No exits to complete" body="Employees appear here when an exit is recorded or a final settlement needs attention." />
         ) : (
           <div className="overflow-x-auto"><table className="data-table w-full">
             <thead>

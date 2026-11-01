@@ -30,21 +30,21 @@ async function mock(page,{blocked=false,fail=false,readonly=false}={}){
 for(const kind of ['group','structure'])test(`${kind} deletion requires its exact name and removes only the confirmed record`,async({page})=>{
  const {writes,structure}=await mock(page),label=kind==='group'?'pay group':'salary structure',name=kind==='group'?group.name:structure.name;
  await page.goto(kind==='group'?'/setup/pay-groups':'/setup/structures');
- await page.getByRole('button',{name:`Delete ${label} ${name}`,exact:true}).click();
+ await page.getByRole('button',{name:`${kind==='group'?'Pay group':'Salary structure'} actions for ${name}`,exact:true}).click();await page.getByRole('menuitem',{name:`Delete ${label}`,exact:true}).click();
  const dialog=page.getByRole('dialog'),input=dialog.getByRole('textbox',{name:`Type ${label} name to confirm deletion`}),button=dialog.getByRole('button',{name:`Delete ${label}`,exact:true});
  await expect(dialog).toContainText('Keep paid payslips, attendance and audit history.');
  for(const text of [name.toLowerCase(),name+' ',name.slice(1)]){await input.fill(text);await expect(button).toBeDisabled();}
  await expect.poll(()=>writes.length).toBe(0);await input.fill(name);await expect(button).toBeEnabled();await button.click();
  await expect(page.getByRole('dialog')).toHaveCount(0);expect(writes).toEqual([{path:`/${kind==='group'?'pay-groups':'structures'}/${kind==='group'?group.id:structure.id}`,body:{confirm_name:name}}]);
- await expect(page.getByRole('button',{name:`Delete ${label} ${name}`,exact:true})).toHaveCount(0);
+ await expect(page.getByRole('button',{name:`${kind==='group'?'Pay group':'Salary structure'} actions for ${name}`,exact:true})).toHaveCount(0);
 });
 test('linked employees block deletion and open the reassignment dialog',async({page})=>{
- await mock(page,{blocked:true});await page.goto('/setup/pay-groups');await page.getByRole('button',{name:'Delete pay group Site staff'}).click();
+ await mock(page,{blocked:true});await page.goto('/setup/pay-groups');await page.getByRole('button',{name:'Pay group actions for Site staff'}).click();await page.getByRole('menuitem',{name:'Delete pay group',exact:true}).click();
  const dialog=page.getByRole('dialog');await expect(dialog).toContainText('Example Employee');await expect(dialog.getByRole('button',{name:'Delete pay group',exact:true})).toBeDisabled();
  await dialog.getByRole('button',{name:'Manage linked employees'}).click();await expect(page.getByRole('dialog')).toContainText('Site staff');await expect(page.getByRole('dialog').getByRole('button',{name:'Move selected employees'})).toBeVisible();
 });
 test('a server refusal keeps the dialog open and shows the reason',async({page})=>{
- const {writes}=await mock(page,{fail:true});await page.goto('/setup/pay-groups');await page.getByRole('button',{name:'Delete pay group Site staff'}).click();
+ const {writes}=await mock(page,{fail:true});await page.goto('/setup/pay-groups');await page.getByRole('button',{name:'Pay group actions for Site staff'}).click();await page.getByRole('menuitem',{name:'Delete pay group',exact:true}).click();
  const dialog=page.getByRole('dialog');await dialog.getByRole('textbox').fill(group.name);await dialog.getByRole('button',{name:'Delete pay group',exact:true}).click();
  await expect(page.getByText('A new employee assignment was added. Move it first.',{exact:true})).toBeVisible();await expect(dialog).toBeVisible();expect(writes).toHaveLength(1);
 });
@@ -54,5 +54,5 @@ test('employee deletion has the same exact-name guard and returns to the employe
  await input.fill('Example Employee');await dialog.getByRole('button',{name:'Delete employee',exact:true}).click();await expect(page).toHaveURL(/\/people$/);expect(writes).toEqual([{path:'/employees/employee-test',body:{confirm_name:'Example Employee'}}]);
 });
 test('read-only setup access does not show delete buttons',async({page})=>{
- await mock(page,{readonly:true});await page.goto('/setup/pay-groups');await expect(page.getByRole('heading',{name:'Pay groups',exact:true})).toBeVisible();await expect(page.getByRole('button',{name:/Delete pay group/})).toHaveCount(0);
+ await mock(page,{readonly:true});await page.goto('/setup/pay-groups');await expect(page.getByRole('heading',{name:'Pay groups',exact:true})).toBeVisible();await expect(page.getByRole('button',{name:/Pay group actions/})).toHaveCount(0);
 });

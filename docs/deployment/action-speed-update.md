@@ -41,6 +41,7 @@ Run from the existing checkout:
 cd /opt/ajpwer
 git pull --ff-only origin feature/clean-hrms-experience
 npm run build --workspace=@ajpwer/backend
+sudo systemctl daemon-reload
 sudo systemctl restart ajpwer-api
 curl --fail --retry 5 --retry-connrefused --retry-delay 2 \
   http://127.0.0.1:4000/api/v1/health

@@ -108,8 +108,8 @@ export default function People() {
   return (
     <div>
       <PageHeader
-        title="People"
-        description="Everyone, whatever their status. Pay rules come from the pay group, never the person."
+        title="Employees"
+        description="Find an employee, check missing details or update their employment information."
         actions={
           <>
             <div className="flex rounded-md border">

@@ -74,9 +74,9 @@ test('overview keeps three common reports visible and opens other reports on req
 test('Adhoc remains the sixth review and generation follows all six reviews', async ({ page }) => {
   const state = await mockPayroll(page, { state: 'DRAFT', submitted: [1, 2, 3, 4, 5] });
   await page.goto(`/payroll/${YM}`);
-  await page.getByRole('button', { name: 'Continue · step 6, Adhoc', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Step 6 · Adhoc', exact: true })).toBeVisible();
-  await expect(page.getByText('Add bonuses, reimbursements and one-off earnings or deductions.', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Continue · step 6, One-time adjustments', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Step 6 · One-time adjustments', exact: true })).toBeVisible();
+  await expect(page.getByText('Add this month’s bonuses, reimbursements and other one-time earnings or deductions.', { exact: true })).toBeVisible();
   expect(state.errors).toEqual([]);
 });
 

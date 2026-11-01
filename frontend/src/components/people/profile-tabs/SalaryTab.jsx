@@ -43,7 +43,7 @@ export function SalaryTab({ e }) {
   const patch = useMutation({
     mutationFn: (body) => api.patch(`/employees/${e.id}/statutory`, body),
     onSuccess: () => {
-      toast.success('Saved. The change is in the audit log with old and new values.');
+      toast.success('Statutory settings saved.');
       refreshEmployeePay(qc, e.id);
       setVpf(null);
     },
@@ -95,13 +95,7 @@ export function SalaryTab({ e }) {
                 <Card className="overflow-hidden">
                   <CardHeader
                     title={`Salary breakup · ${structureName}`}
-                    actions={
-                      !ro && (
-                        <Button variant="outline" size="sm" onClick={() => setRevising(true)}>
-                          Revise salary
-                        </Button>
-                      )
-                    }
+                    actions={!ro && !['ACTIVE','NOTICE'].includes(e.status) && <Button variant="outline" size="sm" onClick={()=>setRevising(true)}>Revise salary</Button>}
                   />
                   <div className="overflow-x-auto p-5">
                     <SalaryBreakup

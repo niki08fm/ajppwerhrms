@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, errorMessage } from '@/services/api';
-import { getPosition } from '@/services/location';
 import { Button } from '@/components/ui/button';
 import { Field, Input } from '@/components/ui/form';
 import { Notice } from '@/components/states';
@@ -28,9 +27,8 @@ export default function Login() {
         qc.setQueryData(['me'], r.data);
         nav(sp.get('next') || '/', { replace: true });
       } else {
-        // Anything else is a site's login ID: the tablet signs in from inside the site's boundary.
-        const pos = await getPosition();
-        await api.post('/auth/site-login', { login: id.toLowerCase(), password, ...pos });
+        // Match the dedicated site sign-in; attendance actions request location separately.
+        await api.post('/auth/site-login', { login: id.toLowerCase(), password });
         qc.invalidateQueries({ queryKey: ['site-me'] });
         nav('/tablet', { replace: true });
       }
@@ -53,19 +51,19 @@ export default function Login() {
         <div>
           <p className="font-display text-3xl leading-snug">Attendance, payroll and settlement for AJ Power Engineering.</p>
           <p className="mt-3 max-w-md text-[14px] opacity-80">
-            Punches at geofenced sites become paid days under each pay group's rules. Payroll runs with full Indian statutory deduction, snapshots every payslip, and reports labour cost by project.
+            Manage site attendance, prepare monthly payroll and keep employee records together.
           </p>
         </div>
-        <p className="text-[13px] opacity-70">HR signs in with an email. A site tablet signs in with its site login ID, from inside the site.</p>
+        <p className="text-[13px] opacity-70">HR uses a work email. Site staff use their assigned site login ID.</p>
       </div>
       <div className="flex items-center justify-center p-6">
         <form onSubmit={submit} className="flex w-full max-w-sm flex-col gap-4">
           <div>
             <h1 className="font-display text-2xl font-semibold">Sign in</h1>
-            <p className="mt-1 text-[14px] text-muted-foreground">HR with an email, or a site tablet with its login ID.</p>
+            <p className="mt-1 text-[14px] text-muted-foreground">Use your work email or the login ID assigned to your site.</p>
           </div>
           {error && <Notice tone="destructive">{error}</Notice>}
-          <Field label="Email or site login ID" hint={who && !who.includes('@') ? 'Signing in as a site: the tablet will ask for its location.' : undefined}>
+          <Field label="Email or site login ID" hint={who && !who.includes('@') ? 'Location is requested when recording site attendance.' : undefined}>
             {(id) => <Input id={id} autoComplete="username" autoCapitalize="none" spellCheck={false} required value={who} onChange={(e) => setWho(e.target.value)} autoFocus />}
           </Field>
           <Field label="Password">{(id) => <Input id={id} type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />}</Field>

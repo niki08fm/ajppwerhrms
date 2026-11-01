@@ -3,13 +3,14 @@ import DeleteRecordDialog from '@/components/DeleteRecordDialog';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Pencil, Plus, Users, Trash2 } from 'lucide-react';
+import { AlertTriangle, Plus, Users, MoreHorizontal } from 'lucide-react';
 import { CALENDAR_METHOD_INFO, POLICY_KIND_LABELS } from '@ajpwer/shared';
 import { api } from '@/services/api';
 import { hhmm } from '@/utils';
 import { PageHeader } from '@/components/bits';
 import { Chip, EmptyState, ErrorState, SkeletonBlock } from '@/components/states';
 import { Button } from '@/components/ui/button';
+import { Menu } from '@/components/ui/overlay';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import ManagePayGroupDialog from '@/components/setup/ManagePayGroupDialog';
 
@@ -23,7 +24,7 @@ export default function PayGroups() {
     <div>
       <PageHeader
         title="Pay groups"
-        description="Set the calendar, weekly off, shift and policies for each pay group. Manage employees here; choose their salary structures in their profiles."
+        description="Group employees who share a shift, working calendar and pay policies. Each employee keeps their own salary structure."
         actions={
           <Button onClick={() => nav('/setup/pay-groups/new')}>
             <Plus /> New pay group
@@ -55,9 +56,11 @@ export default function PayGroups() {
                 description={`${g.headcount} people · paid on day ${g.pay_day}`}
                 actions={
                   <>
-                    <Button variant="outline" size="sm" onClick={() => setManage(g)}><Users /> Manage employees</Button>
-                    {can('setup.write')&&<Button variant="outline" size="sm" className="text-destructive" aria-label={`Delete pay group ${g.name}`} onClick={()=>setRemoving(g)}><Trash2/> Delete</Button>}
-                    <Button variant="outline" size="sm" onClick={() => nav(`/setup/pay-groups/${g.id}/edit`)}><Pencil /> Edit</Button>
+                    {can('people.read')&&<Button variant="outline" size="sm" onClick={()=>setManage(g)}><Users/> Manage employees</Button>}
+                    {can('setup.write')&&<Menu trigger={<Button variant="ghost" size="sm" aria-label={`Pay group actions for ${g.name}`}><MoreHorizontal/> Actions</Button>} items={[
+                      {label:'Edit pay group',onSelect:()=>nav(`/setup/pay-groups/${g.id}/edit`)},
+                      'sep',{label:'Delete pay group',destructive:true,onSelect:()=>setRemoving(g)},
+                    ]}/>}
                   </>
                 }
               />
@@ -77,8 +80,8 @@ export default function PayGroups() {
                     {g.shift.name} ({hhmm(g.shift.start_min)}–{hhmm(g.shift.end_min)})
                   </div>
                 </div>
-                <div>
-                  <div className="mb-1 text-[13px] text-muted-foreground">Policies attached</div>
+                <details>
+                  <summary className="cursor-pointer text-sm font-medium text-primary">View {g.policies.length} pay policies</summary>
                   <ul className="flex flex-col gap-1">
                     {g.policies.map((p) => (
                       <li key={p.id} className="flex items-center justify-between gap-2">
@@ -92,7 +95,7 @@ export default function PayGroups() {
                       </li>
                     ))}
                   </ul>
-                </div>
+                </details>
                 {g.warnings.length > 0 && (
                   <ul className="flex flex-col gap-1 rounded-md border border-warning/40 bg-warning/10 p-2">
                     {g.warnings.map((w, i) => (

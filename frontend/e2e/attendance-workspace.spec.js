@@ -84,7 +84,7 @@ async function mockAttendance(page, { readOnly = false, frozen = false, frozenPa
     const body = method === 'POST' ? request.postDataJSON() : null;
     if (method === 'GET') state.reads.push({ path, query: Object.fromEntries(url.searchParams) });
     let data, meta;
-    if (path === '/auth/me') data = { id: 'hr', name: 'Example HR', role: 'HR Admin', permissions: ['people.read', 'payroll.read', 'payroll.run', 'setup.read', ...(noAttendance ? [] : ['attendance.read']), ...(readOnly ? [] : ['attendance.write']), ...(noExport ? [] : ['reports.export'])] };
+    if (path === '/auth/me') data = { id: 'hr', name: 'Example HR', role: 'HR Admin', permissions: ['people.read', ...(!readOnly ? ['people.write'] : []), 'payroll.read', 'payroll.run', 'setup.read', ...(noAttendance ? [] : ['attendance.read']), ...(readOnly ? [] : ['attendance.write']), ...(noExport ? [] : ['reports.export'])] };
     else if (path === '/lookups') data = { today: TODAY, departments: [department], sites: [site], pay_groups: [group], structures: [], shifts: [], leave_types: [] };
     else if (path === '/dashboard/people') data = { approvals: { total: 0 } };
     else if (path === '/manual-attendance-sheets') data = [];
@@ -263,7 +263,7 @@ test('payroll attendance directs HR to pending sheets before freezing the month'
   });
   await page.goto(`/payroll/${MONTH}?step=1`);
   await expect(page.getByText('1 manual attendance sheet is waiting for HR.', { exact: false })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Submit attendance', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Confirm attendance', exact: true })).toBeDisabled();
   await expect(page.getByRole('link', { name: 'Review sheets', exact: true })).toHaveAttribute('href', '/approvals?kind=manual');
   expect(requested).toEqual([{ status: 'PENDING', ym: MONTH }]);
   expect(state.writes).toEqual([]);

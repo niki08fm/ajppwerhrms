@@ -4,12 +4,13 @@ import DeleteRecordDialog from '@/components/DeleteRecordDialog';
 import ManageStructureDialog from '@/components/setup/ManageStructureDialog';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Copy, Lock, Plus, Trash2, Users } from 'lucide-react';
+import { Lock, Plus, Users, MoreHorizontal } from 'lucide-react';
 import { describeComponentRule, formatINR } from '@ajpwer/shared';
 import { api } from '@/services/api';
 import { Money, PageHeader, ProportionBar } from '@/components/bits';
 import { Chip, EmptyState, ErrorState, Notice, SkeletonBlock } from '@/components/states';
 import { Button } from '@/components/ui/button';
+import { Menu } from '@/components/ui/overlay';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
 
 export const ruleOf = describeComponentRule;
@@ -23,7 +24,7 @@ export default function Structures() {
     <div>
       <PageHeader
         title="Salary structures"
-        description="Salary component templates assigned to each employee. Select a structure when adding an employee or revising their salary. Duplicate an existing structure to change its components."
+        description="Choose how salary is split into earnings. Assign a structure when adding an employee or revising their salary."
         actions={
           <Button onClick={() => nav('/setup/structures/new')}>
             <Plus /> New structure
@@ -51,28 +52,24 @@ export default function Structures() {
                 title={s.name}
                 description={
                   s.people
-                    ? `${s.people} ${s.people === 1 ? 'employee' : 'employees'} paid on this structure`
+                    ? `${s.people} ${s.people === 1 ? 'employee' : 'employees'} assigned`
                     : 'Available to assign to employees'
                 }
                 actions={
                   <>
                     {can('setup.write')&&can('people.read')&&<Button variant="outline" size="sm" onClick={()=>setManaging(s)}><Users/> Manage employees</Button>}
-                    {can('setup.write')&&<Button variant="outline" size="sm" className="text-destructive" aria-label={`Delete salary structure ${s.name}`} onClick={()=>setRemoving(s)}><Trash2/> Delete</Button>}
-                    {s.immutable && (
-                      <Chip tone="muted">
-                        <Lock className="size-3" /> In use
-                      </Chip>
-                    )}
-                    <Button variant="outline" size="sm" onClick={() => nav(`/setup/structures/new?from=${s.id}`)}>
-                      <Copy /> Duplicate and edit
-                    </Button>
+                    {s.immutable && <Chip tone="muted"><Lock className="size-3"/> In use</Chip>}
+                    {can('setup.write') && <Menu trigger={<Button size="sm" variant="ghost" aria-label={`Salary structure actions for ${s.name}`}><MoreHorizontal/> Actions</Button>} items={[
+                      {label:'Duplicate and edit',onSelect:()=>nav(`/setup/structures/new?from=${s.id}`)},
+                      'sep', {label:'Delete salary structure',destructive:true,onSelect:()=>setRemoving(s)},
+                    ]}/>}
                   </>
                 }
               />
 
               <CardBody className="flex flex-col gap-3">
                 <ProportionBar parts={s.sample.monthly.map((c, i) => ({ label: c.name, value: c.amount, colour: s.components.filter((x) => x.frequency === 'MONTHLY')[i]?.colour }))} />
-                <table className="w-full text-[14px]">
+                <details><summary className="cursor-pointer text-sm font-medium text-primary">View salary components</summary><div className="mt-3 overflow-x-auto"><table className="w-full text-[14px]">
                   <thead className="text-left text-[13px] text-muted-foreground">
                     <tr>
                       <th className="py-1">Component</th>
@@ -103,7 +100,7 @@ export default function Structures() {
                       );
                     })}
                   </tbody>
-                </table>
+                </table></div></details>
                 {s.validation.warnings.map((w) => (
                   <Notice key={w} tone="warning">
                     {w}

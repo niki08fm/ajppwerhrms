@@ -25,7 +25,7 @@ export default function MoneyPage() {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Advances and loans"
-        description="Recovered through payroll after statutory deductions, capped at 40% of gross minus statutory. What the cap holds back carries into next month."
+        description="Record loans and advances, set repayments and track the balance recovered through payroll."
         actions={
           <>
             <Button variant="outline" onClick={() => setGranting('ADVANCE')}>

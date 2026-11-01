@@ -49,12 +49,12 @@ test('a month runs end to end: overview, six steps, generate, reports, lock, pai
   await page.getByRole('button', { name: /Continue · step 1, Attendance/ }).click();
 
   const steps = [
-    ['Submit attendance', 'Step 2 · Joiners and exits'],
-    ['Submit joiners and exits', 'Step 3 · Issues'],
-    ['Submit issues', 'Step 4 · Held salary'],
-    ['Submit held salaries', 'Step 5 · F&F'],
-    ['Submit F&F', 'Step 6 · Adhoc'],
-    ['Submit adhoc', 'Generate payroll'],
+    ['Confirm attendance', 'Step 2 · Joiners and exits'],
+    ['Confirm joiners and exits', 'Step 3 · Employee checks'],
+    ['Confirm employee checks', 'Step 4 · Held salaries'],
+    ['Confirm held salaries', 'Step 5 · Final settlements (F&F)'],
+    ['Confirm final settlements', 'Step 6 · One-time adjustments'],
+    ['Confirm adjustments', 'Generate payroll'],
   ];
   for (const [button, next] of steps) {
     await page.getByRole('button', { name: button }).click();

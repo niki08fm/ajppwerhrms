@@ -64,6 +64,7 @@ test('selected monthly ESI components update eligibility and save independently 
   ]);
   expect(saved.find((c) => c.name === 'Basic').counts_as_wages).toBe(true);
   await expect(page.getByRole('heading', { name: 'Salary structures', exact: true })).toBeVisible();
+  await page.getByText('View salary components',{exact:true}).last().click();
   const savedTable = page.getByRole('table').filter({ has: page.getByRole('cell', { name: /^Annual bonus \(yearly/ }) });
   await expect(savedTable.getByRole('columnheader', { name: 'ESI wage', exact: true })).toBeVisible();
   for (const name of ['Basic', 'DA']) {

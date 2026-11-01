@@ -700,3 +700,11 @@ test('a cancelled camera acquisition cannot replace the preview of a newer captu
   expect(state.unexpected).toEqual([]);
   expect(state.errors).toEqual([]);
 });
+
+test('general site sign-in follows tablet sign-in without requesting GPS before attendance',async({page})=>{
+ const state=await mockTablet(page,{loggedIn:false,deniedLocation:true});
+ await page.route('**/api/v1/auth/me',route=>route.fulfill({status:401,json:{error:{code:'UNAUTHENTICATED',message:'Sign in to continue.'}}}));
+ await page.goto('/login');await page.getByRole('textbox',{name:'Email or site login ID'}).fill('example-site');await page.getByLabel('Password',{exact:true}).fill('test-password');
+ await page.getByRole('button',{name:'Sign in',exact:true}).click();await expect(page).toHaveURL(/\/tablet$/);await expect(page.getByRole('heading',{name:SITE.name,exact:true})).toBeVisible();
+ expect(state.writes).toEqual([{path:'/auth/site-login',body:{login:'example-site',password:'test-password'}}]);expect(await page.evaluate(()=>window.__tabletLocationCalls)).toBe(0);expect(state.errors).toEqual([]);
+});
