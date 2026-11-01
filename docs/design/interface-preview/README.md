@@ -1,4 +1,4 @@
-# Option A · navy and teal
+# Violet · compact navigation
 
 Working frontend alternative based on default commit `6d8b9e8`. Do not merge into the default branch until the design is chosen.
 
