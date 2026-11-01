@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
 import { heldMonthStatus, HoldDialog, ReleaseDialog } from '../../payroll/HoldDialogs';
 
-export const useHold = (id) => useQuery({ queryKey: ['hold', id], queryFn: () => api.get(`/employees/${id}/hold`).then((r) => r.data) });
+export const useHold = (id, enabled = true) => useQuery({ queryKey: ['hold', id], queryFn: () => api.get(`/employees/${id}/hold`).then((r) => r.data), enabled });
 
 const TONE = { HELD: 'warning', QUEUED: 'info', PAID: 'success', PAID_SEPARATELY: 'success' };
 

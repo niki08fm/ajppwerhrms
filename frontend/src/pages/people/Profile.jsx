@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { CalendarClock, Lock, Trash2 } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { CalendarClock, Lock, MoreHorizontal } from 'lucide-react';
 import DeleteRecordDialog from '@/components/DeleteRecordDialog';
 import { formatINR } from '@ajpwer/shared';
 import { api } from '@/services/api';
@@ -12,7 +12,7 @@ import { Mono } from '@/components/bits';
 import { Chip, EmployeeStatusChip, ErrorState, SkeletonBlock } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { TabsContent, TabsList, TabsRoot } from '@/components/ui/overlay';
+import { Menu, TabsContent, TabsList, TabsRoot } from '@/components/ui/overlay';
 import { DeptAvatar } from '@/components/attendance/DeptAvatar';
 import { EditDialog, OverviewTab } from '../../components/people/profile-tabs/Overview';
 import { AttendanceTab } from '../../components/people/profile-tabs/Attendance';
@@ -85,10 +85,10 @@ function Header({ e, go, onAction }) {
   const { can } = useSession();
   const today = lk?.today;
   const month = today?.slice(0, 7);
-  const hold = useHold(e.id);
-  const leave = useQuery({ queryKey: ['emp-leave', e.id], queryFn: () => api.get(`/employees/${e.id}/leave-balances`).then((r) => r.data) });
+  const hold = useHold(e.id, can('payroll.read'));
+  const leave = useQuery({ queryKey: ['emp-leave', e.id], queryFn: () => api.get(`/employees/${e.id}/leave-balances`).then((r) => r.data), enabled: can('attendance.read') });
   const att = useQuery({ queryKey: ['emp-attendance', e.id, month], queryFn: () => api.get(`/employees/${e.id}/attendance`, { month }).then((r) => r.data), enabled: !!month && can('attendance.read') });
-  const pay = useQuery({ queryKey: ['employee-pay', e.id], queryFn: () => api.get(`/employees/${e.id}/pay`).then((r) => r.data), enabled: !!e.salary });
+  const pay = useQuery({ queryKey: ['employee-pay', e.id], queryFn: () => api.get(`/employees/${e.id}/pay`).then((r) => r.data), enabled: !!e.salary && can('salary.read') });
   const money = useQuery({ queryKey: ['advances-loans', e.id], queryFn: () => api.get('/advances-loans', { q: e.code }).then((r) => r.data) });
 
   const pl = leave.data?.types?.find((t) => t.auto_apply) ?? leave.data?.types?.find((t) => t.closing !== null);
@@ -102,6 +102,14 @@ function Header({ e, go, onAction }) {
   const due = running.reduce((a, r) => a + r.outstanding, 0);
   const shift = e.rules?.shift;
   const working = e.status === 'ACTIVE' || e.status === 'NOTICE';
+  const secondary = [];
+  if (!e.read_only && working && can('salary.write')) secondary.push({label:'Give advance',onSelect:()=>onAction('advance')});
+  if (!e.read_only && e.status === 'ACTIVE' && can('people.write')) secondary.push({label:'Record exit',onSelect:()=>onAction('exit')});
+  if (!e.read_only && e.status === 'NOTICE') secondary.push({label:'Exit and F&F',onSelect:()=>go('exit')});
+  if (can('people.write') && can('salary.write')) {
+    if (secondary.length) secondary.push('sep');
+    secondary.push({label:'Delete employee',destructive:true,onSelect:()=>onAction('delete')});
+  }
 
   return (
     <Card className="mb-5 overflow-hidden">
@@ -126,40 +134,15 @@ function Header({ e, go, onAction }) {
             {e.phone ? ` · ${e.phone}` : ''}
           </div>
         </div>
-        {!e.read_only && (
-          <div className="flex flex-wrap gap-2">
-            {can('attendance.read') && can('attendance.write') && (
-              <Button disabled={!today} onClick={() => onAction('attendance', today)}>
-                <CalendarClock /> Correct attendance
-              </Button>
-            )}
-            <Button variant="outline" onClick={() => onAction('edit')}>
-              Edit details
-            </Button>
-            {working && (
-              <Button variant="outline" onClick={() => onAction('revise')}>
-                {e.salary ? 'Revise salary' : 'Add salary'}
-              </Button>
-            )}
-            {working && (
-              <Button variant="outline" onClick={() => onAction('advance')}>
-                Give advance
-              </Button>
-            )}
-            {e.status === 'ACTIVE' && (
-              <Button variant="outline" className="text-destructive" onClick={() => onAction('exit')}>
-                Record exit
-              </Button>
-            )}
-            {e.status === 'NOTICE' && (
-              <Button variant="outline" className="text-destructive" onClick={() => go('exit')}>
-                Exit and F&amp;F
-              </Button>
-            )}
-          </div>
-        )}
+        <div className="flex flex-wrap gap-2">
+          {!e.read_only && <>
+            {can('attendance.read') && can('attendance.write') && <Button disabled={!today} onClick={()=>onAction('attendance',today)}><CalendarClock/> Correct attendance</Button>}
+            {can('people.write') && <Button variant="outline" onClick={()=>onAction('edit')}>Edit details</Button>}
+            {working && can('salary.write') && <Button variant="outline" onClick={()=>onAction('revise')}>{e.salary?'Revise salary':'Add salary'}</Button>}
+          </>}
+          {!!secondary.length && <Menu trigger={<Button variant="outline" aria-label="More employee actions"><MoreHorizontal/> More actions</Button>} items={secondary}/>}
+        </div>
       </div>
-      {can('people.write')&&can('salary.write')&&<div className="flex justify-end px-5 pt-3"><Button variant="outline" size="sm" className="text-destructive" onClick={()=>onAction('delete')}><Trash2/> Delete employee</Button></div>}
       <div className="grid grid-cols-2 gap-2.5 p-5 md:grid-cols-3 xl:grid-cols-6">
         <Fact label="Joined" value={e.joined_on ? longDate(e.joined_on) : 'Not set yet'} sub={tenure(e.joined_on, today)} onClick={() => go('overview')} />
         <Fact label="Pay group · shift" value={e.pay_group.name} sub={shift ? `${shift.name} ${hhmm(shift.start_min)}–${hhmm(shift.end_min)}` : undefined} onClick={() => go('salary')} />
@@ -206,6 +189,23 @@ function RecordExit({ e, onClose }) {
 /** Full screen at its own route — /people/:id?tab=salary&section=tax — never a side panel. */
 export default function Profile() {
   const { id } = useParams();
+  const qc = useQueryClient();
+  const {can} = useSession();
+  const {data:lookups} = useLookups();
+  const salaryRead = can('salary.read'), attendanceRead = can('attendance.read'), payrollRead = can('payroll.read');
+  // These sections need only the URL ID, so start them while the main profile loads.
+  useEffect(() => {
+    const reads = [
+      [salaryRead, ['employee-pay',id], `/employees/${id}/pay`],
+      [attendanceRead, ['emp-leave',id], `/employees/${id}/leave-balances`],
+      [payrollRead, ['hold',id], `/employees/${id}/hold`],
+    ];
+    for (const [allowed,queryKey,path] of reads) if (allowed) qc.prefetchQuery({queryKey,queryFn:()=>api.get(path).then(r=>r.data)});
+  }, [id,qc,salaryRead,attendanceRead,payrollRead]);
+  const month = lookups?.today?.slice(0,7);
+  useEffect(() => {
+    if (attendanceRead && month) qc.prefetchQuery({queryKey:['emp-attendance',id,month],queryFn:()=>api.get(`/employees/${id}/attendance`,{month}).then(r=>r.data)});
+  }, [id,qc,month,attendanceRead]);
   const [sp, setSp] = useSearchParams();
   const raw = sp.get('tab') ?? 'overview';
   const [tab, movedSection] = TABS.some(([v]) => v === raw) ? [raw] : (MOVED[raw] ?? ['overview']);

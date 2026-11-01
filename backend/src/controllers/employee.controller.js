@@ -655,7 +655,7 @@ export const getPay = asyncHandler(async (req, res) => {
     return res.json({ data: { salary: null, preview: null, rates: configuredRates } });
   }
   const st = e.statutory;
-  const preview = await previewSalary(prisma, {
+  const [preview, rates] = await Promise.all([previewSalary(prisma, {
     mode: cur.mode,
     amount: cur.amount,
     structure_id: cur.structure_id,
@@ -671,8 +671,7 @@ export const getPay = asyncHandler(async (req, res) => {
     tax_regime_code: st.tax_regime_code,
     declarations: { decl_80c: n(st.decl_80c), decl_80d: n(st.decl_80d), decl_rent_monthly: n(st.decl_rent_monthly), decl_metro: st.decl_metro },
     saved_gross: cur.monthly_gross,
-  });
-  const rates = await ratesOn(prisma, date);
+  }), ratesOn(prisma, date)]);
   res.json({ data: { salary: cur, preview, rates: { pf: rates.pf, esi: rates.esi } } });
 });
 
@@ -681,11 +680,10 @@ export const getTax = asyncHandler(async (req, res) => {
   const date = asOfDate(e, today());
   const cur = await salaryOn(prisma, e.id, date);
   if (!cur) return res.json({ data: null });
-  const components = await structureComponents(prisma, cur.structure_id);
+  const [components, rates, regimes] = await Promise.all([structureComponents(prisma, cur.structure_id), ratesOn(prisma, date), regimesOn(prisma, date)]);
   const st = e.statutory;
-  const s = expandStructure(components, cur.monthly_gross, ctcBasisOf(cur, components, st, await ratesOn(prisma, date)));
+  const s = expandStructure(components, cur.monthly_gross, ctcBasisOf(cur, components, st, rates));
   const taxable = s.monthly.filter((c) => c.is_taxable).reduce((a, c) => a + c.amount, 0) * 12 + s.yearly.filter((c) => c.is_taxable).reduce((a, c) => a + c.amount, 0);
-  const regimes = await regimesOn(prisma, date);
   const cmp = compareRegimes(
     { gross: taxable, basic: s.basic * 12, hra: s.hra * 12 },
     { decl_80c: n(st.decl_80c), decl_80d: n(st.decl_80d), decl_rent_monthly: n(st.decl_rent_monthly), decl_metro: st.decl_metro },
@@ -698,8 +696,7 @@ export const getTax = asyncHandler(async (req, res) => {
 export const getAttendance = asyncHandler(async (req, res) => {
   const month = yearMonth.parse(req.query.month ?? ymOf(today()));
   const e = await mustLoad(req.params.id);
-  const m = await computeMonth1(prisma, e, month);
-  const sites = await prisma.site.findMany({ select: { id: true, name: true, code: true } });
+  const [m, sites] = await Promise.all([computeMonth1(prisma, e, month), prisma.site.findMany({ select: { id: true, name: true, code: true } })]);
   res.json({ data: { month, today: today(), attendance_summary: m.result.attendance_summary, totals: m.result.totals, days: m.result.days, offday_work: m.result.offday_work, leave: m.result.leave, sites } });
 });
 

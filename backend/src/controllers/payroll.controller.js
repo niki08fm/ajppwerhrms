@@ -12,6 +12,7 @@ import { onboardingView } from '../services/employee.service.js';
 import { claimRun, releaseRun, computeIssues, getPeriod, heldBackList, ISSUE_LABELS, reopenStep, runPopulation, submitStep, transition } from '../services/payroll.service.js';
 import { buildReport, REPORTS, reportCSV, reportXLSX } from '../services/reports.service.js';
 import { computeSettlementFor, upsertSettlement } from '../services/settlement.service.js';
+import { mapConcurrent } from '../utils/parallel.js';
 import { randomUUID } from 'node:crypto';
 
 const today = () => istDate(new Date());
@@ -403,14 +404,13 @@ export const getFnfStep = asyncHandler(async (req, res) => {
         ...(p.settlement_ids.length ? [{ settlements: { some: { id: { in: p.settlement_ids } } } }] : []),
       ],
     },
-    include: { department: { select: { name: true } } },
+    include: { department: { select: { name: true } }, settlements: {where:{deleted_at:null},orderBy:{created_at:'desc'},take:1,include:{period:{select:{period_ym:true}}}} },
     orderBy: { last_day: 'asc' },
   });
   const closed = p.state !== 'DRAFT' ? `${formatYearMonth(ym)} payroll has been generated` : p.steps_submitted.includes(STEP.FNF) ? 'The F&F step is submitted' : null;
-  const rows = [];
-  for (const l of leavers) {
-    const s = await prisma.settlement.findFirst({ where: { employee_id: l.id, deleted_at: null }, orderBy: { created_at: 'desc' }, include: { period: { select: { period_ym: true } } } });
-    if (s?.state === 'PAID' && !p.settlement_ids.includes(s.id)) continue;
+  const results = await mapConcurrent(leavers, 4, async l => {
+    const s = l.settlements[0];
+    if (s?.state === 'PAID' && !p.settlement_ids.includes(s.id)) return null;
     let result = null;
     let checklist = [];
     let error = null;
@@ -421,7 +421,7 @@ export const getFnfStep = asyncHandler(async (req, res) => {
     }
     const elsewhere = s?.state === 'INCLUDED' && s.period && s.period.period_ym !== ym ? s.period.period_ym : null;
     const open = checklist.filter((t) => t.required && !t.done_at);
-    rows.push({
+    return {
       employee: { id: l.id, code: l.code, name: l.name, department: l.department.name, status: l.status },
       last_day: fromDbDate(l.last_day),
       exit_reason: l.exit_reason,
@@ -435,8 +435,9 @@ export const getFnfStep = asyncHandler(async (req, res) => {
       total_deductions: result?.total_deductions ?? null,
       net: result?.net ?? null,
       error,
-    });
-  }
+    };
+  });
+  const rows = results.filter(Boolean);
   res.json({ data: { rows, closed } });
 });
 

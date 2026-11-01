@@ -34,7 +34,8 @@ async function request(method, path, body, headers = {}) {
     res = await fetch(`${API_BASE}${path}`, {
       method,
       credentials: 'include',
-      headers: body instanceof FormData ? headers : { 'Content-Type': 'application/json', ...headers },
+      // A JSON header on bodyless GETs forces a cross-origin preflight on every read.
+      headers: body === undefined || body instanceof FormData ? headers : { 'Content-Type': 'application/json', ...headers },
       body: body === undefined ? undefined : body instanceof FormData ? body : JSON.stringify(body),
     });
   } catch {

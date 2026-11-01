@@ -49,7 +49,7 @@ test('a server refusal keeps the dialog open and shows the reason',async({page})
  await expect(page.getByText('A new employee assignment was added. Move it first.',{exact:true})).toBeVisible();await expect(dialog).toBeVisible();expect(writes).toHaveLength(1);
 });
 test('employee deletion has the same exact-name guard and returns to the employee list',async({page})=>{
- const {writes}=await mock(page);await page.goto('/people/employee-test?tab=timeline');await page.getByRole('button',{name:'Delete employee',exact:true}).click();
+ const {writes}=await mock(page);await page.goto('/people/employee-test?tab=timeline');await page.getByRole('button',{name:'More employee actions'}).click();await page.getByRole('menuitem',{name:'Delete employee',exact:true}).click();
  const dialog=page.getByRole('dialog'),input=dialog.getByRole('textbox');await expect(dialog).toContainText('AJTEST');await input.fill('AJTEST');await expect(dialog.getByRole('button',{name:'Delete employee',exact:true})).toBeDisabled();
  await input.fill('Example Employee');await dialog.getByRole('button',{name:'Delete employee',exact:true}).click();await expect(page).toHaveURL(/\/people$/);expect(writes).toEqual([{path:'/employees/employee-test',body:{confirm_name:'Example Employee'}}]);
 });

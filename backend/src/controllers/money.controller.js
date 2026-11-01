@@ -7,6 +7,7 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { filterValues } from '../utils/list.js';
 import { prisma } from '../config/db.js';
 import { assertSettlementEditable } from '../services/exit.service.js';
+import { mapConcurrent } from '../utils/parallel.js';
 import { lockAssignments } from '../services/master-data-lock.js';
 import { computeSettlementFor, upsertSettlement } from '../services/settlement.service.js';
 
@@ -102,13 +103,19 @@ export const createLoan = asyncHandler(async (req, res) => {
 
 // ─── Exits and settlement ───────────────────────────────────────────────────
 export const listSettlements = asyncHandler(async (_req, res) => {
-  const people = await prisma.employee.findMany({
+  const [people, paid] = await Promise.all([prisma.employee.findMany({
     where: { deleted_at: null, OR: [{ status: 'NOTICE' }, { status: 'EXITED', settlements: { some: { state: { not: 'PAID' } } } }] },
     include: { department: { select: { name: true } }, settlements: { where: { deleted_at: null }, orderBy: { created_at: 'desc' }, take: 1, include: { period: { select: { period_ym: true } } } } },
     orderBy: { last_day: 'asc' },
-  });
-  const rows = [];
-  for (const p of people) {
+  }),
+    prisma.settlement.findMany({
+    where: { state: 'PAID' },
+    include: { employee: { select: { id: true, code: true, name: true } }, period: { select: { period_ym: true } } },
+    orderBy: { paid_at: 'desc' },
+    take: 50,
+  }),
+  ]);
+  const rows = await mapConcurrent(people, 4, async p => {
     let live = null;
     try {
       live = (await computeSettlementFor(prisma, p.id)).result;
@@ -116,21 +123,16 @@ export const listSettlements = asyncHandler(async (_req, res) => {
       live = { error: err instanceof Error ? err.message : 'Could not compute' };
     }
     const s = p.settlements[0];
-    rows.push({
+    return {
       employee: { id: p.id, code: p.code, name: p.name, department: p.department.name, status: p.status },
       resigned_on: fromDbDate(p.resigned_on),
       last_day: fromDbDate(p.last_day),
       exit_reason: p.exit_reason,
       settlement: s ? { id: s.id, state: s.state, recoverable_decision: s.recoverable_decision, period_ym: s.period?.period_ym ?? null, paid_separately: s.paid_separately ?? null } : null,
       live,
-    });
-  }
-  const paid = await prisma.settlement.findMany({
-    where: { state: 'PAID' },
-    include: { employee: { select: { id: true, code: true, name: true } }, period: { select: { period_ym: true } } },
-    orderBy: { paid_at: 'desc' },
-    take: 50,
+    };
   });
+
   res.json({
     data: {
       open: rows,

@@ -5,7 +5,7 @@ Deletion removes a record from active lists and new assignment choices. It keeps
 ## Employee
 
 1. Open **Employees**, then the employee's profile.
-2. Select **Delete employee**. People write and salary write permissions are required.
+2. Select **More actions → Delete employee**. People write and salary write permissions are required.
 3. Review the employee name/code and the effects. Unpaid payroll, unresolved held salary, open F&F, outstanding loan/advance/recovery carry or running payroll blocks deletion; resolve the listed items first.
 4. Type the complete employee name exactly as displayed, including capital letters and spaces.
 5. Select **Delete employee**. The app returns to Employees. Their enrolled face templates are cleared and pending face-registration approvals are revoked. They cannot be selected for future payroll or face punching. Editable payroll review steps are reset so HR reviews the changed roster again.

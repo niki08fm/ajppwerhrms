@@ -13,11 +13,18 @@ const CACHE_MS = 30_000;
 
 async function loadAdmin(userId) {
   const hit = principalCache.get(userId);
-  if (hit && Date.now() - hit.at < CACHE_MS) return hit.p;
-  const u = await prisma.appUser.findFirst({ where: { id: userId, deleted_at: null }, include: { role: true } });
-  const p = u ? { id: u.id, email: u.email, name: u.name, role: u.role.name, permissions: new Set(u.role.permissions) } : null;
-  principalCache.set(userId, { at: Date.now(), p });
-  return p;
+  if (hit && (hit.pending || Date.now() - hit.at < CACHE_MS)) return hit.p;
+  const entry = {pending:true, at:0};
+  entry.p = prisma.appUser.findFirst({ where: { id: userId, deleted_at: null }, include: { role: true } }).then(u => {
+    const p = u ? { id: u.id, email: u.email, name: u.name, role: u.role.name, permissions: new Set(u.role.permissions) } : null;
+    if (principalCache.get(userId) === entry) principalCache.set(userId, {at:Date.now(), p});
+    return p;
+  }).catch(error => {
+    if (principalCache.get(userId) === entry) principalCache.delete(userId);
+    throw error;
+  });
+  principalCache.set(userId, entry);
+  return entry.p;
 }
 
 export function invalidatePrincipal(userId) {

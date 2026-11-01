@@ -92,3 +92,20 @@ test('ready payroll opens Generate as stage seven and never writes on navigation
   expect(writes).toEqual([]);
   expect(state.errors).toEqual([]);
 });
+
+
+test('all twelve reports are directly selectable without scrolling through hidden tabs',async({page})=>{
+  const state=await mockPayroll(page);await page.goto(`/payroll/${YM}?company=AJ&step=7`);
+  const selector=page.getByRole('combobox',{name:'Choose payroll report'});
+  await expect(selector.locator('option')).toHaveCount(12);
+  await expect(page.getByRole('tablist',{name:'Common payroll reports'}).getByRole('tab')).toHaveCount(4);
+  for(const report of ['pf','esi','pt','tds','settlements','adhoc']){
+    await selector.selectOption(report);
+    await expect(page).toHaveURL(new RegExp(`company=AJ.*tab=${report}`));
+    await expect.poll(()=>state.requests.some(r=>r.path.endsWith(`/report/${report}`)&&r.params.company==='AJ')).toBe(true);
+  }
+  await expect(selector.locator('option[value="tds"]')).toHaveText('TDS / Income tax');
+  await selector.selectOption('summary');
+  const details=page.locator('details').filter({has:page.getByText('Calculation details',{exact:true})});
+  await expect(details).not.toHaveAttribute('open');await details.locator('summary').click();await expect(details).toHaveAttribute('open','');
+});

@@ -5,13 +5,13 @@ import { Download, FileSpreadsheet, Printer, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, download, errorMessage } from '@/services/api';
 import { useDebounced } from '@/hooks';
-import { cn, monthLabel } from '@/utils';
+import { cn, monthLabel, istTime } from '@/utils';
 import { Money, Mono, PersonLink, Stat } from '@/components/bits';
 import { DataTable } from '@/components/data-table';
 import { EmptyState, ErrorState, Notice, SkeletonRows } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Input } from '@/components/ui/form';
+import { Input, Select } from '@/components/ui/form';
 import { PayslipZipDownload } from './PayslipZipDownload';
 
 const REPORTS = [
@@ -22,7 +22,7 @@ const REPORTS = [
   ['pf', 'PF (ECR)'],
   ['esi', 'ESI'],
   ['pt', 'Professional tax'],
-  ['tds', 'Income tax'],
+  ['tds', 'TDS / Income tax'],
   ['department', 'By department'],
   ['change', 'Change vs last month'],
   ['settlements', 'Settlements'],
@@ -80,14 +80,15 @@ export function Reports({ ym, period, company }) {
   return (
     <div className="flex flex-col gap-3">
       <p className="text-[14px] text-muted-foreground">
-        {monthLabel(ym)} was generated {period.run_at?.slice(0, 16).replace('T', ' ')} UTC by {period.run_by}. Every figure below is read from that snapshot. Read{' '}
+        {monthLabel(ym)} was generated {istTime(period.run_at, true)} IST by {period.run_by}. Every figure below is read from that snapshot. Read{' '}
         <button className="text-primary hover:underline" onClick={() => setTab('change')}>
           Change vs last month
         </button>{' '}
         before locking.
       </p>
-      <div className="flex gap-1 overflow-x-auto border-b scrollbar-thin" role="tablist">
-        {REPORTS.map(([k, l]) => (
+      <div className="flex flex-wrap items-end justify-between gap-3 border-b">
+      <div className="flex gap-1" role="tablist" aria-label="Common payroll reports">
+        {REPORTS.slice(0,4).map(([k, l]) => (
           <button
             key={k}
             role="tab"
@@ -101,6 +102,12 @@ export function Reports({ ym, period, company }) {
             {l}
           </button>
         ))}
+      </div>
+      <label className="mb-2 flex items-center gap-2 text-sm">Report
+        <Select className="w-64" aria-label="Choose payroll report" value={tab} onChange={e=>setTab(e.target.value)}>
+          {[['Payroll',REPORTS.slice(0,4)],['Statutory',REPORTS.slice(4,8)],['Analysis and adjustments',REPORTS.slice(8)]].map(([label,items])=><optgroup label={label} key={label}>{items.map(([key,name])=><option key={key} value={key}>{name}</option>)}</optgroup>)}
+        </Select>
+      </label>
       </div>
       <Card>
         <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
@@ -246,9 +253,10 @@ function Summary({ rep }) {
           </tbody>
         </table>
       </div>
-      <p className="text-[13px] text-muted-foreground">
-        Engine {x.engine_version} · statutory rates row <Mono>{x.statutory_rates_id?.slice(0, 8)}</Mono>. Reopening this month later never applies today's rates to it.
-      </p>
+      <details className="text-[13px] text-muted-foreground">
+        <summary className="cursor-pointer">Calculation details</summary>
+        <p className="mt-2">Engine {x.engine_version} · statutory rates row <Mono>{x.statutory_rates_id?.slice(0, 8)}</Mono>. Reopening this month later never applies today's rates to it.</p>
+      </details>
     </div>
   );
 }

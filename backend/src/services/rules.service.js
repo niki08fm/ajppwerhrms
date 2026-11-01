@@ -1,10 +1,15 @@
 import { esiRatesSchema, parsePolicyRules, pfRatesSchema } from '@ajpwer/shared';
 import { AppError } from '../utils/errors.js';
 import { fromDbDate, n, toDbDate } from '../utils/dbDates.js';
+import { scopedRead } from '../utils/read-scope.js';
 import { lockPolicyRulesRead } from './policy-history.service.js';
 
 /** The statutory rates row valid on a date: latest valid_from ≤ date. */
-export async function ratesOn(db, date) {
+export function ratesOn(db, date) {
+  return scopedRead(db, `rates:${date}`, () => readRatesOn(db, date));
+}
+
+async function readRatesOn(db, date) {
   const row = await db.statutoryRates.findFirst({
     where: { valid_from: { lte: toDbDate(date) }, deleted_at: null },
     orderBy: { valid_from: 'desc' },
@@ -30,7 +35,11 @@ export async function ratesById(db, id) {
   };
 }
 
-export async function ptSlabs(db) {
+export function ptSlabs(db) {
+  return scopedRead(db, 'pt-slabs', () => readPtSlabs(db));
+}
+
+async function readPtSlabs(db) {
   const rows = await db.ptSlab.findMany({ where: { deleted_at: null } });
   return rows.map((r) => ({
     state: r.state,
@@ -42,7 +51,11 @@ export async function ptSlabs(db) {
 }
 
 /** Both regimes as valid on a date. */
-export async function regimesOn(db, date) {
+export function regimesOn(db, date) {
+  return scopedRead(db, `regimes:${date}`, () => readRegimesOn(db, date));
+}
+
+async function readRegimesOn(db, date) {
   const rows = await db.taxRegime.findMany({
     where: { valid_from: { lte: toDbDate(date) }, deleted_at: null },
     include: { slabs: { where: { deleted_at: null } } },
@@ -87,7 +100,11 @@ export function toComponentDefs(rows) {
     .sort((a, b) => a.seq - b.seq);
 }
 
-export async function structureComponents(db, structureId) {
+export function structureComponents(db, structureId) {
+  return scopedRead(db, `components:${structureId}`, () => readStructureComponents(db, structureId));
+}
+
+async function readStructureComponents(db, structureId) {
   const rows = await db.salaryComponent.findMany({ where: { structure_id: structureId, deleted_at: null }, orderBy: { seq: 'asc' } });
   return toComponentDefs(rows);
 }
@@ -105,7 +122,11 @@ export function toAttachedPolicy(p) {
   };
 }
 
-export async function payGroupRules(db, payGroupId) {
+export function payGroupRules(db, payGroupId) {
+  return scopedRead(db, `group:${payGroupId}`, () => readPayGroupRules(db, payGroupId));
+}
+
+async function readPayGroupRules(db, payGroupId) {
   await lockPolicyRulesRead(db);
   const g = await db.payGroup.findUniqueOrThrow({
     where: { id: payGroupId },
@@ -140,7 +161,11 @@ export async function holidaysBetween(db, from, to) {
 }
 
 /** The salary record valid on a date. */
-export async function salaryOn(db, employeeId, date) {
+export function salaryOn(db, employeeId, date) {
+  return scopedRead(db, `salary:${employeeId}:${date}`, () => readSalaryOn(db, employeeId, date));
+}
+
+async function readSalaryOn(db, employeeId, date) {
   const row = await db.employeeSalary.findFirst({
     where: {
       employee_id: employeeId,
@@ -150,6 +175,10 @@ export async function salaryOn(db, employeeId, date) {
     },
     orderBy: { valid_from: 'desc' },
   });
+  return salaryRecord(row);
+}
+
+export function salaryRecord(row) {
   if (!row) return null;
   return {
     id: row.id,

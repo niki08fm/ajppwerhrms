@@ -90,7 +90,7 @@ function preview(gross = 3_000_000, statutory = {}) {
   };
 }
 
-async function mockProfile(page, { noSalary = false, protectedRevision = false, emptyPayObject = false } = {}) {
+async function mockProfile(page, { noSalary = false, protectedRevision = false, emptyPayObject = false, allReadPermissions = false } = {}) {
   const state = {
     e: {
       id: 'employee-test',
@@ -175,7 +175,7 @@ async function mockProfile(page, { noSalary = false, protectedRevision = false, 
         name: 'HR Admin',
         role: 'HR Admin',
         email: 'hr@example.test',
-        permissions: ['people.read', 'people.write', 'salary.read', 'salary.write'],
+        permissions: ['people.read', 'people.write', 'salary.read', 'salary.write', ...(allReadPermissions ? ['attendance.read','payroll.read'] : [])],
       };
     else if (path === '/lookups')
       data = {
@@ -730,4 +730,20 @@ test('a first salary selected in the joining month starts on the joining day', a
   await dialog.getByRole('button', { name: 'Add salary', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   expect(state.requests.find((request) => request.method === 'POST' && request.path.endsWith('/salary')).body.valid_from).toBe('2024-01-17');
+});
+
+
+test('independent profile sections start before the main employee response completes', async ({page}) => {
+  await mockProfile(page, {allReadPermissions:true});
+  let release; const gate=new Promise(resolve=>release=resolve), counts=new Map();
+  page.on('request',request=>{const path=new URL(request.url()).pathname;counts.set(path,(counts.get(path)||0)+1);});
+  await page.route('**/api/v1/employees/employee-test',async route=>{await gate;await route.fallback();});
+  await page.goto('/people/employee-test?tab=salary',{waitUntil:'domcontentloaded'});
+  const sections=['/lookups','/employees/employee-test/pay','/employees/employee-test/leave-balances','/employees/employee-test/hold'];
+  try {
+    await expect.poll(()=>sections.every(path=>counts.has('/api/v1'+path))).toBe(true);
+    await expect(page.getByRole('heading',{name:'Example Employee',exact:true})).toHaveCount(0);
+  } finally {release();}
+  await expect(page.getByRole('heading',{name:'Example Employee',exact:true})).toBeVisible();
+  for(const path of sections)expect(counts.get('/api/v1'+path)).toBe(1);
 });

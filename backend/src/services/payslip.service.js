@@ -64,16 +64,18 @@ export async function loadRecoveries(db, employeeIds, ym) {
  * Compute one person's payslip for a month from live data. Pure engines do the
  * arithmetic; this gathers their inputs.
  */
-export async function computePayslip(db, e, ym, month, ctx, recoveries) {
+export async function computePayslip(db, e, ym, month, ctx, recoveries, inputs) {
+  const salaryAt = inputs ? inputs.salaryOn : (id, date) => salaryOn(db, id, date);
+  const componentsFor = inputs ? inputs.components : id => structureComponents(db, id);
   if (!e.statutory) throw new AppError('VALIDATION', `${e.name} (${e.code}) has no statutory setup.`, 409);
   const monthEnd = lastOfMonth(ym);
   const lastDay = fromDbDate(e.last_day);
   const joined = fromDbDate(e.joined_on);
   // The salary valid on the last day of the month (or the last day of employment) applies to the whole month.
   const salaryDate = lastDay && lastDay < monthEnd ? lastDay : monthEnd;
-  const salary = await salaryOn(db, e.id, salaryDate < joined ? joined : salaryDate);
+  const salary = await salaryAt(e.id, salaryDate < joined ? joined : salaryDate);
   if (!salary) throw new AppError('VALIDATION', `${e.name} (${e.code}) has no salary record for ${ym}.`, 409);
-  const components = await structureComponents(db, salary.structure_id);
+  const components = await componentsFor(salary.structure_id);
 
   const rules = month.rules;
   const working = workingDaysInMonth(ym, rules.weekly_off, [...month.holidays.keys()]);
@@ -85,10 +87,10 @@ export async function computePayslip(db, e, ym, month, ctx, recoveries) {
   // change that period's entry decision.
   const block = esiContributionPeriod(firstOfMonth(ym));
   const eligibilityDate = maxDate(block.start, joined);
-  const blockSalary = await salaryOn(db, e.id, eligibilityDate);
+  const blockSalary = await salaryAt(e.id, eligibilityDate);
   const eligibilitySalary = blockSalary ?? salary;
   const eligibilityComponents = eligibilitySalary.structure_id === salary.structure_id
-    ? components : await structureComponents(db, eligibilitySalary.structure_id);
+    ? components : await componentsFor(eligibilitySalary.structure_id);
   // A gross agreement with % of CTC earnings needs the rates at entry to
   // reconstruct those earnings. Later statutory rate changes must not move
   // its contribution-period eligibility; CTC agreements keep their saved basis.

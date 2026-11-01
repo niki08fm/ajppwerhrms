@@ -36,7 +36,7 @@ const REPORT_TILES = [
   ['pf', 'PF (ECR)', 'For the EPFO portal'],
   ['esi', 'ESI', 'For the ESIC portal'],
   ['pt', 'Professional tax', 'By state'],
-  ['tds', 'Income tax', 'TDS deducted this month'],
+  ['tds', 'TDS / Income tax', 'TDS deducted this month'],
   ['change', 'Change vs last month', 'Who changed and why'],
   ['settlements', 'Settlements', 'F&F paid in this payroll'],
 ];

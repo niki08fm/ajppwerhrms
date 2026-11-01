@@ -12,13 +12,14 @@ import { logger } from './config/logger.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { apiRouter } from './routes/index.js';
 import './jobs/handlers.js';
+import { scopeReadRequests } from './utils/read-scope.js';
 
 export function createApp() {
   const app = express();
   app.set('trust proxy', env.TRUST_PROXY);
   app.disable('x-powered-by');
   app.use(helmet({ contentSecurityPolicy: false }));
-  app.use(cors({ origin: env.WEB_ORIGIN.split(','), credentials: true }));
+  app.use(cors({ origin: env.WEB_ORIGIN.split(','), credentials: true, maxAge: 600 }));
   app.use(compression());
   app.use(express.json({ limit: '1mb' }));
   app.use(cookieParser());
@@ -36,7 +37,7 @@ export function createApp() {
     app.use('/face-models', (_req, res) => res.status(404).json({ error: { code: 'NOT_FOUND', message: 'No such face model file.' } }));
   }
 
-  app.use('/api/v1', apiRouter);
+  app.use('/api/v1', scopeReadRequests, apiRouter);
 
   // Production: one process serves the built frontend too, falling back to index.html for client routes.
   const webDir = process.env.SERVE_WEB_DIR ? path.resolve(process.env.SERVE_WEB_DIR) : null;

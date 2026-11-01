@@ -7,6 +7,9 @@ import { prisma } from '../config/db.js';
 import { computeMonths } from './attendance.service.js';
 import { computePayslip, loadRecoveries } from './payslip.service.js';
 import { ptSlabs, ratesOn, regimesOn, structureComponents } from './rules.service.js';
+import { withReadScope } from '../utils/read-scope.js';
+import { mapConcurrent } from '../utils/parallel.js';
+import { payrollSalaryInputs } from './payroll-inputs.service.js';
 import { computeSettlementFor } from './settlement.service.js';
 
 export const employeeInclude = {
@@ -113,45 +116,55 @@ function addReleasedHeld(result, rows) {
  * Compute every payslip for a month from live data without writing anything. A salary hold
  * standing this month marks the payslip held: calculated as usual, kept out of the bank file.
  */
-export async function computeRun(db, ym, employees, ctx, settlingIds, onProgress) {
+export function computeRun(db, ym, employees, ctx, settlingIds, onProgress) {
+  return withReadScope(() => readRun(db, ym, employees, ctx, settlingIds, onProgress));
+}
+
+async function readRun(db, ym, employees, ctx, settlingIds, onProgress) {
   const regular = employees.filter((e) => !e.final_ym);
   const ids = employees.map((e) => e.id);
-  const months = await computeMonths(db, regular, ym);
-  const recoveries = await loadRecoveries(
-    db,
-    regular.map((e) => e.id),
-    ym,
-  );
-  // A leaver from an earlier month: their final month, worked out for that month as the F&F does.
-  const finals = new Map();
-  for (const e of employees.filter((x) => x.final_ym)) {
-    finals.set(e.id, { month: (await computeMonths(db, [e], e.final_ym)).get(e.id), ctx: await payContext(db, e.final_ym) });
-  }
-  const [holds, queued] = await Promise.all([
+  const [months, recoveries, inputs, holds, queued, finalRows] = await Promise.all([
+    computeMonths(db, regular, ym),
+    loadRecoveries(db, regular.map(e => e.id), ym),
+    payrollSalaryInputs(db, ids),
     db.salaryHold.findMany({ where: { employee_id: { in: ids }, deleted_at: null, released_at: null, from_ym: { lte: ym } } }),
     db.heldPay.findMany({ where: { employee_id: { in: ids }, state: 'QUEUED', pay_ym: ym } }),
+    mapConcurrent(employees.filter(e => e.final_ym), 4, async e => {
+      const [months, ctx] = await Promise.all([computeMonths(db, [e], e.final_ym), payContext(db, e.final_ym)]);
+      return [e.id, {month: months.get(e.id), ctx}];
+    }),
   ]);
+  const finals = new Map(finalRows);
   const payslips = [];
   const errors = [];
   let done = 0;
-  for (const e of employees) {
+  let progress = Promise.resolve();
+  const calculated = await mapConcurrent(employees, 4, async e => {
     try {
       const settling = settlingIds.has(e.id);
       const fin = finals.get(e.id);
       // A settling leaver's loans and advances are recovered in full by the settlement, not by EMI.
       const rec = settling ? null : (recoveries.get(e.id) ?? null);
-      const p = fin ? await computePayslip(db, toPayslipEmployee(e), e.final_ym, fin.month, fin.ctx, null) : await computePayslip(db, toPayslipEmployee(e), ym, months.get(e.id), ctx, rec);
+      const p = fin ? await computePayslip(db, toPayslipEmployee(e), e.final_ym, fin.month, fin.ctx, null, inputs) : await computePayslip(db, toPayslipEmployee(e), ym, months.get(e.id), ctx, rec, inputs);
       // The F&F pays a leaver; a hold ends when it is processed.
       const hold = settling ? null : (holds.find((h) => h.employee_id === e.id) ?? null);
       // Held salary released into this month is paid as its own line — not while this month is held, nor for a leaver whose F&F pays it.
       const release = hold || settling ? [] : queued.filter((q) => q.employee_id === e.id);
       if (release.length) addReleasedHeld(p.result, release);
-      payslips.push({ ...p, employee: e, hold, final_ym: e.final_ym ?? null, released: release });
+      return {payslip: { ...p, employee: e, hold, final_ym: e.final_ym ?? null, released: release }};
     } catch (err) {
-      errors.push({ employee_id: e.id, code: e.code, name: e.name, message: err instanceof Error ? err.message : String(err) });
+      return {error: { employee_id: e.id, code: e.code, name: e.name, message: err instanceof Error ? err.message : String(err) }};
+    } finally {
+      const completed = ++done;
+      if (onProgress) {
+        progress = progress.then(() => onProgress(completed, employees.length));
+        await progress;
+      }
     }
-    done++;
-    if (onProgress) await onProgress(done, employees.length);
+  });
+  for (const item of calculated) {
+    if (item.payslip) payslips.push(item.payslip);
+    else errors.push(item.error);
   }
   return { payslips, errors };
 }
@@ -177,8 +190,7 @@ export const ISSUE_LABELS = {
 
 export async function computeIssues(db, ym) {
   const period = await getPeriod(db, ym);
-  const population = await runPopulation(db, ym, period.id, period.settlement_ids);
-  const ctx = await payContext(db, ym);
+  const [population, ctx] = await Promise.all([runPopulation(db, ym, period.id, period.settlement_ids), payContext(db, ym)]);
   const run = await computeRun(db, ym, population.included, ctx, population.settlingIds);
   const ids = population.included.map((e) => e.id);
   const [faces, expired] = await Promise.all([
@@ -186,7 +198,7 @@ export async function computeIssues(db, ym) {
     db.document.findMany({ where: { employee_id: { in: ids }, deleted_at: null, expires_on: { lt: toDbDate(lastOfMonth(ym)) } }, select: { employee_id: true, doc_type: true } }),
   ]);
   const hasFace = new Set(faces.map((f) => f.employee_id));
-  const ctxForBand = run.payslips.some((p) => p.salary.mode === 'CTC') ? await payContext(db, ym) : null;
+  const ctxForBand = run.payslips.some((p) => p.salary.mode === 'CTC') ? ctx : null;
   const issues = [];
   const add = (e, kind, severity, message, fix_tab) => issues.push({ kind, severity, employee_id: e.id, code: e.code, name: e.name, message, fix_tab });
 
