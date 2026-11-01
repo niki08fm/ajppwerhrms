@@ -299,3 +299,85 @@
   stroke: var(--primary);
   fill: var(--primary);
 }
+
+/* Site staff use phones and shared tablets. Keep these touch rules local to that workspace. */
+.site-workspace {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.site-workspace button,
+.site-workspace summary {
+  min-width: 44px;
+  min-height: 44px;
+  touch-action: manipulation;
+}
+.site-workspace input:not([type='checkbox']):not([type='radio']),
+.site-workspace select,
+.site-workspace textarea {
+  min-width: 0;
+  max-width: 100%;
+  min-height: 44px;
+  font-size: 16px;
+}
+.site-workspace input[type='checkbox'] {
+  width: 20px;
+  height: 20px;
+}
+.site-workspace header,
+.site-workspace main {
+  padding-left: max(0.75rem, env(safe-area-inset-left));
+  padding-right: max(0.75rem, env(safe-area-inset-right));
+}
+.site-workspace .site-dashboard-header {
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+.site-workspace main {
+  padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
+}
+@media (min-width: 640px) {
+  .site-workspace header,
+  .site-workspace main {
+    padding-left: max(1.5rem, env(safe-area-inset-left));
+    padding-right: max(1.5rem, env(safe-area-inset-right));
+  }
+}
+.site-dialog {
+  top: calc(var(--site-viewport-top, 0px) + max(0.75rem, env(safe-area-inset-top)));
+  max-height: calc(var(--site-viewport-height, 100dvh) - max(0.75rem, env(safe-area-inset-top)) - max(0.75rem, env(safe-area-inset-bottom)));
+}
+@media (max-width: 767px) {
+  .site-sheet-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .site-register-header > div:last-child {
+    width: 100%;
+    min-width: 0;
+  }
+  .site-dialog > div:last-child:has(button) {
+    flex-wrap: wrap;
+  }
+}
+@media (orientation: landscape) and (max-height: 600px) {
+  .site-camera {
+    flex-direction: row;
+  }
+  .site-camera-controls {
+    width: clamp(230px, 35vw, 320px);
+    justify-content: center;
+    overflow-y: auto;
+    padding-left: 1rem;
+    padding-right: max(1rem, env(safe-area-inset-right));
+  }
+  .site-camera-preview {
+    margin-left: env(safe-area-inset-left);
+  }
+  .site-camera-preview > div:has(h2) {
+    padding: 0.5rem;
+  }
+  .site-camera-preview > div > div:has(h2) {
+    gap: 0.5rem;
+    padding: 1rem;
+  }
+}

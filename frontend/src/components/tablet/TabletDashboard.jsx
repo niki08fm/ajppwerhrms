@@ -9,7 +9,7 @@ import { axis, grid, tooltipStyle } from '@/components/charts';
 import { fullDate, shortDate } from '@/components/attendance/dayVocab';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
-import { Input } from '@/components/ui/form';
+import { Input, Select } from '@/components/ui/form';
 import { Dialog } from '@/components/ui/overlay';
 import { EmptyState, ErrorState, Notice, SkeletonRows } from '@/components/states';
 import { TabletRegisters } from './TabletRegisters';
@@ -74,34 +74,40 @@ export function TabletDashboard({ site, online, onPunch, onRegister, onSignOut }
   const selectedPeople = department ? people.filter((p) => p.department_id === department.id) : people;
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b bg-card">
+    <div className="min-h-[100svh] bg-background">
+      <header className="site-dashboard-header border-b bg-card">
         <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-3 px-4 py-4 sm:px-6">
           <div className="flex min-w-0 items-center gap-3">
             <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground"><MapPin className="size-5" aria-hidden="true" /></span>
             <div className="min-w-0">
-              <h1 className="truncate font-display text-xl font-semibold">{site.name}</h1>
+              <h1 className="break-words font-display text-base font-semibold sm:text-xl">{site.name}</h1>
               <p className="text-[12px] text-muted-foreground">{site.code} · Site workspace</p>
             </div>
           </div>
-          <Button variant="ghost" size="sm" onClick={onSignOut}><LogOut /> Sign out</Button>
+          <Button variant="ghost" size="sm" className="shrink-0" onClick={onSignOut}><LogOut /> Sign out</Button>
         </div>
       </header>
 
-      <main className="mx-auto flex max-w-[1200px] flex-col gap-5 px-4 py-6 sm:px-6">
+      <main className="mx-auto flex w-full min-w-0 max-w-[1200px] flex-col gap-4 px-3 py-4 sm:gap-5 sm:px-6 sm:py-6">
         {!online && tab !== 'manual' && <Notice tone="warning" icon={<CloudOff className="size-4 shrink-0" />}>Offline. Keep attendance in the paper register. Enter and send it for HR review when connected.</Notice>}
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h2 className="font-display text-3xl font-semibold">{TABS.find((t) => t.value === tab)?.label}</h2>
+            <h2 className="font-display text-2xl font-semibold sm:text-3xl">{TABS.find((t) => t.value === tab)?.label}</h2>
             <p className="mt-1 text-sm text-muted-foreground">{fullDate(tab === 'manual' ? manualToday : today)}</p>
           </div>
-          {tab !== 'today' && <div className="flex flex-wrap items-center gap-2">
+          {tab !== 'today' && <div className="grid w-full grid-cols-1 gap-2 min-[380px]:grid-cols-2 sm:flex sm:w-auto sm:flex-wrap">
             <Button size="lg" variant="outline" disabled={!online} onClick={onRegister}><UserPlus /> Register face</Button>
             <Button size="lg" disabled={!online} onClick={onPunch}><ScanFace /> Punch in / out</Button>
           </div>}
         </div>
 
-        <div role="tablist" aria-label="Site views" className="flex gap-1 overflow-x-auto border-b scrollbar-thin">
+        <label className="flex flex-col gap-1.5 text-sm font-medium md:hidden">
+          Site view
+          <Select aria-label="Site view" value={tab} onChange={(e) => setTab(e.target.value)}>
+            {TABS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </Select>
+        </label>
+        <div role="tablist" aria-label="Site views" className="hidden gap-1 md:flex overflow-x-auto border-b scrollbar-thin">
           {TABS.map((t, index) => (
             <button key={t.value} id={`site-tab-${t.value}`} type="button" role="tab" aria-selected={tab === t.value} aria-controls={`site-panel-${t.value}`} onClick={() => setTab(t.value)}
               tabIndex={tab === t.value ? 0 : -1} onKeyDown={(e) => {
@@ -117,7 +123,7 @@ export function TabletDashboard({ site, online, onPunch, onRegister, onSignOut }
           ))}
         </div>
 
-        <section id={`site-panel-${tab}`} role="tabpanel" aria-labelledby={`site-tab-${tab}`} className="min-w-0">
+        <section id={`site-panel-${tab}`} role="tabpanel" aria-label={TABS.find((t) => t.value === tab)?.label} className="min-w-0">
           {tab === 'today' && (
             <div className="flex flex-col gap-5">
               <Card className="flex flex-col justify-between gap-6 border-primary/20 bg-primary/[0.035] p-5 sm:flex-row sm:items-center sm:p-6">
@@ -176,7 +182,7 @@ export function TabletDashboard({ site, online, onPunch, onRegister, onSignOut }
         </section>
       </main>
 
-      <Dialog open={!!department || showPeople} onOpenChange={(open) => { if (!open) { setDepartment(null); setShowPeople(false); } }} title={department?.name ?? 'People on site'} description="People currently punched in at this site.">
+      <Dialog open={!!department || showPeople} onOpenChange={(open) => { if (!open) { setDepartment(null); setShowPeople(false); } }} className="site-workspace site-dialog" title={department?.name ?? 'People on site'} description="People currently punched in at this site.">
         {selectedPeople.length ? <PeopleList people={selectedPeople} /> : <EmptyState title="Nobody is on site in this department" body="This headcount updates when people punch in or out." />}
       </Dialog>
     </div>
@@ -250,11 +256,11 @@ function MonthlyBars({ days, today, onDay }) {
 }
 
 function MonthPicker({ ym, today, onChange }) {
-  return <div className="flex items-center gap-1.5"><Button variant="outline" size="icon" aria-label="Previous month" disabled={ym <= '1900-01'} onClick={() => onChange(addMonths(ym, -1))}><ChevronLeft /></Button><Input type="month" aria-label="Attendance month" value={ym} min="1900-01" max={today.slice(0, 7)} onChange={(e) => validMonth(e.target.value, today) && onChange(e.target.value)} className="w-40" /><Button variant="outline" size="icon" aria-label="Next month" disabled={ym >= today.slice(0, 7)} onClick={() => onChange(addMonths(ym, 1))}><ChevronRight /></Button></div>;
+  return <div className="flex w-full min-w-0 items-center gap-1.5 sm:w-auto"><Button variant="outline" size="icon" aria-label="Previous month" disabled={ym <= '1900-01'} onClick={() => onChange(addMonths(ym, -1))}><ChevronLeft /></Button><Input type="month" aria-label="Attendance month" value={ym} min="1900-01" max={today.slice(0, 7)} onChange={(e) => validMonth(e.target.value, today) && onChange(e.target.value)} className="min-w-0 flex-1 sm:w-40" /><Button variant="outline" size="icon" aria-label="Next month" disabled={ym >= today.slice(0, 7)} onClick={() => onChange(addMonths(ym, 1))}><ChevronRight /></Button></div>;
 }
 
 function DayPicker({ date, today, onChange }) {
-  return <div className="flex items-center gap-1.5"><Button variant="outline" size="icon" aria-label="Previous day" disabled={date <= '1900-01-01'} onClick={() => onChange(addDays(date, -1))}><ChevronLeft /></Button><Input type="date" aria-label="Register date" value={date} min="1900-01-01" max={today} onChange={(e) => validDate(e.target.value, today) && onChange(e.target.value)} className="w-40" /><Button variant="outline" size="icon" aria-label="Next day" disabled={date >= today} onClick={() => onChange(addDays(date, 1))}><ChevronRight /></Button></div>;
+  return <div className="flex w-full min-w-0 items-center gap-1.5 sm:w-auto"><Button variant="outline" size="icon" aria-label="Previous day" disabled={date <= '1900-01-01'} onClick={() => onChange(addDays(date, -1))}><ChevronLeft /></Button><Input type="date" aria-label="Register date" value={date} min="1900-01-01" max={today} onChange={(e) => validDate(e.target.value, today) && onChange(e.target.value)} className="min-w-0 flex-1 sm:w-40" /><Button variant="outline" size="icon" aria-label="Next day" disabled={date >= today} onClick={() => onChange(addDays(date, 1))}><ChevronRight /></Button></div>;
 }
 
 export default TabletDashboard;

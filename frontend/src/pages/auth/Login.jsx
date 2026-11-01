@@ -40,7 +40,7 @@ export default function Login() {
   };
 
   return (
-    <div className="grid min-h-screen lg:grid-cols-2">
+    <div className="grid min-h-[100svh] lg:grid-cols-2">
       <div className="hidden flex-col justify-between bg-primary p-10 text-primary-foreground lg:flex">
         <div className="flex items-center gap-2">
           <svg viewBox="0 0 32 32" className="size-8" aria-hidden>
@@ -64,10 +64,10 @@ export default function Login() {
           </div>
           {error && <Notice tone="destructive">{error}</Notice>}
           <Field label="Email or site login ID" hint={who && !who.includes('@') ? 'Location is requested when recording site attendance.' : undefined}>
-            {(id) => <Input id={id} autoComplete="username" autoCapitalize="none" spellCheck={false} required value={who} onChange={(e) => setWho(e.target.value)} autoFocus />}
+            {(id) => <Input id={id} autoComplete="username" autoCapitalize="none" spellCheck={false} required value={who} onChange={(e) => setWho(e.target.value)} className="h-12 text-base" />}
           </Field>
-          <Field label="Password">{(id) => <Input id={id} type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />}</Field>
-          <Button type="submit" size="lg" loading={busy}>
+          <Field label="Password">{(id) => <Input id={id} className="h-12 text-base" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />}</Field>
+          <Button type="submit" size="lg" className="h-12" loading={busy}>
             Sign in
           </Button>
         </form>

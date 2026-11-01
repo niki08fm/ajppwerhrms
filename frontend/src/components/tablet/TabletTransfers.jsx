@@ -64,7 +64,7 @@ function TransferForm({ site, today, online, onClose, onSubmitted }) {
   const start = (e) => { e.preventDefault(); if (employee && destination && date && reason.trim().length >= 3 && online) submit.mutate(); };
 
   return (
-    <Dialog open onOpenChange={(next) => !next && !submit.isPending && onClose()} title="Request transfer" description={`From ${site.name}. HR approval is required.`} footer={<><Button variant="outline" disabled={submit.isPending} onClick={onClose}>Cancel</Button><Button type="submit" form="site-transfer-form" disabled={!online || !employee || !destination || !date || reason.trim().length < 3 || sites.isError} loading={submit.isPending}>Send request</Button></>}>
+    <Dialog className="site-workspace site-dialog" open onOpenChange={(next) => !next && !submit.isPending && onClose()} title="Request transfer" description={`From ${site.name}. HR approval is required.`} footer={<><Button variant="outline" disabled={submit.isPending} onClick={onClose}>Cancel</Button><Button type="submit" form="site-transfer-form" disabled={!online || !employee || !destination || !date || reason.trim().length < 3 || sites.isError} loading={submit.isPending}>Send request</Button></>}>
       <form id="site-transfer-form" onSubmit={start} className="space-y-4">
         {!online && <Notice tone="warning">Connect to send the request.</Notice>}
         {submit.isError && <Notice tone="destructive">{errorMessage(submit.error)}</Notice>}

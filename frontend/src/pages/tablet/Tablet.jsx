@@ -26,9 +26,29 @@ function deviceId() {
 }
 
 export default function Tablet() {
+  useEffect(() => {
+    // Mobile keyboards resize the visual viewport, which can be shorter than 100dvh.
+    const viewport = window.visualViewport;
+    const root = document.documentElement;
+    const update = () => {
+      root.style.setProperty('--site-viewport-height', `${viewport?.height ?? window.innerHeight}px`);
+      root.style.setProperty('--site-viewport-top', `${viewport?.offsetTop ?? 0}px`);
+    };
+    update();
+    viewport?.addEventListener('resize', update);
+    viewport?.addEventListener('scroll', update);
+    window.addEventListener('resize', update);
+    return () => {
+      viewport?.removeEventListener('resize', update);
+      viewport?.removeEventListener('scroll', update);
+      window.removeEventListener('resize', update);
+      root.style.removeProperty('--site-viewport-height');
+      root.style.removeProperty('--site-viewport-top');
+    };
+  }, []);
   const me = useQuery({ queryKey: ['site-me'], queryFn: () => api.get('/auth/site-me').then((r) => r.data), retry: false });
   if (me.isLoading) return <div className="flex min-h-screen items-center justify-center text-muted-foreground">Loading…</div>;
-  return me.data ? <Station site={me.data} /> : <SiteLogin />;
+  return <div className="site-workspace">{me.data ? <Station site={me.data} /> : <SiteLogin />}</div>;
 }
 
 function SiteLogin() {
@@ -51,16 +71,16 @@ function SiteLogin() {
     }
   };
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background p-6">
+    <div className="flex min-h-[100svh] items-center justify-center bg-background px-5 py-8 sm:p-8">
       <form onSubmit={submit} className="flex w-full max-w-sm flex-col gap-4">
         <div className="flex items-center gap-2">
           <MapPin className="size-6 text-primary" />
-          <h1 className="font-display text-2xl font-semibold">Site tablet</h1>
+          <h1 className="font-display text-2xl font-semibold">Site sign in</h1>
         </div>
         <p className="text-[14px] text-muted-foreground">Sign in from anywhere to view this site's attendance. Location is checked before punching or registering a face.</p>
         {error && <Notice tone="destructive">{error}</Notice>}
-        <Field label="Login ID">{(id) => <Input id={id} value={login} onChange={(e) => setLogin(e.target.value)} autoCapitalize="none" className="h-11 text-base" required />}</Field>
-        <Field label="Password">{(id) => <Input id={id} type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="h-11 text-base" required />}</Field>
+        <Field label="Login ID">{(id) => <Input id={id} autoComplete="username" spellCheck={false} disabled={busy} value={login} onChange={(e) => setLogin(e.target.value)} autoCapitalize="none" className="h-11 text-base" required />}</Field>
+        <Field label="Password">{(id) => <Input id={id} type="password" autoComplete="current-password" disabled={busy} value={password} onChange={(e) => setPassword(e.target.value)} className="h-11 text-base" required />}</Field>
         <Button type="submit" size="lg" loading={busy}>
           Sign in here
         </Button>
@@ -475,12 +495,12 @@ function Station({ site }) {
     </>
   );
   return (
-    <div className="flex min-h-screen flex-col bg-background">
-      <header className="flex items-center justify-between border-b bg-card px-6 py-3">
-        <div className="flex items-center gap-3">
+    <div className="flex min-h-[100svh] flex-col bg-background">
+      <header className="flex min-w-0 items-center justify-between gap-2 border-b bg-card px-3 py-3 sm:px-6">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
           <Button variant="ghost" size="icon" aria-label="Back to site attendance" onClick={reset}><ArrowLeft /></Button>
-          <div>
-          <div className="font-display text-xl font-semibold">{site.name}</div>
+          <div className="min-w-0">
+          <div className="break-words font-display text-lg font-semibold sm:text-xl">{site.name}</div>
           <div className="text-[13px] text-muted-foreground">{stage.k === 'register' || stage.purpose === 'REGISTER' || session.current?.purpose === 'REGISTER' ? 'Register face' : 'Punch attendance'}</div>
           </div>
         </div>
@@ -492,7 +512,7 @@ function Station({ site }) {
           )}
         </div>
       </header>
-      <main className="mx-auto flex w-full max-w-5xl flex-1 justify-center p-4 pt-8 sm:p-8 sm:pt-10">
+      <main className="mx-auto flex w-full min-w-0 max-w-5xl flex-1 justify-center p-3 pt-5 sm:p-8 sm:pt-10">
         <section className="flex w-full max-w-xl flex-col items-center gap-5">
           {!online && <Notice tone="destructive">{messageFor('OFFLINE')}</Notice>}
           {error && online && <Notice tone="destructive">{error}</Notice>}
@@ -509,8 +529,8 @@ function Station({ site }) {
           </div>}
           {stage.k === 'register' && <RegisterForm onCancel={reset} onStart={(who) => begin('REGISTER', who)} />}
           {/* The camera fills the screen; only the button below stays. */}
-          <div className={stage.k === 'camera' || stage.k === 'checking' ? 'fixed inset-0 z-40 flex flex-col bg-black text-white' : 'hidden'} style={{ height: '100dvh' }}>
-            <div className="relative min-h-0 flex-1 overflow-hidden">
+          <div className={stage.k === 'camera' || stage.k === 'checking' ? 'site-camera fixed inset-0 z-40 flex flex-col bg-black text-white' : 'hidden'} style={{ height: '100dvh' }}>
+            <div className="site-camera-preview relative min-h-0 min-w-0 flex-1 overflow-hidden">
               <video ref={video} className="absolute inset-0 h-full w-full -scale-x-100 object-cover" muted playsInline />
               {cameraWaiting && <div className="absolute inset-0 flex items-center justify-center px-6" aria-live="polite">
                 <div className="flex w-full max-w-sm flex-col items-center gap-4 rounded-2xl border border-white/15 bg-white/[0.06] px-6 py-8 text-center">
@@ -542,26 +562,26 @@ function Station({ site }) {
                   {stage.purpose === 'REGISTER' ? `Step ${step.n} of 4 · ${REGISTER_STEPS[step.n - 1]}` : 'Punch attendance'}
                 </div>
               )}
-              <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center gap-3 bg-gradient-to-t from-black/80 to-transparent px-5 pt-10 pb-4">
-                <div className={cameraWaiting ? 'hidden' : 'min-h-9 text-center font-display text-2xl leading-snug font-semibold [text-shadow:0_1px_6px_rgba(0,0,0,0.8)]'} aria-live="polite">
-                  {stage.k === 'checking' ? hint || messageFor('CHECKING') : hint}
-                </div>
-                {stage.k === 'camera' && !cameraWaiting && (
-                  <div className="h-2.5 w-full max-w-md overflow-hidden rounded-full bg-white/25" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(step.progress * 100)}>
-                    <div className="h-full rounded-full bg-success transition-[width] duration-150" style={{ width: `${Math.round(step.progress * 100)}%` }} />
-                  </div>
-                )}
-              </div>
             </div>
-            <div className="flex justify-center gap-3 bg-black px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-              <Button variant="outline" size="lg" className="border-white/40 bg-transparent text-white hover:bg-white/10" onClick={reset}>
-                Cancel
-              </Button>
-              {stage.k === 'camera' && step.blink && step.canSkip && (
+            <div className="site-camera-controls flex shrink-0 flex-col items-center gap-3 bg-black px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+              <div className={cameraWaiting ? 'hidden' : 'text-center font-display text-xl leading-snug font-semibold sm:text-2xl'} aria-live="polite">
+                {stage.k === 'checking' ? hint || messageFor('CHECKING') : hint}
+              </div>
+              {stage.k === 'camera' && !cameraWaiting && (
+                <div className="h-2 w-full max-w-md overflow-hidden rounded-full bg-white/25" role="progressbar" aria-label="Photo capture progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(step.progress * 100)}>
+                  <div className="h-full rounded-full bg-success transition-[width] duration-150" style={{ width: `${Math.round(step.progress * 100)}%` }} />
+                </div>
+              )}
+              <div className="flex w-full flex-wrap justify-center gap-3">
+                <Button variant="outline" size="lg" className="border-white/40 bg-transparent text-white hover:bg-white/10" onClick={reset}>
+                  Cancel
+                </Button>
+                {stage.k === 'camera' && step.blink && step.canSkip && (
                 <Button size="lg" onClick={() => (blinkSkip.current.requested = true)}>
                   Take the photo now
                 </Button>
               )}
+              </div>
             </div>
           </div>
           {stage.k === 'identified' && (
@@ -586,7 +606,7 @@ function Station({ site }) {
               </div>
               <p className="text-[14px] text-muted-foreground">Your whole face in every picture, nothing covering it, not blurred? If not, take them again.</p>
               {session.current?.reRegistration && <p className="text-[13px] text-muted-foreground">HR-approved re-registration. Your current face is replaced only after these photos pass the checks.</p>}
-              <div className="flex w-full gap-2">
+              <div className="flex w-full flex-col gap-2 min-[400px]:flex-row">
                 <Button size="lg" variant="outline" className="flex-1" onClick={() => review(false)}>
                   <RotateCcw /> Retake
                 </Button>
@@ -595,7 +615,7 @@ function Station({ site }) {
                 </Button>
               </div>
               <button
-                className="text-[15px] text-muted-foreground underline"
+                className="px-3 text-[15px] text-muted-foreground underline"
                 onClick={() => {
                   dropPreviews();
                   reset();
@@ -708,7 +728,7 @@ function Confirmation({ d, onConfirm, onNotMe }) {
       <Button size="xl" className="w-full" loading={busy} onClick={run(onConfirm)}>
         {d.direction === 'IN' ? 'Punch in' : 'Punch out'}
       </Button>
-      <button className="text-[15px] text-muted-foreground underline" disabled={busy} onClick={run(onNotMe)}>
+      <button className="px-3 text-[15px] text-muted-foreground underline" disabled={busy} onClick={run(onNotMe)}>
         This is not me
       </button>
     </div>
@@ -773,7 +793,7 @@ function PersonPicker({ value, onChange, forRegister, inputId }) {
         }}
       />
       {q.length >= 2 && (
-        <ul id={listId} role="listbox" aria-label="Matching employees" className="absolute z-20 mt-1 max-h-72 w-full overflow-y-auto rounded-md border bg-card shadow-lg">
+        <ul id={listId} role="listbox" aria-label="Matching employees" className="relative z-20 mt-1 max-h-60 w-full overflow-y-auto rounded-md border bg-card shadow-lg">
           {list.map((p, i) => (
             <li id={`${listId}-${i}`} key={p.code} role="option" aria-selected={i === active}>
               <button
@@ -783,7 +803,7 @@ function PersonPicker({ value, onChange, forRegister, inputId }) {
                 className={`flex w-full items-center justify-between gap-3 px-3 py-3 text-left ${i === active ? 'bg-accent' : ''}`}
               >
                 <span className="min-w-0"><span className="block truncate text-base font-medium">{p.name}</span>{forRegister && p.allow_reregistration && <Chip tone="info" className="mt-1">HR approved</Chip>}</span>
-                <span className="shrink-0 text-right text-[13px] text-muted-foreground">
+                <span className="text-[13px] text-muted-foreground">
                   {p.code}
                   {p.designation ? ` · ${p.designation}` : ''}
                 </span>

@@ -99,7 +99,7 @@ function ManualWorkspace({ site, today, online, active }) {
         </ul>
         {!entry.rows.length && <p className="rounded-lg border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">Search and add employees from the paper register.</p>}
       </div>
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t bg-muted/20 px-5 py-4">
+      <div className="site-sheet-footer flex flex-wrap items-center justify-between gap-3 border-t bg-muted/20 px-5 py-4">
         <p className="min-w-0 flex-1 text-[12px] text-muted-foreground">{uncertain ? 'No automatic retry. Reconnect and send the same sheet again, or check sent sheets.' : entryError ?? 'HR has 3 days after receipt to review this sheet. Nothing is recorded before approval.'}</p>
         <Button disabled={!online || (!uncertain && (!!entryError || !!duplicate))} loading={sending} onClick={submit}><Send />{uncertain ? 'Retry sending to HR' : 'Send sheet to HR'}</Button>
       </div>
@@ -112,7 +112,7 @@ function ManualWorkspace({ site, today, online, active }) {
       </ul>}
       <p className="border-t px-5 py-3 text-[12px] text-muted-foreground">Unapproved sheets expire 3 days after HR receives them. They do not create punches; normal absence or leave rules then apply. Existing attendance is kept.</p>
     </Card>}
-    <Dialog open={!!opened} onOpenChange={(open) => !open && setOpened(null)} title="Manual attendance sheet" description={detail.data ? `${fullDate(detail.data.work_date)} · ${site.name}` : 'Saved sheet sent to HR'} wide>
+    <Dialog className="site-workspace site-dialog" open={!!opened} onOpenChange={(open) => !open && setOpened(null)} title="Manual attendance sheet" description={detail.data ? `${fullDate(detail.data.work_date)} · ${site.name}` : 'Saved sheet sent to HR'} wide>
       {detail.isLoading ? <SkeletonRows rows={4} /> : detail.isError ? <ErrorState error={detail.error} onRetry={() => detail.refetch()} compact /> : detail.data && <SheetReadOnly sheet={detail.data} />}
     </Dialog>
   </div>;

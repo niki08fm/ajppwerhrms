@@ -708,3 +708,155 @@ test('general site sign-in follows tablet sign-in without requesting GPS before 
  await page.getByRole('button',{name:'Sign in',exact:true}).click();await expect(page).toHaveURL(/\/tablet$/);await expect(page.getByRole('heading',{name:SITE.name,exact:true})).toBeVisible();
  expect(state.writes).toEqual([{path:'/auth/site-login',body:{login:'example-site',password:'test-password'}}]);expect(await page.evaluate(()=>window.__tabletLocationCalls)).toBe(0);expect(state.errors).toEqual([]);
 });
+
+test.describe('site workspace on phones and tablets', () => {
+  test.use({ hasTouch: true });
+  const fits = async (page) => {
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  };
+  const view = async (page, value, label) => {
+    if (page.viewportSize().width < 768) await page.getByRole('combobox', { name: 'Site view', exact: true }).selectOption(value);
+    else await page.getByRole('tab', { name: label, exact: true }).tap();
+  };
+
+  for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 768, height: 1024 }, { width: 1024, height: 768 }]) {
+    test(`${viewport.width}px site login and registers fit without page-wide scrolling`, async ({ page }, testInfo) => {
+      await page.setViewportSize(viewport);
+      await page.addInitScript(() => localStorage.setItem('theme', 'light'));
+      const state = await mockTablet(page, { loggedIn: false, withOT: true });
+      state.site = { ...SITE, name: 'Example electrical construction and maintenance site' };
+      await page.goto('/tablet');
+      await expect(page.getByRole('heading', { name: 'Site sign in', exact: true })).toBeVisible();
+      await fits(page);
+      expect(await page.getByLabel('Login ID', { exact: true }).evaluate((el) => parseFloat(getComputedStyle(el).fontSize))).toBeGreaterThanOrEqual(16);
+      await page.getByLabel('Login ID', { exact: true }).fill('example-site');
+      await page.getByLabel('Password', { exact: true }).fill('test-password');
+      await page.getByRole('button', { name: 'Sign in here', exact: true }).tap();
+      const punch = page.getByRole('button', { name: 'Punch in / out', exact: true });
+      await expect(punch).toBeVisible();
+      const rect = await punch.boundingBox();
+      expect(rect.height).toBeGreaterThanOrEqual(44);
+      expect(rect.y + rect.height).toBeLessThanOrEqual(viewport.height);
+      expect(await page.evaluate(() => window.__tabletLocationCalls)).toBe(0);
+      await fits(page);
+      await page.screenshot({ path: testInfo.outputPath(`site-today-${viewport.width}.png`), fullPage: true });
+      await view(page, 'day', 'Daily register');
+      await expect(page.getByLabel('Register date', { exact: true })).toBeVisible();
+      if (viewport.width < 768) {
+        const cards = page.getByRole('list', { name: 'Daily attendance cards' });
+        await expect(cards).toContainText(EMPLOYEE.name);
+        await expect(cards).toContainText('1h 30m');
+        await expect(cards.getByText('09:00', { exact: true }).first()).toBeVisible();
+        await expect(page.getByRole('region', { name: 'Daily register table', exact: true })).toHaveCount(0);
+      } else await expect(page.getByRole('region', { name: 'Daily register table', exact: true })).toBeVisible();
+      await fits(page);
+      await page.screenshot({ path: testInfo.outputPath(`site-daily-${viewport.width}.png`), fullPage: true });
+      await view(page, 'month', 'Monthly register');
+      if (viewport.width < 768) {
+        const cards = page.getByRole('list', { name: 'Monthly attendance cards' });
+        await expect(cards).toContainText('Days punched in');
+        await cards.locator('summary').first().tap();
+        await expect(page.getByRole('list', { name: `Daily punches for ${EMPLOYEE.name}`, exact: true })).toContainText('OT 1h 30m');
+      } else await expect(page.getByRole('region', { name: 'Monthly register table', exact: true })).toBeVisible();
+      await fits(page);
+      expect(state.errors).toEqual([]);
+      expect(state.unexpected).toEqual([]);
+      expect(state.writes).toHaveLength(1);
+    });
+  }
+
+  for (const width of [320, 768]) test(`${width}px transfer form fits and its controls remain usable with a short viewport`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: width < 768 ? 568 : 1024 });
+    const state = await mockTablet(page);
+    await page.goto('/tablet');
+    await view(page, 'transfers', 'Transfer requests');
+    await page.getByRole('button', { name: 'Request transfer', exact: true }).tap();
+    const dialog = page.getByRole('dialog', { name: 'Request transfer', exact: true });
+    await dialog.getByRole('textbox', { name: 'Employee search', exact: true }).fill('Example');
+    await dialog.getByRole('button', { name: new RegExp(EMPLOYEE.name) }).tap();
+    await dialog.getByLabel('Destination site').selectOption(OTHER_SITE.id);
+    await dialog.getByLabel('Reason').fill('Assigned to the destination site');
+    await fits(page);
+    // Approximate the visible area left after a phone keyboard opens.
+    await page.setViewportSize({ width, height: 380 });
+    const bounds = await dialog.boundingBox();
+    expect(bounds.y).toBeGreaterThanOrEqual(0);
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(380);
+    await expect(dialog.getByRole('button', { name: 'Send request', exact: true })).toBeInViewport();
+    await page.screenshot({ path: testInfo.outputPath(`site-transfer-short-screen-${width}.png`), fullPage: true });
+    await dialog.getByRole('button', { name: 'Send request', exact: true }).tap();
+    await expect(page.getByText('Transfer request sent to HR for approval.', { exact: true })).toBeVisible();
+    expect(state.transfers).toHaveLength(1);
+    expect(state.errors).toEqual([]);
+  });
+
+  test('camera controls stay reachable when a phone rotates during camera permission', async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const state = await mockTablet(page, { delayedCamera: true });
+    await page.goto('/tablet');
+    await page.getByRole('button', { name: 'Punch in / out', exact: true }).tap();
+    await expect(page.getByRole('heading', { name: 'Opening your camera', exact: true })).toBeVisible();
+    await page.setViewportSize({ width: 844, height: 390 });
+    const preview = await page.locator('.site-camera-preview').boundingBox();
+    const controls = await page.locator('.site-camera-controls').boundingBox();
+    expect(controls.x).toBeGreaterThanOrEqual(preview.x + preview.width - 1);
+    expect(preview.height).toBeGreaterThan(250);
+    await expect(page.getByRole('button', { name: 'Cancel', exact: true })).toBeInViewport();
+    await fits(page);
+    await page.screenshot({ path: testInfo.outputPath('phone-camera-landscape.png'), fullPage: true });
+    await page.getByRole('button', { name: 'Cancel', exact: true }).tap();
+    await page.evaluate(() => window.__tabletFaceProbe.resolveCamera());
+    await expect.poll(() => page.evaluate(() => window.__tabletFaceProbe.stopped)).toBe(1);
+    expect(state.writes.filter(({ path }) => path.includes('/frames'))).toEqual([]);
+    expect(state.errors).toEqual([]);
+  });
+
+  test('phone registration photo review fits the narrow screen', async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 320, height: 568 });
+    const state = await mockTablet(page, { guidedRegistration: true });
+    await page.goto('/tablet');
+    await page.getByRole('button', { name: 'Register face', exact: true }).tap();
+    await page.getByRole('combobox', { name: 'Employee name or ID', exact: true }).fill('Example');
+    await page.getByRole('option').getByRole('button', { name: new RegExp(EMPLOYEE.name) }).tap();
+    await page.getByRole('button', { name: 'Start camera', exact: true }).tap();
+    await expect(page.getByRole('button', { name: 'Use these photos', exact: true })).toBeVisible();
+    await fits(page);
+    await page.screenshot({ path: testInfo.outputPath('phone-registration-review.png'), fullPage: true });
+    await page.getByRole('button', { name: 'Use these photos', exact: true }).tap();
+    await expect(page.getByRole('status')).toContainText('Registration complete');
+    expect(state.errors).toEqual([]);
+  });
+});
+
+test('rotating from phone cards to tablet tables preserves register filters and only mounts one register', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const state = await mockTablet(page, { withOT: true });
+  await page.goto('/tablet');
+  await page.getByRole('combobox', { name: 'Site view', exact: true }).selectOption('day');
+  await page.getByRole('textbox', { name: 'Search register', exact: true }).fill('Zero');
+  await expect(page.getByRole('list', { name: 'Daily attendance cards' })).toContainText(ZERO_OT_EMPLOYEE.name);
+  expect(await page.locator('table').count()).toBe(0);
+  await page.setViewportSize({ width: 844, height: 390 });
+  const table = page.getByRole('region', { name: 'Daily register table', exact: true });
+  await expect(table).toContainText(ZERO_OT_EMPLOYEE.name);
+  await expect(table.getByText(EMPLOYEE.name, { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('textbox', { name: 'Search register', exact: true })).toHaveValue('Zero');
+  expect(await page.locator('[aria-label="Daily attendance cards"]').count()).toBe(0);
+  expect(state.errors).toEqual([]);
+});
+
+test('phone face punching confirms the employee before recording attendance', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const state = await mockTablet(page, { punchDirection: 'IN' });
+  await page.goto('/tablet');
+  await page.getByRole('button', { name: 'Punch in / out', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Punch in', exact: true })).toBeVisible();
+  await expect(page.getByText(EMPLOYEE.name, { exact: true })).toBeVisible();
+  expect(state.writes.some(({ path }) => path.endsWith('/confirm'))).toBe(false);
+  await page.screenshot({ path: testInfo.outputPath('phone-punch-confirmation.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Punch in', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('Attendance recorded');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  expect(state.writes.filter(({ path }) => path.endsWith('/confirm'))).toHaveLength(1);
+  expect(state.errors).toEqual([]);
+});

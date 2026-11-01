@@ -10,13 +10,13 @@ import { cn } from '@/utils';
 
 // ─── Dialog (focus-trapped, closes on Escape) ───────────────────────────────
 
-export function Dialog({ open, onOpenChange, title, description, children, footer, wide }) {
+export function Dialog({ open, onOpenChange, title, description, children, footer, wide, className }) {
   return (
     <D.Root open={open} onOpenChange={onOpenChange}>
       <D.Portal>
         <D.Overlay className="fixed inset-0 z-50 bg-[oklch(0.2_0.03_240/0.45)] data-[state=open]:animate-in" />
         <D.Content
-          className={cn('fixed left-1/2 top-[8vh] z-50 flex max-h-[84vh] w-[calc(100vw-2rem)] -translate-x-1/2 flex-col rounded-lg border bg-card shadow-xl', wide ? 'max-w-4xl' : 'max-w-lg')}
+          className={cn('fixed left-1/2 top-[8vh] z-50 flex max-h-[84vh] w-[calc(100vw-2rem)] -translate-x-1/2 flex-col rounded-lg border bg-card shadow-xl', wide ? 'max-w-4xl' : 'max-w-lg', className)}
         >
           <div className="flex items-start justify-between gap-4 border-b px-5 py-4">
             <div>
