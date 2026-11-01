@@ -1,22 +1,24 @@
 import { Bar, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { inr, monthLabel } from '@/utils';
+import { EmptyState } from '@/components/states';
 import { tooltipStyle } from '@/components/charts';
 
 export function PayrollCostChart({ bars }) {
   const rows = bars.map(({ m, t }) => ({ month: monthLabel(m).slice(0, 3), period: monthLabel(m), ...(t ? { net: t.net, deductions: t.deductions, employer: t.employer, people: t.headcount } : {}) }));
+  if (!bars.some(b => b.t)) return <div className="flex min-h-72 items-center justify-center px-6"><EmptyState title={bars.some(b => b.failed) ? 'Payroll cost is unavailable' : 'No generated payrolls in these six months'} body={bars.some(b => b.failed) ? 'Retry the unavailable month below.' : 'Costs will appear here after payroll has been generated.'} /></div>;
   return <figure className="relative" aria-label="Six months of payroll cost and employee count">
     <div className="payroll-cost-chart">
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={rows} margin={{ top: 15, left: 5, right: 0, bottom: 5 }}>
           <CartesianGrid vertical={false} stroke="var(--border)" />
           <XAxis dataKey="month" tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} tickLine={false} axisLine={false} />
-          <YAxis yAxisId="cost" width={55} tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} tickFormatter={v => `${(v / 100 / 1e5).toFixed(0)}L`} tickLine={false} axisLine={false} />
+          <YAxis yAxisId="cost" width={55} tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} tickFormatter={v => `${(v / 100 / 1e5).toFixed(1).replace(/\.0$/, '')}L`} tickLine={false} axisLine={false} />
           <YAxis yAxisId="people" orientation="right" width={35} allowDecimals={false} domain={[0, value => Math.max(5, Math.ceil(value * 1.2))]} tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} tickLine={false} axisLine={false} />
           <Tooltip {...tooltipStyle} labelFormatter={(_, payload) => payload?.[0]?.payload.period ?? ''} formatter={(value, name) => [name === 'Employee count' ? value : inr(value), name]} />
-          <Bar yAxisId="cost" dataKey="net" name="Net pay" stackId="cost" fill="var(--chart-1)" maxBarSize={64} />
-          <Bar yAxisId="cost" dataKey="deductions" name="Employee deductions" stackId="cost" fill="var(--chart-2)" maxBarSize={64} />
-          <Bar yAxisId="cost" dataKey="employer" name="Company contributions" stackId="cost" fill="var(--chart-3)" radius={[6, 6, 0, 0]} maxBarSize={64} />
-          <Line yAxisId="people" dataKey="people" name="Employee count" stroke="var(--chart-4)" strokeWidth={2} dot={{ r: 3, stroke: 'var(--card)', strokeWidth: 1 }} connectNulls={false} />
+          <Bar isAnimationActive={false} yAxisId="cost" dataKey="net" name="Net pay" stackId="cost" fill="var(--chart-1)" maxBarSize={64} />
+          <Bar isAnimationActive={false} yAxisId="cost" dataKey="deductions" name="Employee deductions" stackId="cost" fill="var(--chart-2)" maxBarSize={64} />
+          <Bar isAnimationActive={false} yAxisId="cost" dataKey="employer" name="Company contributions" stackId="cost" fill="var(--chart-3)" radius={[6, 6, 0, 0]} maxBarSize={64} />
+          <Line isAnimationActive={false} yAxisId="people" dataKey="people" name="Employee count" stroke="var(--chart-4)" strokeWidth={2} dot={{ r: 3, stroke: 'var(--card)', strokeWidth: 1 }} connectNulls={false} />
         </ComposedChart>
       </ResponsiveContainer>
     </div>
