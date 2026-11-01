@@ -687,7 +687,7 @@ function Station({ site }) {
               <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{stage.kind === 'registered' ? 'Registration complete' : stage.kind === 'duplicate' ? 'Already recorded' : stage.kind === 'warning' ? 'HR help needed' : stage.kind === 'manual' ? 'Waiting for HR' : 'Attendance recorded'}</p>
               <div className="font-display text-2xl leading-snug font-semibold">{stage.text}</div>
               {stage.kind === 'warning' && <p className="text-[13px] text-muted-foreground">A new registration was not saved. Ask HR to check the employee’s face record.</p>}
-              <div className="mt-2 flex flex-wrap justify-center gap-2"><Button variant="outline" size="lg" onClick={reset}>Back to site</Button>{stage.kind === 'registered' && <Button size="lg" disabled={!online} onClick={() => { clearTimeout(finishTimer.current); begin('PUNCH'); }}><ScanFace /> Punch now</Button>}</div>
+              <div className="mt-2 flex flex-wrap justify-center gap-2"><Button variant="outline" size="lg" onClick={reset}>Back to site</Button>{['punch', 'duplicate'].includes(stage.kind) && <Button size="lg" disabled={!online} onClick={() => begin('PUNCH')}><ScanFace /> Scan next person</Button>}{stage.kind === 'registered' && <Button size="lg" disabled={!online} onClick={() => { clearTimeout(finishTimer.current); begin('PUNCH'); }}><ScanFace /> Punch now</Button>}</div>
               <p className="text-[12px] text-muted-foreground">Returning to site attendance automatically.</p>
             </div>
           )}

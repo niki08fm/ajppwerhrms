@@ -42,7 +42,10 @@ async function mockSite(page, { loseResponse = false } = {}) {
 }
 async function openManual(page) {
   await page.goto('/tablet');
-  if (page.viewportSize().width < 768) await page.getByRole('combobox', { name: 'Site view', exact: true }).selectOption('manual');
+  if (page.viewportSize().width < 768) {
+    await page.getByRole('navigation', { name: 'Site navigation' }).getByRole('button', { name: 'More', exact: true }).click();
+    await page.getByRole('button', { name: 'Manual attendance', exact: true }).click();
+  }
   else await page.getByRole('tab', { name: 'Manual attendance', exact: true }).click();
   await expect(page.getByRole('button', { name: 'New attendance sheet', exact: true })).toBeEnabled();
 }
@@ -188,7 +191,10 @@ test('the manual view needs a connection before creating a paper entry and offer
   const state = await mockSite(page);
   await page.goto('/tablet'); await expect(page.getByRole('heading', { name: 'Alpha site', exact: true })).toBeVisible();
   await context.setOffline(true);
-  if (page.viewportSize().width < 768) await page.getByRole('combobox', { name: 'Site view', exact: true }).selectOption('manual');
+  if (page.viewportSize().width < 768) {
+    await page.getByRole('navigation', { name: 'Site navigation' }).getByRole('button', { name: 'More', exact: true }).click();
+    await page.getByRole('button', { name: 'Manual attendance', exact: true }).click();
+  }
   else await page.getByRole('tab', { name: 'Manual attendance', exact: true }).click();
   await expect(page.getByRole('button', { name: 'New attendance sheet', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Send when online', exact: true })).toHaveCount(0);

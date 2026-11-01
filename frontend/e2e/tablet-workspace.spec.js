@@ -715,8 +715,14 @@ test.describe('site workspace on phones and tablets', () => {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   };
   const view = async (page, value, label) => {
-    if (page.viewportSize().width < 768) await page.getByRole('combobox', { name: 'Site view', exact: true }).selectOption(value);
-    else await page.getByRole('tab', { name: label, exact: true }).tap();
+    if (page.viewportSize().width >= 768) return page.getByRole('tab', { name: label, exact: true }).tap();
+    if (['day', 'month'].includes(value)) {
+      await page.getByRole('navigation', { name: 'Site navigation' }).getByRole('button', { name: 'Registers', exact: true }).tap();
+      await page.getByRole('combobox', { name: 'Register view', exact: true }).selectOption(value);
+    } else {
+      await page.getByRole('navigation', { name: 'Site navigation' }).getByRole('button', { name: 'More', exact: true }).tap();
+      await page.getByRole('button', { name: label, exact: true }).tap();
+    }
   };
 
   for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 768, height: 1024 }, { width: 1024, height: 768 }]) {
@@ -832,7 +838,7 @@ test('rotating from phone cards to tablet tables preserves register filters and 
   await page.setViewportSize({ width: 390, height: 844 });
   const state = await mockTablet(page, { withOT: true });
   await page.goto('/tablet');
-  await page.getByRole('combobox', { name: 'Site view', exact: true }).selectOption('day');
+  await page.getByRole('navigation', { name: 'Site navigation' }).getByRole('button', { name: 'Registers', exact: true }).click();
   await page.getByRole('textbox', { name: 'Search register', exact: true }).fill('Zero');
   await expect(page.getByRole('list', { name: 'Daily attendance cards' })).toContainText(ZERO_OT_EMPLOYEE.name);
   expect(await page.locator('table').count()).toBe(0);
@@ -858,5 +864,63 @@ test('phone face punching confirms the employee before recording attendance', as
   await expect(page.getByRole('status')).toContainText('Attendance recorded');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   expect(state.writes.filter(({ path }) => path.endsWith('/confirm'))).toHaveLength(1);
+  expect(state.errors).toEqual([]);
+});
+
+test('phone home keeps supervisor tasks behind More and its navigation stays clear of the punch button', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 320, height: 568 });
+  const state = await mockTablet(page);
+  await page.goto('/tablet');
+  const nav = page.getByRole('navigation', { name: 'Site navigation' });
+  await expect(nav.getByRole('button')).toHaveCount(3);
+  await expect(page.getByRole('heading', { name: 'Ready to punch?', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Departments on site', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Request transfer', exact: true })).toHaveCount(0);
+  const punch = await page.getByRole('button', { name: 'Punch in / out', exact: true }).boundingBox();
+  expect(punch.y + punch.height).toBeLessThanOrEqual((await nav.boundingBox()).y);
+  const registration = await page.getByRole('button', { name: 'Register face', exact: true }).boundingBox();
+  expect(registration.y + registration.height).toBeLessThanOrEqual((await nav.boundingBox()).y);
+  await page.screenshot({ path: testInfo.outputPath('phone-attendance-home.png'), fullPage: false });
+  await nav.getByRole('button', { name: 'More', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Site tools', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Manual attendance', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Transfer requests', exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('phone-site-tools.png'), fullPage: false });
+  await page.getByRole('button', { name: 'Sign out of this site', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Site sign in', exact: true })).toBeVisible();
+  expect(state.errors).toEqual([]);
+});
+
+test('Scan next person starts a fresh confirmed punch without reusing the first employee or return timer', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const state = await mockTablet(page, { punchDirection: 'IN' });
+  let sessions = 0;
+  const confirms = [];
+  await page.route('**/api/v1/punches/sessions', async (route) => {
+    sessions++;
+    await route.fulfill({ status: 201, json: { data: { session_id: `shared-${sessions}`, challenge: { type: 'STRAIGHT' } } } });
+  });
+  await page.route('**/api/v1/punches/sessions/shared-*/frames', async (route) => {
+    const second = route.request().url().includes('shared-2');
+    await route.fulfill({ json: { data: { outcome: 'IDENTIFIED', message: 'Is this you?', employee: second ? { ...EMPLOYEE, code: 'AJTEST02', name: 'Example Second Person' } : EMPLOYEE, direction: 'IN', confirm_token: second ? 'second-person-token' : 'first-person-token' } } });
+  });
+  await page.route('**/api/v1/punches/sessions/shared-*/confirm', async (route) => {
+    confirms.push({ path: new URL(route.request().url()).pathname, body: route.request().postDataJSON() });
+    await route.fulfill({ status: 201, json: { data: { message: 'Punched in at 09:00.' } } });
+  });
+  await page.goto('/tablet');
+  await page.getByRole('button', { name: 'Punch in / out', exact: true }).click();
+  await page.getByRole('button', { name: 'Punch in', exact: true }).click();
+  await page.getByRole('button', { name: 'Scan next person', exact: true }).click();
+  await expect(page.getByText('Example Second Person', { exact: true })).toBeVisible();
+  // The first result's 4-second return timer must not interrupt this new confirmation.
+  await page.waitForTimeout(4200);
+  await expect(page.getByRole('button', { name: 'Punch in', exact: true })).toBeVisible();
+  expect(confirms).toHaveLength(1);
+  await page.getByRole('button', { name: 'Punch in', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('Attendance recorded');
+  expect(sessions).toBe(2);
+  expect(confirms.map((item) => item.body.confirm_token)).toEqual(['first-person-token', 'second-person-token']);
+  expect(confirms.map((item) => item.path)).toEqual(['/api/v1/punches/sessions/shared-1/confirm', '/api/v1/punches/sessions/shared-2/confirm']);
   expect(state.errors).toEqual([]);
 });

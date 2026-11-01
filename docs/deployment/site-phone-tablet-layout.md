@@ -6,9 +6,11 @@ a site login ID and forwards the signed-in user to this workspace.
 
 ## Layout and touch behavior
 
-- Phone navigation uses a **Site view** selector with Today, Daily register,
-  Monthly register, Transfer requests and Manual attendance. Larger screens keep
-  the tab navigation.
+- Phone navigation has three sections: **Attendance**, **Registers** and **More**.
+  Attendance opens with one large punch action. Registers switches between daily
+  and monthly views. More contains manual attendance, transfers, registration,
+  people on site, an expandable summary and sign out. Larger screens keep tabs
+  and the fuller dashboard. The phone home does not render charts.
 - Phones show daily attendance as employee cards with punch times, status, worked
   hours, overtime, late/early minutes and punch counts. Monthly cards show totals
   and expandable daily punches, including punch-out-only records. Wider devices
@@ -29,7 +31,7 @@ a site login ID and forwards the signed-in user to this workspace.
 
 ## Verification
 
-48 Chromium browser tests passed against the actual frontend with fictional site,
+50 Chromium browser tests and 22 backend face-punch API tests passed against the actual frontend with fictional site,
 attendance and camera fixtures. Coverage includes 320 × 568 and 390 × 844 phones,
 768 × 1024 and 1024 × 768 tablets, 844 × 390 camera rotation, short phone/tablet
 transfer dialogs, manual sheets, face registration review and confirmed punching.
@@ -42,6 +44,23 @@ accuracy, low-light recognition or physical-device camera behavior. The short
 viewport checks approximate keyboard space and do not replace Safari/Android
 hardware testing. Location, identity checks, confirmation and payroll rules are
 unchanged by this UI update.
+
+## Multiple employees and repeated visits
+
+One site login can be shared by multiple employees taking turns to scan and confirm.
+A successful punch now offers **Scan next person**, which starts a new capture
+session and cancels the prior result's return timer. The next employee must still
+confirm their own name and IN/OUT direction. Camera capture is sequential.
+
+The existing backend already supports the same employee punching IN → OUT → IN
+→ OUT at one site in a day. An API regression verifies two employees doing this on
+one site login: 09:00–12:00 and 13:00–16:00 produce six worked hours per employee,
+not seven. The existing two-minute accidental-rescan guard remains in place and
+is per employee; it does not impose a delay between different employees. Repeated
+requests and competing confirmations keep their duplicate protection.
+
+Backend tests use an isolated local test database and a mocked face service. No
+production attendance records or server rules were changed.
 
 ## Deployment
 

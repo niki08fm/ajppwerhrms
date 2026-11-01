@@ -255,6 +255,30 @@ describe('Identify, then confirm', () => {
   });
 });
 
+describe('Shared site device and repeat visits', () => {
+  it('records two employees and two visits each on one site login, counting only time inside', async () => {
+    const tablet = await tabletFor('ALPHA');
+    const directions = [];
+    for (const face of [FACE.A, FACE.B]) directions.push((await punch(tablet, face)).direction);
+    at(180); // Leave at noon.
+    for (const face of [FACE.A, FACE.B]) directions.push((await punch(tablet, face)).direction);
+    at(60); // Return at 13:00.
+    for (const face of [FACE.A, FACE.B]) directions.push((await punch(tablet, face)).direction);
+    at(180); // Leave again at 16:00.
+    for (const face of [FACE.A, FACE.B]) directions.push((await punch(tablet, face)).direction);
+    expect(directions).toEqual(['IN', 'IN', 'OUT', 'OUT', 'IN', 'IN', 'OUT', 'OUT']);
+    const date = new Date(clock.getTime() + 330 * 60_000).toISOString().slice(0, 10);
+    const register = await tablet.get('/api/v1/tablet/attendance/day').query({ date });
+    expect(register.status).toBe(200);
+    for (const employeeId of [f.employees.A, f.employees.B]) {
+      const punches = await prisma.punch.findMany({ where: { employee_id: employeeId, work_date: new Date(date) }, orderBy: { punched_at: 'asc' } });
+      expect(punches.map((p) => p.direction)).toEqual(['IN', 'OUT', 'IN', 'OUT']);
+      expect(new Set(punches.map((p) => p.site_id))).toEqual(new Set([sites.ALPHA]));
+      expect(register.body.data.rows.find((r) => r.id === employeeId)).toMatchObject({ punches_in: 2, punches_out: 2, worked_min: 360, on_site_now: false });
+    }
+  });
+});
+
 describe('Duplicates', () => {
   it('double punch-in is refused: two sessions identified before either confirmed', async () => {
     const t1 = await tabletFor('ALPHA');

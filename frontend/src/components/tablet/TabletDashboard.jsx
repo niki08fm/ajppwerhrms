@@ -15,6 +15,8 @@ import { EmptyState, ErrorState, Notice, SkeletonRows } from '@/components/state
 import { TabletRegisters } from './TabletRegisters';
 import { TabletTransfers } from './TabletTransfers';
 import { TabletManualAttendance } from './TabletManualAttendance';
+import { useCompactSiteView } from './useCompactSiteView';
+import { PhoneAttendanceHome, PhoneSiteNavigation, PhoneSiteTools } from './PhoneSiteWorkspace';
 
 const TABS = [
   { value: 'today', label: 'Today' },
@@ -30,7 +32,11 @@ const validDate = (value, today) => /^\d{4}-\d{2}-\d{2}$/.test(value) && value >
 
 /** A site session has its own workspace; no admin links or employee profile links. */
 export function TabletDashboard({ site, online, onPunch, onRegister, onSignOut }) {
+  const compact = useCompactSiteView();
+  const [phoneMore, setPhoneMore] = useState(false);
+  const more = compact && phoneMore;
   const [tab, setTab] = useState('today');
+  const chooseView = (next) => { setPhoneMore(false); setTab(next); };
   const [date, setDate] = useState(localToday);
   const [ym, setYm] = useState(() => localToday().slice(0, 7));
   const [department, setDepartment] = useState(null);
@@ -55,13 +61,13 @@ export function TabletDashboard({ site, online, onPunch, onRegister, onSignOut }
   const month = useQuery({
     queryKey: ['tablet-month', site.id, ym],
     queryFn: () => api.get('/tablet/attendance/month', { ym }).then((r) => r.data),
-    enabled: online && (tab === 'month' || (tab === 'today' && showMonth)),
+    enabled: online && !more && (tab === 'month' || (!compact && tab === 'today' && showMonth)),
     refetchInterval: ym === today.slice(0, 7) ? 60_000 : false,
   });
   const day = useQuery({
     queryKey: ['tablet-day', site.id, date],
     queryFn: () => api.get('/tablet/attendance/day', { date }).then((r) => r.data),
-    enabled: online && tab === 'day',
+    enabled: online && !more && tab === 'day',
     refetchInterval: date === today ? 60_000 : false,
   });
   const openDay = (next) => {
@@ -84,29 +90,29 @@ export function TabletDashboard({ site, online, onPunch, onRegister, onSignOut }
               <p className="text-[12px] text-muted-foreground">{site.code} · Site workspace</p>
             </div>
           </div>
-          <Button variant="ghost" size="sm" className="shrink-0" onClick={onSignOut}><LogOut /> Sign out</Button>
+          <Button variant="ghost" size="sm" className="hidden shrink-0 md:inline-flex" onClick={onSignOut}><LogOut /> Sign out</Button>
         </div>
       </header>
 
-      <main className="mx-auto flex w-full min-w-0 max-w-[1200px] flex-col gap-4 px-3 py-4 sm:gap-5 sm:px-6 sm:py-6">
+      <main className={cn('mx-auto flex w-full min-w-0 max-w-[1200px] flex-col gap-4 px-3 py-4 sm:gap-5 sm:px-6 sm:py-6', compact && 'site-phone-main')}>
         {!online && tab !== 'manual' && <Notice tone="warning" icon={<CloudOff className="size-4 shrink-0" />}>Offline. Keep attendance in the paper register. Enter and send it for HR review when connected.</Notice>}
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h2 className="font-display text-2xl font-semibold sm:text-3xl">{TABS.find((t) => t.value === tab)?.label}</h2>
+            <h2 className="font-display text-2xl font-semibold sm:text-3xl">{more ? 'Site tools' : compact && tab === 'today' ? 'Attendance' : TABS.find((t) => t.value === tab)?.label}</h2>
             <p className="mt-1 text-sm text-muted-foreground">{fullDate(tab === 'manual' ? manualToday : today)}</p>
           </div>
-          {tab !== 'today' && <div className="grid w-full grid-cols-1 gap-2 min-[380px]:grid-cols-2 sm:flex sm:w-auto sm:flex-wrap">
+          {!compact && tab !== 'today' && <div className="grid w-full grid-cols-1 gap-2 min-[380px]:grid-cols-2 sm:flex sm:w-auto sm:flex-wrap">
             <Button size="lg" variant="outline" disabled={!online} onClick={onRegister}><UserPlus /> Register face</Button>
             <Button size="lg" disabled={!online} onClick={onPunch}><ScanFace /> Punch in / out</Button>
           </div>}
         </div>
 
-        <label className="flex flex-col gap-1.5 text-sm font-medium md:hidden">
-          Site view
-          <Select aria-label="Site view" value={tab} onChange={(e) => setTab(e.target.value)}>
-            {TABS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+        {compact && !more && ['day', 'month'].includes(tab) && <label className="flex flex-col gap-1.5 text-sm font-medium">
+          Register view
+          <Select aria-label="Register view" value={tab} onChange={(e) => chooseView(e.target.value)}>
+            <option value="day">Daily register</option><option value="month">Monthly register</option>
           </Select>
-        </label>
+        </label>}
         <div role="tablist" aria-label="Site views" className="hidden gap-1 md:flex overflow-x-auto border-b scrollbar-thin">
           {TABS.map((t, index) => (
             <button key={t.value} id={`site-tab-${t.value}`} type="button" role="tab" aria-selected={tab === t.value} aria-controls={`site-panel-${t.value}`} onClick={() => setTab(t.value)}
@@ -123,8 +129,10 @@ export function TabletDashboard({ site, online, onPunch, onRegister, onSignOut }
           ))}
         </div>
 
-        <section id={`site-panel-${tab}`} role="tabpanel" aria-label={TABS.find((t) => t.value === tab)?.label} className="min-w-0">
-          {tab === 'today' && (
+        {more && <PhoneSiteTools online={online} summary={summary} onView={chooseView} onRegister={onRegister} onPeople={() => { setDepartment(null); setShowPeople(true); }} onDepartment={setDepartment} onSignOut={onSignOut} />}
+        <section hidden={more} id={`site-panel-${tab}`} role="tabpanel" aria-label={TABS.find((t) => t.value === tab)?.label} className="min-w-0">
+          {compact && tab === 'today' && !more && <PhoneAttendanceHome online={online} summary={summary} onPunch={onPunch} onRegister={onRegister} onPeople={() => { setDepartment(null); setShowPeople(true); }} />}
+          {!compact && tab === 'today' && (
             <div className="flex flex-col gap-5">
               <Card className="flex flex-col justify-between gap-6 border-primary/20 bg-primary/[0.035] p-5 sm:flex-row sm:items-center sm:p-6">
                 <div className="flex items-center gap-4">
@@ -175,13 +183,14 @@ export function TabletDashboard({ site, online, onPunch, onRegister, onSignOut }
             </div>
           )}
 
-          {tab === 'day' && <TabletRegisters mode="day" query={day} today={today} selector={<DayPicker date={date} today={today} onChange={setDate} />} />}
-          {tab === 'month' && <TabletRegisters mode="month" query={month} today={today} selector={<MonthPicker ym={ym} today={today} onChange={setYm} />} />}
+          {!more && tab === 'day' && <TabletRegisters mode="day" query={day} today={today} selector={<DayPicker date={date} today={today} onChange={setDate} />} />}
+          {!more && tab === 'month' && <TabletRegisters mode="month" query={month} today={today} selector={<MonthPicker ym={ym} today={today} onChange={setYm} />} />}
           {tab === 'transfers' && <TabletTransfers site={site} today={today} online={online} />}
-          <div hidden={tab !== 'manual'}><TabletManualAttendance site={site} today={manualToday} online={online} active={tab === 'manual'} /></div>
+          <div hidden={tab !== 'manual'}><TabletManualAttendance site={site} today={manualToday} online={online} active={!more && tab === 'manual'} /></div>
         </section>
       </main>
 
+      {compact && <PhoneSiteNavigation tab={tab} more={more} onAttendance={() => chooseView('today')} onRegisters={() => chooseView(tab === 'month' ? 'month' : 'day')} onMore={() => setPhoneMore(true)} />}
       <Dialog open={!!department || showPeople} onOpenChange={(open) => { if (!open) { setDepartment(null); setShowPeople(false); } }} className="site-workspace site-dialog" title={department?.name ?? 'People on site'} description="People currently punched in at this site.">
         {selectedPeople.length ? <PeopleList people={selectedPeople} /> : <EmptyState title="Nobody is on site in this department" body="This headcount updates when people punch in or out." />}
       </Dialog>

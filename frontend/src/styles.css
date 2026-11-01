@@ -381,3 +381,12 @@
     padding: 1rem;
   }
 }
+
+.site-workspace main.site-phone-main {
+  padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
+}
+.site-phone-navigation {
+  padding-bottom: max(0.25rem, env(safe-area-inset-bottom));
+  padding-left: max(0.5rem, env(safe-area-inset-left));
+  padding-right: max(0.5rem, env(safe-area-inset-right));
+}
