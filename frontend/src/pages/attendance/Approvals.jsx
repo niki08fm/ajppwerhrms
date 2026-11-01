@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { createContext, useContext, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Download, ImageOff, Search, X } from 'lucide-react';
@@ -91,7 +91,7 @@ export default function Approvals() {
   const decided = (it, message) => {
     const i = shown.findIndex((x) => x.id === it.id);
     const rest = shown.filter((x) => x.id !== it.id);
-    setSel(rest[Math.min(i, rest.length - 1)]?.id ?? null);
+    setSel((selected) => selected === it.id ? rest[Math.min(i, rest.length - 1)]?.id ?? null : selected);
     setDone((d) => new Set(d).add(it.id));
     toast.success(message);
     // Refresh the server's waiting-list cache before the dashboard asks for its count.
@@ -293,7 +293,11 @@ function Row({ it, on, today, onPick }) {
 
 // ─── The decision panel ──────────────────────────────────────────────────────
 
+const DecisionFeedback = createContext(null);
+
 function Detail({ it, today, can, onDecided, onOpenDay }) {
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
   const k = KINDS[it.kind];
   const e = it.employee;
   const allowed = it.kind === 'leave' ? can('leave.write') : can('attendance.write');
@@ -309,14 +313,17 @@ function Detail({ it, today, can, onDecided, onOpenDay }) {
         </div>
         <Chip tone={k.tone}>{k.one}</Chip>
       </div>
-      <div className="flex flex-col gap-4 px-5 py-4">
-        {it.kind === 'face' && <FaceDecision it={it} allowed={allowed} canReadPeople={can('people.read')} onDecided={onDecided} />}
-        {(it.kind === 'miss' || it.kind === 'short') && <DayDecision it={it} allowed={allowed} onDecided={onDecided} onOpenDay={onOpenDay} />}
-        {it.kind === 'move' && <MoveDecision it={it} allowed={allowed} onDecided={onDecided} />}
-        {it.kind === 'transfer' && <TransferDecision it={it} allowed={allowed} onDecided={onDecided} />}
-        {it.kind === 'leave' && <LeaveDecision it={it} allowed={allowed} onDecided={onDecided} />}
-        {!allowed && <p className="text-[13px] text-muted-foreground">You can see this but not decide it. Someone with permission has to.</p>}
-      </div>
+      <DecisionFeedback.Provider value={{ setError, setBusy }}>
+        {error && <p role="alert" className="px-5 pt-4 text-sm text-destructive">{errorMessage(error)}</p>}
+        <fieldset disabled={busy} className="flex min-w-0 flex-col gap-4 px-5 py-4">
+          {it.kind === 'face' && <FaceDecision it={it} allowed={allowed} canReadPeople={can('people.read')} onDecided={onDecided} />}
+          {(it.kind === 'miss' || it.kind === 'short') && <DayDecision it={it} allowed={allowed} onDecided={onDecided} onOpenDay={onOpenDay} />}
+          {it.kind === 'move' && <MoveDecision it={it} allowed={allowed} onDecided={onDecided} />}
+          {it.kind === 'transfer' && <TransferDecision it={it} allowed={allowed} onDecided={onDecided} />}
+          {it.kind === 'leave' && <LeaveDecision it={it} allowed={allowed} onDecided={onDecided} />}
+          {!allowed && <p className="text-[13px] text-muted-foreground">You can see this but not decide it. Someone with permission has to.</p>}
+        </fieldset>
+      </DecisionFeedback.Provider>
     </div>
   );
 }
@@ -341,7 +348,14 @@ function Note({ value, onChange, placeholder = 'Note for the record (optional)' 
 const why = (note, fallback) => (note.trim().length >= 3 ? note.trim() : fallback);
 
 function useDecide(fn, onSuccess) {
-  return useMutation({ mutationFn: fn, onSuccess, onError: (err) => toast.error(errorMessage(err)) });
+  const feedback = useContext(DecisionFeedback);
+  return useMutation({
+    mutationFn: fn,
+    onMutate: () => { feedback?.setError(null); feedback?.setBusy(true); },
+    onSuccess,
+    onError: (err) => feedback?.setError(err),
+    onSettled: () => feedback?.setBusy(false),
+  });
 }
 
 /** The camera could not confirm who punched. Approving writes the punch at the time of the attempt. */

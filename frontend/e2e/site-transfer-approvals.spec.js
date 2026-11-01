@@ -15,7 +15,7 @@ async function mockApprovals(page, { readOnly = false, failDecision = false } = 
   await page.route('**/api/v1/**', async (route) => {
     const path = new URL(route.request().url()).pathname.replace('/api/v1', '');
     let data = [];
-    if (path === '/auth/me') data = { name: 'HR Admin', role: 'HR Admin', email: 'hr@example.test', permissions: ['attendance.read', ...(readOnly ? [] : ['attendance.write'])] };
+    if (path === '/auth/me') data = { name: 'HR Admin', role: 'HR Admin', email: 'hr@example.test', permissions: ['people.read', 'attendance.read', ...(readOnly ? [] : ['attendance.write'])] };
     else if (path === '/dashboard/people') {
       state.dashboardReads++;
       data = { approvals: { total: state.items.length } };
@@ -73,7 +73,7 @@ test('a failed transfer decision keeps the request available for review', async 
   const state = await mockApprovals(page, { failDecision: true });
   await page.goto('/approvals?kind=transfer');
   await page.getByRole('button', { name: 'Approve transfer' }).click();
-  await expect(page.getByText('This transfer has already been decided.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('alert').filter({ hasText: 'This transfer has already been decided.' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Approve transfer' })).toBeVisible();
   expect(state.items).toHaveLength(1);
 });

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { addMonths } from '@ajpwer/shared';
 import { api } from '@/services/api';
+import { useSession } from '@/context/SessionContext';
 import { useLookups } from '@/hooks/useLookups';
 import { inr, longDate, monthLabel } from '@/utils';
 import { Chip, EmptyState, ErrorState, SkeletonRows } from '@/components/states';
@@ -15,6 +16,7 @@ import { GrantDialog } from '../../../pages/payroll/Money';
  * capped so pay never goes too low; whatever is left is recovered in F&F.
  */
 export function LoansTab({ e }) {
+  const { can } = useSession();
   const { data: lk } = useLookups();
   const thisMonth = (lk?.today ?? new Date().toISOString()).slice(0, 7);
   const [granting, setGranting] = useState(null);
@@ -24,13 +26,13 @@ export function LoansTab({ e }) {
 
   return (
     <div className="flex flex-col gap-4">
-      {!e.read_only && (
+      {!e.read_only && can('salary.write') && (
         <div className="flex justify-end gap-2">
           <Button variant="outline" size="sm" onClick={() => setGranting('LOAN')}>
-            Give loan
+            Record loan
           </Button>
           <Button size="sm" onClick={() => setGranting('ADVANCE')}>
-            Give advance
+            Record advance
           </Button>
         </div>
       )}

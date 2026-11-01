@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { MoreHorizontal, Plus, Printer } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, errorMessage } from '@/services/api';
+import { useSession } from '@/context/SessionContext';
 import { exitName, longDate, monthLabel, toPaise } from '@/utils';
 import { Money, Mono, PageHeader } from '@/components/bits';
 import { Chip, ErrorState, Notice, SeverityChip, SkeletonBlock } from '@/components/states';
@@ -28,6 +29,7 @@ export function fnfStatus(s) {
  * profile's Exit tab.
  */
 export function SettlementPanel({ employeeId, print }) {
+  const { can } = useSession();
   const qc = useQueryClient();
   const q = useSettlement(employeeId);
   const [decision, setDecision] = useState({ decision: 'PURSUE', note: '' });
@@ -38,7 +40,6 @@ export function SettlementPanel({ employeeId, print }) {
       qc.invalidateQueries({ queryKey: ['settlement', employeeId] });
       qc.invalidateQueries({ queryKey: ['exits'] });
     },
-    onError: (e) => toast.error(errorMessage(e)),
   });
   const [ask, setAsk] = useState(null);
   const adjust = useMutation({
@@ -46,9 +47,8 @@ export function SettlementPanel({ employeeId, print }) {
     onSuccess: () => {
       toast.success('Settlement changed and worked out again');
       setAsk(null);
-      for (const key of [['settlement', employeeId], ['exits'], ['exit', employeeId]]) qc.invalidateQueries({ queryKey: key });
+      for (const key of [['settlement', employeeId], ['exits'], ['exit', employeeId], ['payroll-fnf'], ['payroll-preview'], ['payroll-summary'], ['payroll-issues']]) qc.invalidateQueries({ queryKey: key });
     },
-    onError: (e) => toast.error(errorMessage(e)),
   });
   if (q.isLoading) return <SkeletonBlock className="h-96" />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
@@ -60,7 +60,7 @@ export function SettlementPanel({ employeeId, print }) {
   const totalD = r?.total_deductions ?? d.settlement?.total_deductions ?? 0;
   const net = r?.net ?? d.settlement?.net ?? 0;
   // HR can change it while live, until the payroll it is processed in moves past its F&F step.
-  const editable = !print && !d.frozen && !d.locked;
+  const editable = !print && !d.frozen && !d.locked && can('payroll.run') && !adjust.isPending && !q.isFetching;
   const lineMenu = (l) => {
     const items = [];
     if (l.switchable) items.push(l.excluded ? { label: 'Switch back on', onSelect: () => adjust.mutate({ action: 'INCLUDE', code: l.code }) } : { label: 'Switch off…', onSelect: () => setAsk({ action: 'EXCLUDE', code: l.code, title: `Switch off ${l.name}` }) });
@@ -171,6 +171,8 @@ export function SettlementPanel({ employeeId, print }) {
 
   return (
     <div className="flex flex-col gap-4">
+      {q.isFetching && <p role="status" className="text-sm text-muted-foreground">Updating settlement…</p>}
+      {adjust.isError && !ask && <p role="alert" className="text-sm text-destructive">{errorMessage(adjust.error)}</p>}
       {editable && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-3">
           <div className="min-w-0">
@@ -201,16 +203,17 @@ export function SettlementPanel({ employeeId, print }) {
         </Card>
       )}
       {statement}
-      {r && r.net < 0 && d.settlement_id && (
+      {r && r.net < 0 && d.settlement_id && can('payroll.pay') && (
         <Card>
           <CardHeader title="Recoverable amount" description="A negative settlement never goes into a bank file. Decide deliberately whether to write it off or pursue it." />
           <CardBody className="grid gap-3 sm:grid-cols-3">
             {d.recoverable_decision && <Notice tone="info">Current decision: {d.recoverable_decision === 'WRITE_OFF' ? 'write off' : 'pursue'}.</Notice>}
-            <Select value={decision.decision} onChange={(e) => setDecision({ ...decision, decision: e.target.value })} aria-label="Decision">
+            <Select disabled={decide.isPending} value={decision.decision} onChange={(e) => setDecision({ ...decision, decision: e.target.value })} aria-label="Decision">
               <option value="PURSUE">Pursue recovery</option>
               <option value="WRITE_OFF">Write off</option>
             </Select>
-            <Textarea className="sm:col-span-2" placeholder="Why, and who approved it" value={decision.note} onChange={(e) => setDecision({ ...decision, note: e.target.value })} />
+            <Textarea disabled={decide.isPending} className="sm:col-span-2" placeholder="Why, and who approved it" value={decision.note} onChange={(e) => setDecision({ ...decision, note: e.target.value })} />
+            {decide.isError && <p role="alert" className="sm:col-span-3 text-sm text-destructive">{errorMessage(decide.error)}</p>}
             <div className="flex justify-end sm:col-span-3">
               <Button disabled={decision.note.trim().length < 8} loading={decide.isPending} onClick={() => decide.mutate()}>
                 Record decision
@@ -219,7 +222,7 @@ export function SettlementPanel({ employeeId, print }) {
           </CardBody>
         </Card>
       )}
-      {ask && <AdjustDialog ask={ask} busy={adjust.isPending} onClose={() => setAsk(null)} onSave={(body) => adjust.mutate(body)} />}
+      {ask && <AdjustDialog key={`${ask.action}:${ask.code ?? ask.kind}`} ask={ask} busy={adjust.isPending} error={adjust.isError ? adjust.error : null} onClose={() => { setAsk(null); adjust.reset(); }} onSave={(body) => adjust.mutate(body)} />}
     </div>
   );
 }
@@ -266,7 +269,7 @@ export default function SettlementStatement({ print }) {
 }
 
 /** One change to a settlement that needs details and a reason. */
-function AdjustDialog({ ask, busy, onClose, onSave }) {
+function AdjustDialog({ ask, busy, error, onClose, onSave }) {
   const [f, setF] = useState({ days: ask.days ?? '', name: '', amount: '', reason: '' });
   const body =
     ask.action === 'SET_DAYS'
@@ -274,24 +277,25 @@ function AdjustDialog({ ask, busy, onClose, onSave }) {
       : ask.action === 'ADD_LINE'
         ? { action: 'ADD_LINE', kind: ask.kind, name: f.name, amount: toPaise(f.amount), reason: f.reason }
         : { action: 'EXCLUDE', code: ask.code, reason: f.reason };
-  const ok = f.reason.trim().length >= 8 && (ask.action !== 'SET_DAYS' || f.days !== '') && (ask.action !== 'ADD_LINE' || (f.name.trim().length >= 2 && toPaise(f.amount) > 0));
+  const ok = f.reason.trim().length >= 8 && (ask.action !== 'SET_DAYS' || (f.days !== '' && Number.isFinite(Number(f.days)) && Number(f.days) >= 0)) && (ask.action !== 'ADD_LINE' || (f.name.trim().length >= 2 && toPaise(f.amount) > 0));
   return (
     <Dialog
       open
-      onOpenChange={(o) => !o && onClose()}
+      onOpenChange={(o) => !o && !busy && onClose()}
       title={ask.title}
       footer={
         <>
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="outline" disabled={busy} onClick={onClose}>
             Cancel
           </Button>
           <Button loading={busy} disabled={!ok} onClick={() => onSave(body)}>
-            Save
+            Save settlement change
           </Button>
         </>
       }
     >
-      <div className="grid gap-3">
+      {error && <p role="alert" className="mb-3 text-sm text-destructive">{errorMessage(error)}</p>}
+      <fieldset disabled={busy} className="grid gap-3">
         {ask.action === 'SET_DAYS' && <Field label="Days">{(id) => <Input id={id} type="number" step="0.25" min="0" value={f.days} onChange={(e) => setF({ ...f, days: e.target.value })} />}</Field>}
         {ask.action === 'ADD_LINE' && (
           <>
@@ -304,7 +308,7 @@ function AdjustDialog({ ask, busy, onClose, onSave }) {
         <Field label="Reason" hint="At least eight characters. It shows on the statement and in the audit log.">
           {(id) => <Textarea id={id} value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} />}
         </Field>
-      </div>
+      </fieldset>
     </Dialog>
   );
 }

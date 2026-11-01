@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatINR, istDate } from '@ajpwer/shared';
+import { useSession } from '@/context/SessionContext';
 import { api, errorMessage } from '@/services/api';
 import { useDebounced } from '@/hooks';
 import { toPaise } from '@/utils';
@@ -13,6 +15,7 @@ import { Field, Input, MoneyInput, Select } from '@/components/ui/form';
 import { Dialog } from '@/components/ui/overlay';
 
 export default function MoneyPage() {
+  const { can } = useSession();
   const [q, setQ] = useState('');
   const dq = useDebounced(q, 250);
   const [status, setStatus] = useState('ACTIVE');
@@ -26,7 +29,7 @@ export default function MoneyPage() {
       <PageHeader
         title="Advances and loans"
         description="Record loans and advances, set repayments and track the balance recovered through payroll."
-        actions={
+        actions={can('salary.write') && (
           <>
             <Button variant="outline" onClick={() => setGranting('ADVANCE')}>
               <Plus /> New advance
@@ -35,13 +38,13 @@ export default function MoneyPage() {
               <Plus /> New loan
             </Button>
           </>
-        }
+        )}
       />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-        <Stat label="Outstanding" value={<M value={r.data?.totals.outstanding ?? 0} />} />
-        <Stat label="Active" value={r.data?.totals.active ?? 0} />
-        <Stat label="Carried forward" value={<M value={(r.data?.carries ?? []).reduce((a, c) => a + c.amount, 0)} />} sub={`${r.data?.carries.length ?? 0} people`} />
+        <Stat label="Outstanding" value={r.data ? <M value={r.data.totals.outstanding} /> : '—'} />
+        <Stat label="Active" value={r.data?.totals.active ?? '—'} />
+        <Stat label="Carried forward" value={r.data ? <M value={r.data.carries.reduce((a, c) => a + c.amount, 0)} /> : '—'} sub={r.data ? `${r.data.carries.length} people` : undefined} />
       </div>
       <Card>
         <div className="flex flex-wrap gap-2 border-b px-3 py-2">
@@ -57,7 +60,7 @@ export default function MoneyPage() {
         ) : r.isError ? (
           <ErrorState error={r.error} onRetry={() => r.refetch()} />
         ) : !r.data.rows.length ? (
-          <EmptyState title="Nothing lent" body="Grant an advance or a loan to someone; it is recovered through payroll." />
+          <EmptyState title={dq ? 'No matching records' : status === 'ACTIVE' ? 'No repayments in progress' : 'No records in this view'} body={dq ? 'Try another employee name or code, or change the status filter.' : 'Use the status filter to see other records. New loans and advances appear here once recorded.'} />
         ) : (
           <div className="overflow-x-auto"><table className="data-table w-full">
             <thead>
@@ -128,45 +131,53 @@ export default function MoneyPage() {
 export function GrantDialog({ type, employee, onClose }) {
   const qc = useQueryClient();
   const people = useQuery({ queryKey: ['people', 'active-money'], queryFn: () => api.get('/employees', { 'filter[status]': 'ACTIVE,NOTICE', limit: 200 }).then((r) => r.data), enabled: !employee });
-  const today = new Date().toISOString().slice(0, 10);
+  const today = istDate(new Date());
   const [f, setF] = useState({ employee_id: employee?.id ?? '', amount: '', months: '6', instalment: '', reason: '', loan_type: 'Personal loan', date: today });
-  const emi = toPaise(f.amount) && Number(f.months) ? Math.ceil(toPaise(f.amount) / Number(f.months)) : 0;
+  const amount = toPaise(f.amount);
+  const instalment = toPaise(f.instalment);
+  const months = Number(f.months);
+  const validMonths = Number.isInteger(months) && months >= 1 && months <= 120;
+  const validInstalment = instalment > 0 && instalment <= amount;
+  const valid = !!f.employee_id && !!f.date && amount > 0 && (type === 'LOAN' ? validMonths && !!f.loan_type.trim() && f.loan_type.trim().length <= 40 : validInstalment && f.reason.trim().length >= 3 && f.reason.trim().length <= 300);
+  const emi = amount > 0 && validMonths ? Math.ceil(amount / months) : 0;
   const save = useMutation({
     mutationFn: () =>
       type === 'LOAN'
-        ? api.post('/loans', { employee_id: f.employee_id, loan_type: f.loan_type, principal: toPaise(f.amount), months: Number(f.months), started_on: f.date })
-        : api.post('/advances', { employee_id: f.employee_id, amount: toPaise(f.amount), reason: f.reason, granted_on: f.date, instalment: toPaise(f.instalment) }),
+        ? api.post('/loans', { employee_id: f.employee_id, loan_type: f.loan_type.trim(), principal: toPaise(f.amount), months: Number(f.months), started_on: f.date })
+        : api.post('/advances', { employee_id: f.employee_id, amount: toPaise(f.amount), reason: f.reason.trim(), granted_on: f.date, instalment: toPaise(f.instalment) }),
     onSuccess: () => {
-      toast.success(type === 'LOAN' ? 'Loan granted' : 'Advance granted');
-      qc.invalidateQueries({ queryKey: ['advances-loans'] });
+      toast.success(type === 'LOAN' ? 'Loan recorded' : 'Advance recorded');
+      for (const key of ['advances-loans', 'settlement', 'payroll-preview', 'payroll-summary', 'payroll-issues', 'payroll-fnf']) qc.invalidateQueries({ queryKey: [key] });
       onClose();
     },
-    onError: (e) => toast.error(errorMessage(e)),
   });
   return (
     <Dialog
       open
-      onOpenChange={(o) => !o && onClose()}
+      onOpenChange={(o) => !o && !save.isPending && onClose()}
       title={type === 'LOAN' ? 'New loan' : 'New advance'}
+      description="Record the amount and monthly recovery through payroll. This does not transfer money to the employee."
       footer={
         <>
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="outline" disabled={save.isPending} onClick={onClose}>
             Cancel
           </Button>
-          <Button loading={save.isPending} disabled={!f.employee_id || !toPaise(f.amount) || (type === 'ADVANCE' && (!toPaise(f.instalment) || f.reason.length < 3))} onClick={() => save.mutate()}>
-            Grant
+          <Button loading={save.isPending} disabled={!valid} onClick={() => save.mutate()}>
+            {type === 'LOAN' ? 'Record loan' : 'Record advance'}
           </Button>
         </>
       }
     >
-      <div className="grid gap-3 sm:grid-cols-2">
+      {save.isError && <p role="alert" className="mb-3 text-sm text-destructive">{errorMessage(save.error)}{save.error?.code === 'NETWORK' && ' Check the records before trying again; the server may have received this request.'}</p>}
+      {!employee && people.isError && <ErrorState error={people.error} onRetry={() => people.refetch()} />}
+      <fieldset disabled={save.isPending} className="grid gap-3 sm:grid-cols-2">
         {employee ? (
           <p className="sm:col-span-2 text-[14px]">For {employee.name}</p>
         ) : (
           <Field label="Person" className="sm:col-span-2">
             {(id) => (
               <Select id={id} value={f.employee_id} onChange={(e) => setF({ ...f, employee_id: e.target.value })}>
-                <option value="">Choose…</option>
+                <option value="">{people.isLoading ? 'Loading employees…' : 'Choose an employee…'}</option>
                 {people.data?.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name} ({p.code})
@@ -178,22 +189,22 @@ export function GrantDialog({ type, employee, onClose }) {
         )}
         {type === 'LOAN' ? (
           <>
-            <Field label="Loan type">{(id) => <Input id={id} value={f.loan_type} onChange={(e) => setF({ ...f, loan_type: e.target.value })} />}</Field>
+            <Field label="Loan type">{(id) => <Input id={id} maxLength={40} value={f.loan_type} onChange={(e) => setF({ ...f, loan_type: e.target.value })} />}</Field>
             <Field label="Principal">{(id) => <MoneyInput id={id} value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} />}</Field>
-            <Field label="Months" hint={emi ? `EMI ₹${Math.round(emi / 100).toLocaleString('en-IN')}` : undefined}>
-              {(id) => <Input id={id} type="number" min={1} value={f.months} onChange={(e) => setF({ ...f, months: e.target.value })} />}
+            <Field label="Months" error={f.months && !validMonths ? 'Enter 1 to 120 whole months.' : undefined} hint={emi > 0 && validMonths ? `Monthly repayment ${formatINR(emi, { paise: true })}; the final instalment may be lower.` : undefined}>
+              {(id) => <Input id={id} type="number" min={1} max={120} step={1} value={f.months} onChange={(e) => setF({ ...f, months: e.target.value })} />}
             </Field>
             <Field label="First EMI month from">{(id) => <Input id={id} type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} />}</Field>
           </>
         ) : (
           <>
             <Field label="Amount">{(id) => <MoneyInput id={id} value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} />}</Field>
-            <Field label="Instalment per month">{(id) => <MoneyInput id={id} value={f.instalment} onChange={(e) => setF({ ...f, instalment: e.target.value })} />}</Field>
-            <Field label="Reason">{(id) => <Input id={id} value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} />}</Field>
+            <Field label="Instalment per month" error={f.instalment && !validInstalment ? 'Enter an amount greater than zero, up to the advance amount.' : undefined}>{(id) => <MoneyInput id={id} value={f.instalment} onChange={(e) => setF({ ...f, instalment: e.target.value })} />}</Field>
+            <Field label="Reason">{(id) => <Input id={id} maxLength={300} value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} />}</Field>
             <Field label="Granted on">{(id) => <Input id={id} type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} />}</Field>
           </>
         )}
-      </div>
+      </fieldset>
     </Dialog>
   );
 }

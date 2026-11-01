@@ -15,6 +15,7 @@ export function DataTable({
   onSort,
   onRowClick,
   selectable,
+  canSelectRow,
   selected,
   onSelectedChange,
   fetching,
@@ -30,12 +31,13 @@ export function DataTable({
       cs.unshift({
         id: '__select',
         header: () => {
-          const ids = rows.map(rowId);
+          const ids = rows.filter((r) => !canSelectRow || canSelectRow(r)).map(rowId);
           const all = ids.length > 0 && ids.every((id) => selected?.has(id));
           const some = ids.some((id) => selected?.has(id));
           return (
             <Checkbox
               label="Select all on this page"
+              disabled={!ids.length}
               checked={all ? true : some ? 'indeterminate' : false}
               onCheckedChange={(v) => {
                 const next = new Set(selected);
@@ -51,6 +53,7 @@ export function DataTable({
             <span onClick={(e) => e.stopPropagation()}>
               <Checkbox
                 label="Select row"
+                disabled={canSelectRow && !canSelectRow(ctx.row.original)}
                 checked={!!selected?.has(id)}
                 onCheckedChange={(v) => {
                   const next = new Set(selected);
@@ -65,7 +68,7 @@ export function DataTable({
       });
     }
     return cs;
-  }, [columns, selectable, selected, rows, rowId, onSelectedChange]);
+  }, [columns, selectable, canSelectRow, selected, rows, rowId, onSelectedChange]);
 
   const table = useReactTable({ data: rows, columns: defs, getCoreRowModel: getCoreRowModel(), manualSorting: true, getRowId: (r) => rowId(r) });
   const scrollRef = useRef(null);

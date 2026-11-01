@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, errorMessage } from '@/services/api';
+import { useSession } from '@/context/SessionContext';
 import { useDebounced, useKeysetList, useListParams, useNewFromUrl } from '@/hooks';
 import { opts, useLookups } from '@/hooks/useLookups';
 import { dateSpan, monthLabel } from '@/utils';
@@ -23,6 +24,8 @@ function useLeaveTypes() {
 }
 
 export default function Leave() {
+  const { can } = useSession();
+  const writable = can('leave.write');
   const lp = useListParams({ sort: '-from' });
   const nav = useNavigate();
   const { data: lk } = useLookups();
@@ -35,13 +38,12 @@ export default function Leave() {
   const list = useKeysetList(['leave'], '/leave', lp.apiParams, tab === 'requests');
   const decide = useMutation({
     mutationFn: ({ ids, decision }) => (ids.length === 1 ? api.post(`/leave/${ids[0]}/decide`, { decision }) : api.post('/leave/bulk-decide', { ids, decision })),
-    onSuccess: () => {
-      toast.success('Done');
+    onSuccess: (_, { ids, decision }) => {
+      toast.success(`${ids.length === 1 ? 'Leave request' : `${ids.length} leave requests`} ${decision === 'APPROVE' ? 'approved' : 'rejected'}`);
       setSelected(new Set());
       qc.invalidateQueries({ queryKey: ['leave'] });
-      qc.invalidateQueries({ queryKey: ['leave-balances'] });
+      for (const key of ['leave-balances', 'emp-leave', 'emp-attendance', 'approvals', 'dashboard']) qc.invalidateQueries({ queryKey: [key] });
     },
-    onError: (e) => toast.error(errorMessage(e)),
   });
   const filters = useMemo(
     () => [
@@ -73,12 +75,12 @@ export default function Leave() {
       header: '',
       align: 'right',
       cell: (r) =>
-        r.status === 'PENDING' ? (
+        writable && r.status === 'PENDING' ? (
           <span className="flex justify-end gap-1">
-            <Button size="sm" variant="outline" onClick={() => decide.mutate({ ids: [r.id], decision: 'REJECT' })}>
+            <Button size="sm" variant="outline" disabled={decide.isPending} onClick={() => decide.mutate({ ids: [r.id], decision: 'REJECT' })}>
               Reject
             </Button>
-            <Button size="sm" onClick={() => decide.mutate({ ids: [r.id], decision: 'APPROVE' })}>
+            <Button size="sm" disabled={decide.isPending} onClick={() => decide.mutate({ ids: [r.id], decision: 'APPROVE' })}>
               Approve
             </Button>
           </span>
@@ -89,14 +91,19 @@ export default function Leave() {
     <div>
       <PageHeader
         title="Leave"
-        description="Absences nobody applied for, and the missing half of half days, are paid from paid leave automatically while it lasts, up to its monthly limit. Every other kind — sick, maternity, paternity, bereavement and the rest — is recorded here by HR on the person's behalf and paid from its own balance."
-        actions={
+        description="Record leave for an employee, review pending requests and check balances."
+        actions={writable && (
           <Button onClick={() => setCreating(true)}>
             <Plus /> Record leave
           </Button>
-        }
+        )}
       />
 
+      {decide.isError && <p role="alert" className="my-3 text-sm text-destructive">{errorMessage(decide.error)}</p>}
+      <details className="mb-4 text-sm text-muted-foreground">
+        <summary className="cursor-pointer">How unrecorded absences are treated</summary>
+        <p className="mt-2 max-w-3xl">Unrecorded absences and the unworked half of half days use paid leave automatically, within the balance and monthly limit. Record sick leave, maternity leave and other leave types here so they use the correct policy and balance.</p>
+      </details>
       <TabsRoot value={tab} onValueChange={setTab}>
         <TabsList
           tabs={[
@@ -122,10 +129,10 @@ export default function Leave() {
             >
               {selected.size > 0 && (
                 <>
-                  <Button size="sm" variant="outline" onClick={() => decide.mutate({ ids: [...selected], decision: 'REJECT' })}>
+                  <Button size="sm" variant="outline" disabled={decide.isPending} onClick={() => decide.mutate({ ids: [...selected], decision: 'REJECT' })}>
                     Reject {selected.size}
                   </Button>
-                  <Button size="sm" onClick={() => decide.mutate({ ids: [...selected], decision: 'APPROVE' })}>
+                  <Button size="sm" disabled={decide.isPending} onClick={() => decide.mutate({ ids: [...selected], decision: 'APPROVE' })}>
                     Approve {selected.size}
                   </Button>
                 </>
@@ -148,7 +155,8 @@ export default function Leave() {
                 rowId={(r) => r.id}
                 sort={lp.sort}
                 onSort={lp.toggleSort}
-                selectable
+                selectable={writable}
+                canSelectRow={(r) => r.status === 'PENDING' && !decide.isPending}
                 selected={selected}
                 onSelectedChange={setSelected}
                 fetching={list.isFetching && !list.isLoading}
@@ -171,7 +179,7 @@ export default function Leave() {
           {tab === 'balances' && <Balances />}
         </TabsContent>
       </TabsRoot>
-      {creating && <RecordLeave onClose={() => setCreating(false)} />}
+      {creating && writable && <RecordLeave onClose={() => setCreating(false)} />}
     </div>
   );
 }
@@ -373,6 +381,10 @@ function Adjust({ employee, onClose }) {
 /** Record leave for anyone, or — with `employee` — for that one person (from their profile). */
 export function RecordLeave({ onClose, employee, leaveType }) {
   const qc = useQueryClient();
+  const [recorded, setRecorded] = useState(null);
+  const refresh = () => {
+    for (const key of ['leave', 'leave-balances', 'emp-leave', 'emp-attendance', 'approvals', 'dashboard']) qc.invalidateQueries({ queryKey: [key] });
+  };
   const people = useQuery({ queryKey: ['people', 'active-leave'], queryFn: () => api.get('/employees', { 'filter[status]': 'ACTIVE,NOTICE', limit: 200 }).then((r) => r.data), enabled: !employee });
   const [f, setF] = useState({ employee_id: employee?.id ?? '', leave_type: leaveType ?? '', from_date: '', to_date: '', half: false, reason: '', approve: true });
   const types = useQuery({
@@ -388,49 +400,53 @@ export function RecordLeave({ onClose, employee, leaveType }) {
     queryKey: ['leave-preview', body],
     queryFn: () => api.post('/leave/preview', body).then((r) => r.data),
     enabled: ready,
-    placeholderData: (p) => p,
   });
   const save = useMutation({
     mutationFn: async () => {
-      const r = await api.post('/leave', body);
+      const r = recorded ?? await api.post('/leave', body);
+      setRecorded(r);
+      refresh();
       if (f.approve) await api.post(`/leave/${r.data.id}/decide`, { decision: 'APPROVE' });
       return r;
     },
     onSuccess: (r) => {
       toast.success(r.warnings?.length ? `Leave recorded. ${r.warnings[0]}` : 'Leave recorded');
-      qc.invalidateQueries({ queryKey: ['leave'] });
-      qc.invalidateQueries({ queryKey: ['leave-balances'] });
-      qc.invalidateQueries({ queryKey: ['emp-leave'] });
-      qc.invalidateQueries({ queryKey: ['emp-attendance'] });
+      refresh();
       onClose();
     },
-    onError: (e) => toast.error(errorMessage(e)),
   });
   const chosen = types.data?.find((t) => t.code === type);
-  const c = ready ? check.data : null;
+  const c = ready && !check.isFetching && !check.isError ? check.data : null;
+  const previewReady = ready && !!c && !c.errors?.length;
   return (
     <Dialog
       open
-      onOpenChange={(o) => !o && onClose()}
+      onOpenChange={(o) => !o && !save.isPending && onClose()}
       title="Record leave"
-      description={employee ? `For ${employee.name}. Choose from the leave types in their pay group.` : "Choose from the leave types in the person's pay group. Absences nobody records are paid from paid leave automatically."}
+      description={employee ? `For ${employee.name}. Check the dates and paid leave balance before recording.` : "Choose an employee, then check their dates and leave balance."}
       footer={
         <>
-          <Button variant="outline" onClick={onClose}>
-            Cancel
+          <Button variant="outline" disabled={save.isPending} onClick={onClose}>
+            {recorded ? 'Close for now' : 'Cancel'}
           </Button>
-          <Button loading={save.isPending} disabled={!ready || !!c?.errors?.length} onClick={() => save.mutate()}>
-            Save
+          <Button loading={save.isPending} disabled={!recorded && !previewReady} onClick={() => save.mutate()}>
+            {recorded ? 'Retry approval' : f.approve ? 'Record and approve' : 'Record leave'}
           </Button>
         </>
       }
     >
-      <div className="grid gap-3 sm:grid-cols-2">
+      {recorded && save.isError && <Notice tone="warning">Leave has been recorded. Approval is still unconfirmed. Retry approval, or close this form and check the request in Approvals.</Notice>}
+      {save.isError && <p role="alert" className="mb-3 text-sm text-destructive">{errorMessage(save.error)}{save.error?.code === 'NETWORK' && !recorded && ' Check the leave list before trying again; the server may have recorded this request.'}</p>}
+      {!employee && people.isError && <ErrorState error={people.error} onRetry={() => people.refetch()} />}
+      {types.isError && <ErrorState error={types.error} onRetry={() => types.refetch()} />}
+      {ready && check.isError && !recorded && <ErrorState error={check.error} onRetry={() => check.refetch()} />}
+      {ready && check.isFetching && !recorded && <p role="status" className="mb-3 text-sm text-muted-foreground">Checking dates and leave balance…</p>}
+      <fieldset disabled={save.isPending || !!recorded} className="grid gap-3 sm:grid-cols-2">
         {!employee && (
         <Field label="Person" className="sm:col-span-2">
           {(id) => (
             <Select id={id} value={f.employee_id} onChange={(e) => setF({ ...f, employee_id: e.target.value, leave_type: '' })}>
-              <option value="">Choose…</option>
+              <option value="">{people.isLoading ? 'Loading employees…' : 'Choose an employee…'}</option>
               {people.data?.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name} ({p.code})
@@ -479,7 +495,7 @@ export function RecordLeave({ onClose, employee, leaveType }) {
             )}
           </div>
         )}
-      </div>
+      </fieldset>
     </Dialog>
   );
 }
