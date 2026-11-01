@@ -6,11 +6,13 @@ a site login ID and forwards the signed-in user to this workspace.
 
 ## Layout and touch behavior
 
-- Phone navigation has three sections: **Attendance**, **Registers** and **More**.
+- Phone and tablet navigation (up to 1366 px wide) has three sections: **Attendance**, **Registers** and **More**.
   Attendance opens with one large punch action. Registers switches between daily
   and monthly views. More contains manual attendance, transfers, registration,
-  people on site, an expandable summary and sign out. Larger screens keep tabs
-  and the fuller dashboard. The phone home does not render charts.
+  people on site, an expandable summary and sign out. Wider desktop screens keep tabs
+  and the fuller dashboard. The touch home does not render charts; its reading
+  width stays comfortable on larger tablets. Tablet navigation buttons stay
+  grouped near the centre of the bottom bar.
 - Phones show daily attendance as employee cards with punch times, status, worked
   hours, overtime, late/early minutes and punch counts. Monthly cards show totals
   and expandable daily punches, including punch-out-only records. Wider devices
@@ -31,9 +33,10 @@ a site login ID and forwards the signed-in user to this workspace.
 
 ## Verification
 
-50 Chromium browser tests and 22 backend face-punch API tests passed against the actual frontend with fictional site,
-attendance and camera fixtures. Coverage includes 320 × 568 and 390 × 844 phones,
-768 × 1024 and 1024 × 768 tablets, 844 × 390 camera rotation, short phone/tablet
+52 Chromium browser tests passed against the actual frontend with fictional site,
+attendance and camera fixtures. The preceding shared-device update also passed
+22 backend face-punch API tests using an isolated database and mocked face service. Coverage includes 320 × 568 and 390 × 844 phones,
+768 × 1024, 1024 × 768 and 1366 × 1024 tablets, 844 × 390 camera rotation, short phone/tablet
 transfer dialogs, manual sheets, face registration review and confirmed punching.
 Checks cover page overflow, visible actions, register values, cancellation and
 site-scoped request boundaries. The production frontend build and whitespace

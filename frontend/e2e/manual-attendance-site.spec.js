@@ -42,7 +42,7 @@ async function mockSite(page, { loseResponse = false } = {}) {
 }
 async function openManual(page) {
   await page.goto('/tablet');
-  if (page.viewportSize().width < 768) {
+  if (page.viewportSize().width <= 1366) {
     await page.getByRole('navigation', { name: 'Site navigation' }).getByRole('button', { name: 'More', exact: true }).click();
     await page.getByRole('button', { name: 'Manual attendance', exact: true }).click();
   }
@@ -191,7 +191,7 @@ test('the manual view needs a connection before creating a paper entry and offer
   const state = await mockSite(page);
   await page.goto('/tablet'); await expect(page.getByRole('heading', { name: 'Alpha site', exact: true })).toBeVisible();
   await context.setOffline(true);
-  if (page.viewportSize().width < 768) {
+  if (page.viewportSize().width <= 1366) {
     await page.getByRole('navigation', { name: 'Site navigation' }).getByRole('button', { name: 'More', exact: true }).click();
     await page.getByRole('button', { name: 'Manual attendance', exact: true }).click();
   }

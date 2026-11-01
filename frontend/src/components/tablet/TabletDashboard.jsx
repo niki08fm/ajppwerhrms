@@ -16,7 +16,7 @@ import { TabletRegisters } from './TabletRegisters';
 import { TabletTransfers } from './TabletTransfers';
 import { TabletManualAttendance } from './TabletManualAttendance';
 import { useCompactSiteView } from './useCompactSiteView';
-import { PhoneAttendanceHome, PhoneSiteNavigation, PhoneSiteTools } from './PhoneSiteWorkspace';
+import { TouchAttendanceHome, TouchSiteNavigation, TouchSiteTools } from './TouchSiteWorkspace';
 
 const TABS = [
   { value: 'today', label: 'Today' },
@@ -32,11 +32,11 @@ const validDate = (value, today) => /^\d{4}-\d{2}-\d{2}$/.test(value) && value >
 
 /** A site session has its own workspace; no admin links or employee profile links. */
 export function TabletDashboard({ site, online, onPunch, onRegister, onSignOut }) {
-  const compact = useCompactSiteView();
-  const [phoneMore, setPhoneMore] = useState(false);
-  const more = compact && phoneMore;
+  const compact = useCompactSiteView('(max-width: 1366px)');
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const more = compact && toolsOpen;
   const [tab, setTab] = useState('today');
-  const chooseView = (next) => { setPhoneMore(false); setTab(next); };
+  const chooseView = (next) => { setToolsOpen(false); setTab(next); };
   const [date, setDate] = useState(localToday);
   const [ym, setYm] = useState(() => localToday().slice(0, 7));
   const [department, setDepartment] = useState(null);
@@ -90,11 +90,11 @@ export function TabletDashboard({ site, online, onPunch, onRegister, onSignOut }
               <p className="text-[12px] text-muted-foreground">{site.code} · Site workspace</p>
             </div>
           </div>
-          <Button variant="ghost" size="sm" className="hidden shrink-0 md:inline-flex" onClick={onSignOut}><LogOut /> Sign out</Button>
+          <Button variant="ghost" size="sm" className={cn('shrink-0', compact && 'hidden')} onClick={onSignOut}><LogOut /> Sign out</Button>
         </div>
       </header>
 
-      <main className={cn('mx-auto flex w-full min-w-0 max-w-[1200px] flex-col gap-4 px-3 py-4 sm:gap-5 sm:px-6 sm:py-6', compact && 'site-phone-main')}>
+      <main className={cn('mx-auto flex w-full min-w-0 max-w-[1200px] flex-col gap-4 px-3 py-4 sm:gap-5 sm:px-6 sm:py-6', compact && 'site-touch-main', compact && (tab === 'today' || more) && 'max-w-3xl')}>
         {!online && tab !== 'manual' && <Notice tone="warning" icon={<CloudOff className="size-4 shrink-0" />}>Offline. Keep attendance in the paper register. Enter and send it for HR review when connected.</Notice>}
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
@@ -113,7 +113,7 @@ export function TabletDashboard({ site, online, onPunch, onRegister, onSignOut }
             <option value="day">Daily register</option><option value="month">Monthly register</option>
           </Select>
         </label>}
-        <div role="tablist" aria-label="Site views" className="hidden gap-1 md:flex overflow-x-auto border-b scrollbar-thin">
+        <div role="tablist" aria-label="Site views" className={cn('flex gap-1 overflow-x-auto border-b scrollbar-thin', compact && 'hidden')}>
           {TABS.map((t, index) => (
             <button key={t.value} id={`site-tab-${t.value}`} type="button" role="tab" aria-selected={tab === t.value} aria-controls={`site-panel-${t.value}`} onClick={() => setTab(t.value)}
               tabIndex={tab === t.value ? 0 : -1} onKeyDown={(e) => {
@@ -129,9 +129,9 @@ export function TabletDashboard({ site, online, onPunch, onRegister, onSignOut }
           ))}
         </div>
 
-        {more && <PhoneSiteTools online={online} summary={summary} onView={chooseView} onRegister={onRegister} onPeople={() => { setDepartment(null); setShowPeople(true); }} onDepartment={setDepartment} onSignOut={onSignOut} />}
+        {more && <TouchSiteTools online={online} summary={summary} onView={chooseView} onRegister={onRegister} onPeople={() => { setDepartment(null); setShowPeople(true); }} onDepartment={setDepartment} onSignOut={onSignOut} />}
         <section hidden={more} id={`site-panel-${tab}`} role="tabpanel" aria-label={TABS.find((t) => t.value === tab)?.label} className="min-w-0">
-          {compact && tab === 'today' && !more && <PhoneAttendanceHome online={online} summary={summary} onPunch={onPunch} onRegister={onRegister} onPeople={() => { setDepartment(null); setShowPeople(true); }} />}
+          {compact && tab === 'today' && !more && <TouchAttendanceHome online={online} summary={summary} onPunch={onPunch} onRegister={onRegister} onPeople={() => { setDepartment(null); setShowPeople(true); }} />}
           {!compact && tab === 'today' && (
             <div className="flex flex-col gap-5">
               <Card className="flex flex-col justify-between gap-6 border-primary/20 bg-primary/[0.035] p-5 sm:flex-row sm:items-center sm:p-6">
@@ -190,7 +190,7 @@ export function TabletDashboard({ site, online, onPunch, onRegister, onSignOut }
         </section>
       </main>
 
-      {compact && <PhoneSiteNavigation tab={tab} more={more} onAttendance={() => chooseView('today')} onRegisters={() => chooseView(tab === 'month' ? 'month' : 'day')} onMore={() => setPhoneMore(true)} />}
+      {compact && <TouchSiteNavigation tab={tab} more={more} onAttendance={() => chooseView('today')} onRegisters={() => chooseView(tab === 'month' ? 'month' : 'day')} onMore={() => setToolsOpen(true)} />}
       <Dialog open={!!department || showPeople} onOpenChange={(open) => { if (!open) { setDepartment(null); setShowPeople(false); } }} className="site-workspace site-dialog" title={department?.name ?? 'People on site'} description="People currently punched in at this site.">
         {selectedPeople.length ? <PeopleList people={selectedPeople} /> : <EmptyState title="Nobody is on site in this department" body="This headcount updates when people punch in or out." />}
       </Dialog>

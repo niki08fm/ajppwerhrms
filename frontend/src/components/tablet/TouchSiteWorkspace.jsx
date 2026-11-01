@@ -4,8 +4,8 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { ErrorState } from '@/components/states';
 
-/** An employee's phone starts with one task. Supervisor tools have their own screen. */
-export function PhoneAttendanceHome({ online, summary, onPunch, onRegister, onPeople }) {
+/** A phone or tablet starts with one task. Supervisor tools have their own screen. */
+export function TouchAttendanceHome({ online, summary, onPunch, onRegister, onPeople }) {
   const counts = summary.data?.counts;
   return <div className="space-y-4">
     <Card className="space-y-5 border-primary/20 p-5 text-center">
@@ -22,7 +22,7 @@ export function PhoneAttendanceHome({ online, summary, onPunch, onRegister, onPe
   </div>;
 }
 
-export function PhoneSiteTools({ online, summary, onView, onRegister, onPeople, onDepartment, onSignOut }) {
+export function TouchSiteTools({ online, summary, onView, onRegister, onPeople, onDepartment, onSignOut }) {
   const counts = summary.data?.counts;
   const tools = [
     ['Register face', 'For a first registration or an HR-approved replacement.', UserPlus, onRegister, !online],
@@ -45,9 +45,9 @@ export function PhoneSiteTools({ online, summary, onView, onRegister, onPeople, 
   </div>;
 }
 
-export function PhoneSiteNavigation({ tab, more, onAttendance, onRegisters, onMore }) {
+export function TouchSiteNavigation({ tab, more, onAttendance, onRegisters, onMore }) {
   const active = more || ['manual', 'transfers'].includes(tab) ? 'more' : ['day', 'month'].includes(tab) ? 'registers' : 'attendance';
-  return <nav aria-label="Site navigation" className="site-phone-navigation fixed inset-x-0 bottom-0 z-30 flex border-t bg-card px-2 pt-1 shadow-[0_-4px_16px_rgba(0,0,0,0.04)]">
+  return <nav aria-label="Site navigation" className="site-touch-navigation fixed inset-x-0 bottom-0 z-30 flex border-t bg-card px-2 pt-1 shadow-[0_-4px_16px_rgba(0,0,0,0.04)]">
     {[
       ['attendance', 'Attendance', ScanFace, onAttendance],
       ['registers', 'Registers', ClipboardList, onRegisters],

@@ -715,7 +715,7 @@ test.describe('site workspace on phones and tablets', () => {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   };
   const view = async (page, value, label) => {
-    if (page.viewportSize().width >= 768) return page.getByRole('tab', { name: label, exact: true }).tap();
+    if (page.viewportSize().width > 1366) return page.getByRole('tab', { name: label, exact: true }).tap();
     if (['day', 'month'].includes(value)) {
       await page.getByRole('navigation', { name: 'Site navigation' }).getByRole('button', { name: 'Registers', exact: true }).tap();
       await page.getByRole('combobox', { name: 'Register view', exact: true }).selectOption(value);
@@ -725,7 +725,7 @@ test.describe('site workspace on phones and tablets', () => {
     }
   };
 
-  for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 768, height: 1024 }, { width: 1024, height: 768 }]) {
+  for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 768, height: 1024 }, { width: 1024, height: 768 }, { width: 1366, height: 1024 }]) {
     test(`${viewport.width}px site login and registers fit without page-wide scrolling`, async ({ page }, testInfo) => {
       await page.setViewportSize(viewport);
       await page.addInitScript(() => localStorage.setItem('theme', 'light'));
@@ -923,4 +923,30 @@ test('Scan next person starts a fresh confirmed punch without reusing the first 
   expect(confirms.map((item) => item.body.confirm_token)).toEqual(['first-person-token', 'second-person-token']);
   expect(confirms.map((item) => item.path)).toEqual(['/api/v1/punches/sessions/shared-1/confirm', '/api/v1/punches/sessions/shared-2/confirm']);
   expect(state.errors).toEqual([]);
+});
+
+test('tablet uses the same focused attendance, registers and More navigation in either orientation', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 768, height: 1024 });
+  const state = await mockTablet(page, { withOT: true });
+  await page.goto('/tablet');
+  const nav = page.getByRole('navigation', { name: 'Site navigation' });
+  await expect(nav.getByRole('button')).toHaveCount(3);
+  await expect(page.getByRole('heading', { name: 'Ready to punch?', exact: true })).toBeVisible();
+  await expect(page.getByRole('tablist', { name: 'Site views' })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('tablet-simple-portrait.png') });
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await expect(nav).toBeVisible();
+  const punch = await page.getByRole('button', { name: 'Punch in / out', exact: true }).boundingBox();
+  expect(punch.height).toBeGreaterThanOrEqual(80);
+  expect(punch.y + punch.height).toBeLessThanOrEqual((await nav.boundingBox()).y);
+  await page.screenshot({ path: testInfo.outputPath('tablet-simple-landscape.png') });
+  await nav.getByRole('button', { name: 'More', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Manual attendance', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Transfer requests', exact: true })).toBeVisible();
+  await nav.getByRole('button', { name: 'Registers', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Daily register table', exact: true })).toContainText(EMPLOYEE.name);
+  await nav.getByRole('button', { name: 'Attendance', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Ready to punch?', exact: true })).toBeVisible();
+  expect(state.errors).toEqual([]);
+  expect(state.writes).toEqual([]);
 });
