@@ -1,8 +1,8 @@
 import { useEffect } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft } from 'lucide-react';
-import { COMPANIES, GENERATE_STEP, STEP } from '@ajpwer/shared';
+import { ArrowLeft, Play } from 'lucide-react';
+import { COMPANIES, GENERATE_STEP, LAST_REVIEW_STEP, STEP } from '@ajpwer/shared';
 import { api } from '@/services/api';
 import { monthLabel } from '@/utils';
 import { PageHeader } from '@/components/bits';
@@ -67,11 +67,16 @@ export default function RunPayroll() {
   const next = (n) => () => open(Math.min(n + 1, GENERATE_STEP));
 
   if (!shown) {
+    const cta = generated
+      ? { label: p.state === 'PAID' ? `View ${monthLabel(ym)} payroll` : 'Open the generated payroll', step: GENERATE_STEP }
+      : cur === GENERATE_STEP
+        ? { label: 'Generate payroll', step: GENERATE_STEP }
+        : { label: `Continue · step ${cur}, ${stepLabel(cur)}`, step: cur };
     return (
-      <div className="payroll-workspace flex flex-col gap-4">
+      <div className="payroll-overview flex flex-col gap-4">
         <PageHeader
           title="Payroll"
-          description="Review the month, confirm changes and prepare payroll for payment."
+          description={`Choose a month, review its ${LAST_REVIEW_STEP} steps, then generate payroll and download payslips.`}
           actions={
             <>
               <Segmented
@@ -80,6 +85,7 @@ export default function RunPayroll() {
                 onChange={(v) => set({ company: v === 'all' ? null : v })}
                 options={[{ value: 'all', label: 'Both companies' }, ...COMPANIES.map((c) => ({ value: c.key, label: c.name }))]}
               />
+              {ym <= periods.data.meta.suggested && <Button onClick={() => open(cta.step)}><Play /> {cta.label}</Button>}
             </>
           }
         />

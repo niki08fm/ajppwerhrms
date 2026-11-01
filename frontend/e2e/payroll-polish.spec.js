@@ -115,9 +115,9 @@ test('an unavailable held-salary read prevents confirming a partial review', asy
 test('a missing previous payroll is not fetched or displayed as a completed payroll cost', async ({ page }) => {
   const state = await mockPayrollJourney(page, { stage: 2 });
   await page.goto(`/payroll/${YM}`);
-  await expect(page.getByRole('heading', { name: 'September 2026', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /September 2026.*In progress/ })).toBeVisible();
   await page.getByText('Payroll cost · last six months', { exact: true }).click();
-  await expect(page.getByText('September 2026 is an estimate.', { exact: false })).toBeVisible();
+  await expect(page.getByText('September 2026 is an estimate until generated.', { exact: false })).toBeVisible();
   expect(state.reads.filter((path) => path.endsWith('/summary'))).toEqual([`/payroll/periods/${YM}/summary`]);
 });
 
