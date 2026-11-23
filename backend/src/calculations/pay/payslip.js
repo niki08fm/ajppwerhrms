@@ -82,25 +82,50 @@ export function assemblePayslip(input) {
     push({ kind: 'YEARLY', code: y.name, name: y.name, full_amount: y.amount, amount: y.amount, is_taxable: y.is_taxable, counts_as_wages: false });
   }
 
-  // 3. Overtime.
+  // 3. Overtime. Each day's minutes are paid under the overtime policy version in force
+  // that day: one line per version when a new version starts mid-month. The monthly cap
+  // counts minutes already paid this month under earlier versions.
   let otAmount = 0;
   let ot = null;
-  if (input.overtime_rules && att.ot_min > 0) {
-    const o = overtimePay(att.ot_min, input.overtime_rules, full, input.divisor);
-    otAmount = o.amount;
-    ot = { minutes: att.ot_min, paid_min: o.paid_min, excess_min: o.excess_min, hourly: o.hourly, amount: o.amount, hours_per_day: input.overtime_rules.hours_per_day };
-    if (o.excess_min > 0) flags.push('OT_OVER_CAP');
-    const h = Math.floor(o.paid_min / 60);
-    const m = o.paid_min % 60;
-    push({
-      kind: 'OT',
-      code: 'OT',
-      name: `Overtime ${h}h${m ? ` ${m}m` : ''} at ${input.overtime_rules.multiplier}×`,
-      full_amount: o.amount,
-      amount: o.amount,
-      is_taxable: true,
-      counts_as_wages: false,
-    });
+  const segments = input.overtime_segments?.length
+    ? input.overtime_segments.filter((g) => g.rules && g.ot_min > 0)
+    : input.overtime_rules && att.ot_min > 0 ? [{ rules: input.overtime_rules, ot_min: att.ot_min }] : [];
+  if (segments.length) {
+    let paidSoFar = 0;
+    const parts = [];
+    for (const g of segments) {
+      const cap = g.rules.monthly_cap_min === null || g.rules.monthly_cap_min === undefined ? null : clampMin0(g.rules.monthly_cap_min - paidSoFar);
+      const o = overtimePay(g.ot_min, { ...g.rules, monthly_cap_min: cap }, full, input.divisor);
+      paidSoFar += o.paid_min;
+      parts.push({ ...o, minutes: g.ot_min, rules: g.rules, from: g.from ?? null, to: g.to ?? null });
+    }
+    const last = parts.at(-1);
+    otAmount = parts.reduce((a, o) => a + o.amount, 0);
+    ot = {
+      minutes: parts.reduce((a, o) => a + o.minutes, 0),
+      paid_min: paidSoFar,
+      excess_min: parts.reduce((a, o) => a + o.excess_min, 0),
+      hourly: last.hourly,
+      amount: otAmount,
+      hours_per_day: last.rules.hours_per_day,
+      ...(parts.length > 1 ? { segments: parts.map((o) => ({ from: o.from, to: o.to, minutes: o.minutes, paid_min: o.paid_min, multiplier: o.rules.multiplier, hourly: o.hourly, amount: o.amount })) } : {}),
+    };
+    if (ot.excess_min > 0) flags.push('OT_OVER_CAP');
+    for (const o of parts) {
+      if (o.amount <= 0 && parts.length > 1) continue;
+      const h = Math.floor(o.paid_min / 60);
+      const m = o.paid_min % 60;
+      const span = parts.length > 1 && o.from ? ` (${formatLongDate(o.from)} – ${formatLongDate(o.to)})` : '';
+      push({
+        kind: 'OT',
+        code: 'OT',
+        name: `Overtime ${h}h${m ? ` ${m}m` : ''} at ${o.rules.multiplier}×${span}`,
+        full_amount: o.amount,
+        amount: o.amount,
+        is_taxable: true,
+        counts_as_wages: false,
+      });
+    }
   }
 
   // 4. Off-day work pay — one line per day, named with the date.

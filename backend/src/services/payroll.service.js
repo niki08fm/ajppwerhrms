@@ -444,7 +444,8 @@ export async function executeRun(ym, actor, onProgress) {
               JSON.stringify({
                 employee: { code: e.code, name: e.name, designation: e.designation, gender: e.gender, joined_on: fromDbDate(e.joined_on), last_day: fromDbDate(e.last_day) },
                 department: e.department,
-                pay_group: e.pay_group,
+                // The pay group this month ran under, from the dated history.
+                pay_group: ps.pay_group ?? e.pay_group,
                 bank: { account_enc: e.identity?.bank_account_enc ?? null, last4: e.identity?.bank_last4 ?? null, ifsc: e.identity?.bank_ifsc ?? null, name: e.identity?.bank_name ?? null },
                 ids: { pan_enc: e.identity?.pan_enc ?? null, uan: e.identity?.uan ?? null, esi_number: e.identity?.esi_number ?? null },
                 salary: ps.salary,

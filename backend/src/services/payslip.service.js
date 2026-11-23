@@ -1,5 +1,5 @@
 import { esiContributionPeriod, financialYearStart, firstOfMonth, lastOfMonth, maxDate, minDate, addMonths, ymOf } from '@ajpwer/shared';
-import { assemblePayslip, calendarDivisor, esiEligibility, expandStructure, isBasic, isHra, pickPolicy, usesCtc, workingDaysInMonth } from '../calculations/index.js';
+import { assemblePayslip, calendarDivisor, esiEligibility, expandStructure, isBasic, isHra, isOffStatus, pickPolicy, usesCtc, workingDaysInMonth } from '../calculations/index.js';
 import { fromDbDate, n, toDbDate } from '../utils/dbDates.js';
 import { AppError } from '../utils/errors.js';
 import { ratesOn, salaryOn, structureComponents } from './rules.service.js';
@@ -90,6 +90,27 @@ export async function loadTaxYtd(db, employeeIds, ym) {
   return out;
 }
 
+/**
+ * Overtime minutes grouped by the overtime policy version in force on each day, in date
+ * order. Null when one version covers the whole month (the month-end version is used),
+ * or when the days do not add up to the month's total (after HR corrections).
+ */
+export function overtimeByVersion(policies, days, total) {
+  if (!days?.length || !total) return null;
+  const groups = [];
+  for (const d of days) {
+    if (isOffStatus(d.status) || !(d.ot_min > 0)) continue;
+    const p = pickPolicy(policies, 'OVERTIME', d.date);
+    const last = groups.at(-1);
+    if (last && last.id === (p?.id ?? null)) {
+      last.ot_min += d.ot_min;
+      last.to = d.date;
+    } else groups.push({ id: p?.id ?? null, rules: p?.rules ?? null, ot_min: d.ot_min, from: d.date, to: d.date });
+  }
+  if (groups.length < 2 || groups.reduce((a, g) => a + g.ot_min, 0) !== total) return null;
+  return groups;
+}
+
 export function recoveryItems(src) {
   const items = [];
   if (src.carry && n(src.carry.amount) > 0) items.push({ type: 'CARRY', ref_id: null, label: 'Recovery carried from last month', due: n(src.carry.amount) });
@@ -142,6 +163,7 @@ export async function computePayslip(db, e, ym, month, ctx, recoveries, inputs) 
   const working = workingDaysInMonth(ym, rules.weekly_off, [...month.holidays.keys()]);
   const divisor = calendarDivisor(rules.calendar_method, ym, working);
   const otPolicy = pickPolicy(rules.policies, 'OVERTIME', monthEnd);
+  const overtimeSegments = overtimeByVersion(rules.policies, month.result.days, month.result.totals.ot_min);
 
   // ESI: decided once per contribution block on the selected fixed wages in
   // the salary structure effective at its start. A later revision cannot
@@ -199,6 +221,7 @@ export async function computePayslip(db, e, ym, month, ctx, recoveries, inputs) 
     offday_work: month.result.offday_work,
     divisor,
     overtime_rules: otPolicy?.rules ?? null,
+    overtime_segments: overtimeSegments,
     statutory: {
       pf_enabled: e.statutory.pf_enabled,
       eps_enabled: e.statutory.eps_enabled ?? true,
@@ -239,6 +262,7 @@ export async function computePayslip(db, e, ym, month, ctx, recoveries, inputs) 
     leave: month.result.leave,
     salary: { mode: salary.mode, amount: salary.amount, monthly_gross: salary.monthly_gross, structure_id: salary.structure_id, salary_id: salary.id },
     esi: { applicable: esi.applicable, locked_until: esi.esi_locked_until, reason: esi.reason },
+    pay_group: rules?.id ? { id: rules.id, name: rules.name } : null,
     regime: regimeCode,
     declared_regime: declaredRegime,
     pt_state: e.statutory.pt_state,

@@ -244,7 +244,13 @@ export const payGroupSchema = z
   })
   .strict();
 
-export const payGroupPatchSchema = payGroupSchema.partial().strict();
+export const payGroupPatchSchema = payGroupSchema
+  .partial()
+  .extend({
+    /** When a change to the attached policies applies. Defaults to the first month not locked or paid. */
+    policies_effective_from: isoDate.optional(),
+  })
+  .strict();
 
 // ─── Statutory configuration ─────────────────────────────────────────────────
 
@@ -324,6 +330,8 @@ export const employeeUpdateSchema = employeeCoreSchema
   .partial()
   .extend({
     identity: employeeIdentitySchema.optional(),
+    /** The 1st of the month a pay group change starts. Defaults to the first month not locked or paid. */
+    pay_group_effective_from: isoDate.optional(),
     /** The updated_at the client last saw — rejected with 409 if it has moved */
     updated_at: z.string().nullable(),
   })

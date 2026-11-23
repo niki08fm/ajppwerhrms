@@ -124,14 +124,29 @@ describe('Deleting policy versions', () => {
     expect(next.version).toBe(3);
   });
 
-  it('leaves later effective starts unchanged when deleting the first version', async () => {
+  it('moves the next version back to cover the dates when deleting the first version', async () => {
     const first = await create();
     const next = await publish(first, '2026-10-01');
     expect((await f.agent.delete(path(first))).status).toBe(200);
     const history = await liveRows(first.policy_key);
     expect(history).toHaveLength(1);
     expect(history[0].id).toBe(next.id);
-    expect(dateOf(history[0].valid_from)).toBe('2026-10-01');
+    // No gap: the successor now starts where the deleted first version did.
+    expect(dateOf(history[0].valid_from)).toBe('2025-04-01');
+    expect(history[0].valid_to).toBeNull();
+    const logged = await prisma.auditLog.findFirst({ where: { action: 'policy.delete', entity_id: first.id } });
+    expect(logged.detail.neighbors).toEqual([expect.objectContaining({ id: next.id, valid_from: '2025-04-01' })]);
+  });
+
+  it('refuses to delete a first version whose dates frozen payroll used, since its successor would take them over', async () => {
+    const first = await original();
+    const rulesChanged = { ...first.rules, grace_min: (first.rules.grace_min ?? 15) + 5 };
+    const next = await publish(first, '2026-10-01', rulesChanged);
+    await freeze();
+    const r = await f.agent.delete(path(first));
+    expect(r.status).toBe(409);
+    expect(r.body.error.code).toBe('POLICY_PROTECTED');
+    expect((await liveRows(first.policy_key)).map((row) => row.id)).toEqual([first.id, next.id]);
   });
 
   it('allows unused sole-version cleanup but protects the only attached version until detached', async () => {

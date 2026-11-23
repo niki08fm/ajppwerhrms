@@ -3,6 +3,7 @@ import { AppError } from '../utils/errors.js';
 import { fromDbDate, n, toDbDate } from '../utils/dbDates.js';
 import { scopedRead } from '../utils/read-scope.js';
 import { lockPolicyRulesRead } from './policy-history.service.js';
+import { clipToLink } from './assignment-dates.service.js';
 
 /** The statutory rates row valid on a date: latest valid_from ≤ date. */
 export function ratesOn(db, date) {
@@ -138,7 +139,8 @@ async function readPayGroupRules(db, payGroupId) {
     calendar_method: g.calendar_method,
     weekly_off: g.weekly_off,
     shift: g.shift,
-    policies: g.policies.filter((x) => !x.policy.deleted_at).map((x) => toAttachedPolicy(x.policy)),
+    // Each version as the group uses it: its own dates clipped to the link's window.
+    policies: g.policies.filter((x) => !x.policy.deleted_at).map((x) => clipToLink(toAttachedPolicy(x.policy), x)).filter(Boolean),
   };
 }
 

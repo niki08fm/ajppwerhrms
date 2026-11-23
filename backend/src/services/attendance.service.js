@@ -2,6 +2,7 @@ import { addDays, addMonths, dayName, firstOfMonth, istDate, lastOfMonth, maxDat
 import { computeDay, computeMonth, leaveYearOf, nextLeaveState, occasionPaidDates, pickPolicy, resolvePolicies, shiftEndOnWorkDate, usableFrom } from '../calculations/index.js';
 import { fromDbDate, toDbDate } from '../utils/dbDates.js';
 import { holidaysBetween, payGroupRulesCache } from './rules.service.js';
+import { employeesForMonth, loadPayGroupHistory } from './assignment-dates.service.js';
 import { attendanceSummary } from './attendance-summary.service.js';
 
 /** Days either side of a month examined so the sandwich rule can see across the boundary. */
@@ -276,10 +277,12 @@ export async function computeMonths(db, employees, ym, options = {}) {
     today: options.today ?? istDate(new Date()),
     systemStart: options.systemStart !== undefined ? options.systemStart : await leaveTrackingStart(db),
   };
-  const plans = await leavePlans(db, employees, ym, opts);
+  // Each month uses the pay group the person was in on its first day.
+  const history = await loadPayGroupHistory(db, employees.map((e) => e.id));
+  const plans = await leavePlans(db, await employeesForMonth(db, employees, ym, history), ym, opts);
   const earlier = [...new Set([...plans.values()].flatMap((p) => p.walk))].sort();
   for (const m of [...earlier, ym]) {
-    const batch = m === ym ? employees : employees.filter((e) => plans.get(e.id)?.walk.includes(m));
+    const batch = await employeesForMonth(db, m === ym ? employees : employees.filter((e) => plans.get(e.id)?.walk.includes(m)), m, history);
     const [classified, adjustments] = await Promise.all([
       classifyMonths(db, batch, m, opts.rulesFor),
       adjustmentsIn(

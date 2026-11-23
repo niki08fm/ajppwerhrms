@@ -33,6 +33,7 @@ import { filterOne, filterValues, keysetOrder, keysetWhere, page, parseList, toC
 import { prisma } from '../config/db.js';
 import { computeMonth1, computeMonths } from '../services/attendance.service.js';
 import { asOfDate, employeeView, loadEmployee, markTask, nextEmployeeCode, rulesThatApply } from '../services/employee.service.js';
+import { effectiveFrom, movePayGroup } from '../services/assignment-dates.service.js';
 import { issueLetter } from '../services/letter.service.js';
 import { invalidateFaceCache } from '../services/face.service.js';
 import { exitChecklist } from '../services/exit.service.js';
@@ -260,6 +261,8 @@ const bulkSchema = z
     match: z.object({ q: z.string().nullable().optional(), filter: z.record(z.union([z.string(), z.array(z.string())])).optional() }).optional(),
     action: z.enum(['pay_group', 'pt_state', 'tax_regime']),
     value: z.string().min(1),
+    /** Pay group moves: the 1st of the month they start. Defaults to the first month not locked or paid. */
+    effective_from: isoDate.optional(),
     confirm: z.boolean().default(false),
   })
   .strict()
@@ -294,7 +297,8 @@ export const bulkAction = asyncHandler(async (req, res) => {
     if (!['NEW', 'OLD'].includes(b.value)) throw new AppError('VALIDATION', 'Regime is NEW or OLD.', 422, 'value');
     changes = people.filter((p) => p.statutory?.tax_regime_code !== b.value).map((p) => ({ id: p.id, code: p.code, name: p.name, from: p.statutory?.tax_regime_code ?? '—', to: b.value }));
   }
-  if (!b.confirm) return res.json({ data: { preview: true, count: changes.length, selected: people.length, changes: changes.slice(0, 200) } });
+  const groupFrom = b.action === 'pay_group' ? await effectiveFrom(prisma, b.effective_from, { monthStart: true }) : null;
+  if (!b.confirm) return res.json({ data: { preview: true, count: changes.length, selected: people.length, changes: changes.slice(0, 200), ...(b.action === 'pay_group' ? { effective_from: groupFrom } : {}) } });
 
   const { actor, ip } = who(req);
   await prisma.$transaction(
@@ -304,11 +308,11 @@ export const bulkAction = asyncHandler(async (req, res) => {
       const current=await tx.employee.count({where:{id:{in:people.map(p=>p.id)},deleted_at:null,status:{not:'EXITED'}}});
       if(current!==people.length)throw new AppError('STALE_UPDATE','Some employee records changed. Reload before applying this action.',409);
       for (const c of changes) {
-        if (b.action === 'pay_group') await tx.employee.update({ where: { id: c.id }, data: { pay_group_id: b.value } });
+        if (b.action === 'pay_group') await movePayGroup(tx, people.find((p) => p.id === c.id), b.value, groupFrom, actor);
         if (b.action === 'pt_state') await tx.employeeStatutory.update({ where: { employee_id: c.id }, data: { pt_state: b.value } });
         if (b.action === 'tax_regime') await tx.employeeStatutory.update({ where: { employee_id: c.id }, data: { tax_regime_code: b.value } });
         // One audit entry per person, not one for the batch.
-        await audit(tx, { actor, ip, action: `employee.bulk.${b.action}`, entity_type: 'employee', entity_id: c.id, detail: { from: c.from, to: c.to } });
+        await audit(tx, { actor, ip, action: `employee.bulk.${b.action}`, entity_type: 'employee', entity_id: c.id, detail: { from: c.from, to: c.to, ...(b.action === 'pay_group' ? { effective_from: groupFrom } : {}) } });
       }
     },
     { timeout: 120_000 },
@@ -411,21 +415,26 @@ export const updateEmployee = asyncHandler(async (req, res) => {
   if (b.updated_at !== seen) {
     throw new AppError('STALE_UPDATE', 'Someone else changed this person since you opened the form. Reload to see their changes, then edit again.', 409);
   }
-  const { identity, updated_at: _u, ...core } = b;
-  const data = { ...core };
+  const { identity, updated_at: _u, pay_group_effective_from, ...core } = b;
+  // A pay group change is dated: it is applied below, not as a plain field.
+  const { pay_group_id: _group, ...data } = core;
+  const movingGroup = core.pay_group_id && core.pay_group_id !== e.pay_group_id;
   if (core.dob !== undefined) data.dob = core.dob ? toDbDate(core.dob) : null;
   const { actor, ip } = who(req);
   await prisma.$transaction(async (tx) => {
     await lockAssignments(tx);
     if(core.pay_group_id)await assertAssignableGroup(tx,core.pay_group_id);
+    const groupFrom = movingGroup ? await effectiveFrom(tx, pay_group_effective_from, { monthStart: true, field: 'pay_group_effective_from' }) : null;
     // Guard the concurrency check inside the transaction too.
     if (core.department_id !== undefined) await assertDepartmentAssignable(tx, core.department_id);
-    const n1 = await tx.employee.updateMany({ where: { id: e.id, deleted_at:null, updated_at: e.updated_at ?? undefined }, data: data });
+    // The guarded write also claims the row when the only change is a dated pay group move.
+    const n1 = await tx.employee.updateMany({ where: { id: e.id, deleted_at:null, updated_at: e.updated_at ?? undefined }, data: Object.keys(data).length ? data : { updated_at: new Date() } });
     if (n1.count === 0) throw new AppError('STALE_UPDATE', 'Someone else changed this person since you opened the form. Reload and try again.', 409);
     const changes = diff(e, core);
     if (Object.keys(changes).length) await audit(tx, { actor, ip, action: 'employee.update', entity_type: 'employee', entity_id: e.id, detail: { changes } });
-    if (core.pay_group_id && core.pay_group_id !== e.pay_group_id) {
-      await audit(tx, { actor, ip, action: 'employee.pay_group_change', entity_type: 'employee', entity_id: e.id, detail: { from: e.pay_group_id, to: core.pay_group_id } });
+    if (movingGroup) {
+      await movePayGroup(tx, e, core.pay_group_id, groupFrom, actor);
+      await audit(tx, { actor, ip, action: 'employee.pay_group_change', entity_type: 'employee', entity_id: e.id, detail: { from: e.pay_group_id, to: core.pay_group_id, effective_from: groupFrom } });
     }
     if (core.designation !== undefined && core.designation !== e.designation) {
       await audit(tx, { actor, ip, action: 'employee.designation_change', entity_type: 'employee', entity_id: e.id, detail: { from: e.designation, to: core.designation, effective_on: today() } });

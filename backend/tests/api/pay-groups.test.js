@@ -77,7 +77,8 @@ describe('Pay groups govern rules without owning salary structures', () => {
       expect(employee.pay_group_id).toBe(target.id);
       const events = await prisma.auditLog.findMany({ where: { action: 'employee.pay_group_change', entity_id: employee.id } });
       expect(events).toHaveLength(1);
-      expect(events[0].detail).toEqual({ from: f.payGroupId, to: target.id });
+      // No locked payroll yet: the move applies throughout (effective_from null).
+      expect(events[0].detail).toEqual({ from: f.payGroupId, to: target.id, effective_from: null });
     }
     const unchanged = await f.agent.post(`/api/v1/pay-groups/${target.id}/employees`).send({ employee_ids: ids });
     expect(unchanged.body.data).toMatchObject({ moved: 0, unchanged: 2 });

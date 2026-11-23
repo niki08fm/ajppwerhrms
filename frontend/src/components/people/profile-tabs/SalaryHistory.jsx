@@ -64,7 +64,7 @@ export function PayGroupControl({ e }) {
         updated_at: e.updated_at,
       }),
     onSuccess: () => {
-      toast.success('Pay group changed. Salary amount and structure are unchanged.');
+      toast.success('Pay group changed from the first month that is not locked or paid. Earlier months keep their pay group; salary amount and structure are unchanged.');
       refreshEmployeePay(qc, e.id);
     },
     onError: (err) => toast.error(errorMessage(err)),

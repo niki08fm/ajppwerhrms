@@ -23,13 +23,14 @@ async function lockPolicyHistory(tx, key) {
 }
 
 async function rowsFor(db, key) {
-  return db.policy.findMany({ where: { policy_key: key, deleted_at: null }, orderBy: { version: 'asc' }, include: { pay_groups: { where: { deleted_at: null, pay_group: { deleted_at: null } }, include: { pay_group: { select: { id: true, name: true } } } } } });
+  // Current links only: a group that stopped using this policy takes no new versions.
+  return db.policy.findMany({ where: { policy_key: key, deleted_at: null }, orderBy: { version: 'asc' }, include: { pay_groups: { where: { deleted_at: null, effective_to: null, pay_group: { deleted_at: null } }, include: { pay_group: { select: { id: true, name: true } } } } } });
 }
 
 /** Keep historical links: detaching a policy must not evade frozen payroll. */
 async function protectionContext(db, keys) {
   const [links, slips, settlements] = await Promise.all([
-    db.payGroupPolicy.findMany({ where: { policy: { policy_key: { in: keys } } }, select: { pay_group_id: true, deleted_at: true, pay_group: { select: { deleted_at: true } }, policy: { select: { policy_key: true, deleted_at: true } } } }),
+    db.payGroupPolicy.findMany({ where: { policy: { policy_key: { in: keys } } }, select: { pay_group_id: true, deleted_at: true, effective_to: true, pay_group: { select: { deleted_at: true } }, policy: { select: { policy_key: true, deleted_at: true } } } }),
     db.payslip.findMany({ where: { deleted_at: null, period: { deleted_at: null, state: { in: ['LOCKED', 'PAID'] } } }, select: { meta: true, employee: { select: { pay_group_id: true } }, period: { select: { period_ym: true, state: true } } } }),
     db.settlement.findMany({ where: { deleted_at: null, OR: [{ state: 'PAID' }, { state: 'INCLUDED' }, { paid_separately: { not: Prisma.DbNull } }] }, select: { state: true, last_day: true, paid_separately: true, employee: { select: { pay_group_id: true } }, period: { select: { state: true, period_ym: true, steps_submitted: true, deleted_at: true } } } }),
   ]);
@@ -37,7 +38,7 @@ async function protectionContext(db, keys) {
   const attached = new Set();
   for (const link of links) {
     groups.get(link.policy.policy_key)?.add(link.pay_group_id);
-    if (!link.deleted_at && !link.policy.deleted_at && !link.pay_group.deleted_at) attached.add(link.policy.policy_key);
+    if (!link.deleted_at && !link.effective_to && !link.policy.deleted_at && !link.pay_group.deleted_at) attached.add(link.policy.policy_key);
   }
   const ranges = slips.map((slip) => {
     const ym = slip.meta?.final_month_ym ?? slip.period.period_ym;
@@ -75,18 +76,31 @@ function assertAllowed(context, key, before, after) {
   if (frozen) throw new AppError('POLICY_PROTECTED', frozen.reason, 409);
 }
 
+/** The version that takes over a deleted version's dates: the one before it, or for the first version the one after. */
+function heirOf(rows, index) {
+  return index > 0 ? rows[index - 1] : rows[index + 1] ?? null;
+}
+
+/**
+ * Coverage never breaks on a delete: the previous version runs on to the deleted one's
+ * end, and deleting the first version moves the next one's start back to its start.
+ */
 function deletionResult(rows, id) {
-  // Removing the first version intentionally leaves its earlier coverage empty.
   const index = rows.findIndex((row) => row.id === id);
-  return rows.filter((row) => row.id !== id).map((row) => index > 0 && row.id === rows[index - 1].id ? { ...row, valid_to: rows[index].valid_to } : row);
+  const heir = heirOf(rows, index);
+  return rows.filter((row) => row.id !== id).map((row) => {
+    if (!heir || row.id !== heir.id) return row;
+    return index > 0 ? { ...row, valid_to: rows[index].valid_to } : { ...row, valid_from: rows[index].valid_from };
+  });
 }
 
 function restoredLinks(before, after, id) {
   const index = before.findIndex((row) => row.id === id);
-  if (index <= 0) return [];
-  const prior = after.find((row) => row.id === before[index - 1].id);
-  const attached = new Set(prior.pay_groups?.map((link) => link.pay_group_id));
-  return (before[index].pay_groups ?? []).filter((link) => !attached.has(link.pay_group_id)).map((link) => ({ policy_id: prior.id, pay_group_id: link.pay_group_id, from: start(prior), to: end(prior) }));
+  const heirRow = heirOf(before, index);
+  if (index < 0 || !heirRow) return [];
+  const heir = after.find((row) => row.id === heirRow.id);
+  const attached = new Set(heir.pay_groups?.map((link) => link.pay_group_id));
+  return (before[index].pay_groups ?? []).filter((link) => !attached.has(link.pay_group_id)).map((link) => ({ policy_id: heir.id, pay_group_id: link.pay_group_id, effective_from: link.effective_from ?? null, from: start(heir), to: end(heir) }));
 }
 
 function assertRestoredLinksAllowed(context, key, kind, links) {
@@ -128,7 +142,7 @@ async function saveChangedRows(tx, before, after) {
   for (const row of after) {
     const old = before.find((item) => item.id === row.id);
     if (!old || JSON.stringify(auditRow(old)) === JSON.stringify(auditRow(row))) continue;
-    await tx.policy.update({ where: { id: row.id }, data: { name: row.name, rules: row.rules, valid_from: row.valid_from, valid_to: row.valid_to } });
+    await tx.policy.update({ where: { id: row.id }, data: { name: row.name, rules: row.rules, valid_from: toDbDate(start(row)), valid_to: end(row) ? toDbDate(end(row)) : null } });
   }
 }
 
@@ -166,8 +180,8 @@ export async function removePolicyVersion(tx, key, version, who) {
   const restored = restoredLinks(before, after, previous.id);
   assertRestoredLinksAllowed(context, key, previous.kind, restored);
   await saveChangedRows(tx, before, after);
-  for (const link of restored) await tx.payGroupPolicy.upsert({ where: { pay_group_id_policy_id: { pay_group_id: link.pay_group_id, policy_id: link.policy_id } }, update: { deleted_at: null }, create: { pay_group_id: link.pay_group_id, policy_id: link.policy_id } });
-  await audit(tx, { ...who, action: 'policy.delete', entity_type: 'policy', entity_id: previous.id, detail: { before: auditRow(previous), neighbors: after.filter((row) => end(row) !== end(before.find((old) => old.id === row.id))).map(auditRow), restored_links: restored.map(({ policy_id, pay_group_id }) => ({ policy_id, pay_group_id })) } });
+  for (const link of restored) await tx.payGroupPolicy.upsert({ where: { pay_group_id_policy_id: { pay_group_id: link.pay_group_id, policy_id: link.policy_id } }, update: { deleted_at: null }, create: { pay_group_id: link.pay_group_id, policy_id: link.policy_id, effective_from: link.effective_from } });
+  await audit(tx, { ...who, action: 'policy.delete', entity_type: 'policy', entity_id: previous.id, detail: { before: auditRow(previous), neighbors: after.filter((row) => { const old = before.find((item) => item.id === row.id); return end(row) !== end(old) || start(row) !== start(old); }).map(auditRow), restored_links: restored.map(({ policy_id, pay_group_id }) => ({ policy_id, pay_group_id })) } });
   return { id: previous.id, policy_key: key, version, deleted: true };
 }
 
@@ -185,7 +199,7 @@ export async function publishPolicyVersion(tx, key, body, who) {
   await saveChangedRows(tx, before, after.filter((row) => row.id !== 'new'));
   const { id: _id, ...values } = next;
   const created = await tx.policy.create({ data: { ...values, created_by: who.actor } });
-  for (const link of latest.pay_groups.filter((item) => item.pay_group)) await tx.payGroupPolicy.create({ data: { pay_group_id: link.pay_group_id, policy_id: created.id } });
+  for (const link of latest.pay_groups.filter((item) => item.pay_group)) await tx.payGroupPolicy.create({ data: { pay_group_id: link.pay_group_id, policy_id: created.id, effective_from: link.effective_from ?? null } });
   await audit(tx, { ...who, action: 'policy.version', entity_type: 'policy', entity_id: created.id, detail: { policy_key: key, from_version: latest.version, to_version: created.version, closed_on: addDays(body.valid_from, -1), valid_from: body.valid_from, old_rules: latest.rules, new_rules: rules, pay_groups: latest.pay_groups.map((link) => link.pay_group_id) } });
   return created;
 }

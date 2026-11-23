@@ -4,6 +4,7 @@ import {
   addDays,
   CALENDAR_METHODS,
   holidaySchema,
+  isoDate,
   istDate,
   lastOfMonth,
   parsePolicyRules,
@@ -30,6 +31,7 @@ import { AppError, notFound } from '../utils/errors.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { prisma } from '../config/db.js';
 import { holidaysBetween, ptSlabs, ratesOn, regimesOn, toAttachedPolicy, toComponentDefs } from '../services/rules.service.js';
+import { clipToLink, effectiveFrom, movePayGroup } from '../services/assignment-dates.service.js';
 import { randomUUID } from 'node:crypto';
 import { addDepartment, changeDepartment, listDepartmentSettings, removeDepartment } from '../services/department.service.js';
 import { editPolicyVersion, lockPolicyRulesRead, policyHistoryProtection, publishPolicyVersion, removePolicyVersion } from '../services/policy-history.service.js';
@@ -277,6 +279,7 @@ export const createStructure = asyncHandler(async (req, res) => {
 
 const payGroupViewInclude = {
   shift: true,
+  // Current links; links ended by a dated change show as history.
   policies: { where: { deleted_at: null }, include: { policy: true } },
   _count: { select: { employees: { where: { deleted_at: null, status: { in: ['ACTIVE', 'NOTICE', 'ONBOARDING'] } } } } },
 };
@@ -287,7 +290,9 @@ async function payGroupView(id, options = {}) {
     include: payGroupViewInclude,
   });
   const date = today();
-  const attached = g.policies.filter((x) => !x.policy.deleted_at).map((x) => toAttachedPolicy(x.policy));
+  const live = g.policies.filter((x) => !x.policy.deleted_at);
+  const attached = live.filter((x) => !x.effective_to).map((x) => clipToLink(toAttachedPolicy(x.policy), x)).filter(Boolean);
+  const ended = live.filter((x) => x.effective_to).map((x) => ({ ...clipToLink(toAttachedPolicy(x.policy), x), ended_on: fromDbDate(x.effective_to) })).filter((x) => x.kind);
   const kindsNow = new Set(attached.filter((p) => p.valid_from <= date && (!p.valid_to || p.valid_to >= date)).map((p) => p.kind));
   const ym = ymOf(date);
   const hol = options.holidays ?? [...(await holidaysBetween(prisma, `${ym}-01`, lastOfMonth(ym))).keys()];
@@ -300,6 +305,7 @@ async function payGroupView(id, options = {}) {
     weekly_off: g.weekly_off,
     shift: g.shift,
     policies: attached.sort((a, b) => a.kind.localeCompare(b.kind) || b.version - a.version),
+    policy_history: ended.sort((a, b) => a.kind.localeCompare(b.kind) || b.ended_on.localeCompare(a.ended_on)),
     headcount: g._count.employees,
     divisor_this_month: calendarDivisor(g.calendar_method, ym, workingDaysInMonth(ym, g.weekly_off, hol)),
     warnings: [
@@ -368,23 +374,36 @@ export const updatePayGroup = asyncHandler(async (req, res) => {
     await lockPolicyRulesRead(tx);
     const before = await tx.payGroup.findFirst({ where: { id: req.params.id, deleted_at: null }, include: { policies: { where: { deleted_at: null } } } });
     if (!before) throw notFound('That pay group');
-    const { policy_ids, ...core } = b;
+    const { policy_ids, policies_effective_from, ...core } = b;
     if (policy_ids) await validateGroupPolicies(tx, policy_ids);
     if (Object.keys(core).length) await tx.payGroup.update({ where: { id: before.id }, data: core });
     if (policy_ids) {
-      const current = new Set(before.policies.map((p) => p.policy_id));
+      // A change to the attached policies applies from a date and never reaches locked or paid payroll.
+      const from = await effectiveFrom(tx, policies_effective_from, { field: 'policies_effective_from' });
+      const currentLinks = before.policies.filter((p) => !p.effective_to);
+      const current = new Set(currentLinks.map((p) => p.policy_id));
       const next = new Set(policy_ids);
-      for (const link of before.policies.filter((p) => !next.has(p.policy_id))) {
-        await tx.payGroupPolicy.update({ where: { id: link.id }, data: { deleted_at: new Date() } });
+      for (const link of currentLinks.filter((p) => !next.has(p.policy_id))) {
+        const started = fromDbDate(link.effective_from);
+        if (!from || (started && started >= from)) await tx.payGroupPolicy.update({ where: { id: link.id }, data: { deleted_at: new Date() } });
+        else await tx.payGroupPolicy.update({ where: { id: link.id }, data: { effective_to: toDbDate(addDays(from, -1)) } });
       }
       for (const pid of policy_ids) {
         if (current.has(pid)) continue;
-        await tx.payGroupPolicy.upsert({
-          where: { pay_group_id_policy_id: { pay_group_id: before.id, policy_id: pid } },
-          update: { deleted_at: null },
-          create: { pay_group_id: before.id, policy_id: pid },
-        });
+        const existing = await tx.payGroupPolicy.findUnique({ where: { pay_group_id_policy_id: { pay_group_id: before.id, policy_id: pid } } });
+        if (existing && !existing.deleted_at && existing.effective_to) {
+          // Re-attaching a policy this group stopped using: only when no dates fall between.
+          if (from && addDays(fromDbDate(existing.effective_to), 1) < from) {
+            throw new AppError('POLICY_GAP', 'This pay group stopped using that policy earlier. Re-attach it from the day after it ended, or publish a new version of it.', 409, 'policy_ids');
+          }
+          await tx.payGroupPolicy.update({ where: { id: existing.id }, data: { effective_to: null } });
+        } else if (existing) {
+          await tx.payGroupPolicy.update({ where: { id: existing.id }, data: { deleted_at: null, effective_from: from ? toDbDate(from) : null, effective_to: null } });
+        } else {
+          await tx.payGroupPolicy.create({ data: { pay_group_id: before.id, policy_id: pid, effective_from: from ? toDbDate(from) : null } });
+        }
       }
+      b.policies_effective_from = from;
     }
     await audit(tx, {
       actor, ip, action: 'pay_group.update', entity_type: 'pay_group', entity_id: before.id,
@@ -407,7 +426,7 @@ export const listPayGroupEmployees = asyncHandler(async (req, res) => {
 
 /** Membership changes attendance/pay rules only; employee salary history stays intact. */
 export const movePayGroupEmployees = asyncHandler(async (req, res) => {
-  const { employee_ids: inputIds } = z.object({ employee_ids: z.array(z.string().uuid()).min(1).max(1000) }).strict().parse(req.body);
+  const { employee_ids: inputIds, effective_from: requestedFrom } = z.object({ employee_ids: z.array(z.string().uuid()).min(1).max(1000), effective_from: isoDate.optional() }).strict().parse(req.body);
   const ids = [...new Set(inputIds)].sort();
   const { actor, ip } = who(req);
   const result = await prisma.$transaction(async (tx) => {
@@ -421,15 +440,17 @@ export const movePayGroupEmployees = asyncHandler(async (req, res) => {
     const exited = employees.find((employee) => employee.status === 'EXITED');
     if (exited) throw new AppError('FORBIDDEN', `${exited.name} has exited. Their profile is read-only.`, 403);
     const moving = employees.filter((employee) => employee.pay_group_id !== group.id);
+    // Moves start on the 1st of a month after any locked or paid payroll.
+    const from = moving.length ? await effectiveFrom(tx, requestedFrom, { monthStart: true }) : null;
     for (const employee of moving) {
-      await tx.employee.update({ where: { id: employee.id }, data: { pay_group_id: group.id } });
+      await movePayGroup(tx, employee, group.id, from, actor);
       await audit(tx, {
         actor, ip, action: 'employee.pay_group_change', entity_type: 'employee', entity_id: employee.id,
-        detail: { from: employee.pay_group_id, to: group.id },
+        detail: { from: employee.pay_group_id, to: group.id, effective_from: from },
       });
     }
     return {
-      moved: moving.length, unchanged: employees.length - moving.length,
+      moved: moving.length, unchanged: employees.length - moving.length, effective_from: from,
       employees: employees.map((employee) => ({ ...employee, pay_group_id: group.id })),
     };
   });
