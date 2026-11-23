@@ -1,5 +1,5 @@
 import { esiContributionPeriod, financialYearStart, firstOfMonth, lastOfMonth, maxDate, minDate, addMonths, ymOf } from '@ajpwer/shared';
-import { assemblePayslip, calendarDivisor, esiEligibility, expandStructure, pickPolicy, usesCtc, workingDaysInMonth } from '../calculations/index.js';
+import { assemblePayslip, calendarDivisor, esiEligibility, expandStructure, isBasic, isHra, pickPolicy, usesCtc, workingDaysInMonth } from '../calculations/index.js';
 import { fromDbDate, n, toDbDate } from '../utils/dbDates.js';
 import { AppError } from '../utils/errors.js';
 import { ratesOn, salaryOn, structureComponents } from './rules.service.js';
@@ -18,7 +18,7 @@ export function adhocFor(e, items) {
     .map((a) => ({ id: a.id, kind: a.kind, name: a.name, amount: n(a.amount), is_taxable: a.is_taxable }));
 }
 
-/** Months of the financial year the person is employed — TDS is spread over these. */
+/** Months of the financial year the person is employed. */
 export function monthsInFy(ym, joined, lastDay) {
   const fy = financialYearStart(ym);
   const start = maxDate(`${fy}-04-01`, joined);
@@ -27,6 +27,67 @@ export function monthsInFy(ym, joined, lastDay) {
   let count = 0;
   for (let m = ymOf(start); m <= ymOf(end); m = addMonths(m, 1)) count++;
   return Math.max(1, count);
+}
+
+/** Months left in the tax year from `ym`, this month included: to March, or to the last working day's month. */
+export function monthsLeftInFy(ym, lastDay) {
+  const fy = financialYearStart(ym);
+  const end = lastDay ? minDate(`${fy + 1}-03-31`, lastDay) : `${fy + 1}-03-31`;
+  if (ymOf(end) < ym) return 1;
+  let count = 0;
+  for (let m = ym; m <= ymOf(end); m = addMonths(m, 1)) count++;
+  return Math.max(1, count);
+}
+
+/** Months employed earlier this tax year, before `ym`. */
+export function monthsEmployedBefore(ym, joined) {
+  const fy = financialYearStart(ym);
+  let count = 0;
+  for (let m = ymOf(maxDate(`${fy}-04-01`, joined)); m < ym; m = addMonths(m, 1)) count++;
+  return count;
+}
+
+const EARNING_KINDS = ['COMPONENT', 'YEARLY', 'OT', 'OFFDAY', 'LEAVE', 'ADHOC'];
+
+/** One payslip's contribution to the year-to-date tax figures. Older payslips are read from their lines. */
+export function payslipTaxFigures(slip) {
+  const amount = (l) => n(l.amount);
+  const saved = slip.meta?.tax_ytd;
+  const tds = slip.lines.filter((l) => l.code === 'TDS').reduce((a, l) => a + amount(l), 0);
+  if (saved) return { ...saved, tds };
+  const lines = slip.lines;
+  const component = (test) => lines.filter((l) => l.kind === 'COMPONENT' && test({ name: l.name })).reduce((a, l) => a + amount(l), 0);
+  return {
+    taxable: lines.filter((l) => EARNING_KINDS.includes(l.kind) && l.is_taxable).reduce((a, l) => a + amount(l), 0),
+    basic: component(isBasic),
+    hra: component(isHra),
+    pf_80c: lines.filter((l) => l.code === 'PF' || l.code === 'VPF').reduce((a, l) => a + amount(l), 0),
+    variable: lines.filter((l) => l.kind === 'OT' || l.kind === 'OFFDAY').reduce((a, l) => a + amount(l), 0),
+    tds,
+  };
+}
+
+/**
+ * What each person was paid and had deducted earlier this tax year, from the payslips of
+ * months already run (generated, locked or paid). The regime is the one the year's first
+ * payslip used: it holds until March.
+ */
+export async function loadTaxYtd(db, employeeIds, ym) {
+  const fy = financialYearStart(ym);
+  const slips = employeeIds.length ? await db.payslip.findMany({
+    where: { employee_id: { in: employeeIds }, deleted_at: null, period: { deleted_at: null, state: { in: ['RUN', 'LOCKED', 'PAID'] }, period_ym: { gte: `${fy}-04`, lt: ym } } },
+    select: { employee_id: true, meta: true, period: { select: { period_ym: true } }, lines: { select: { kind: true, code: true, name: true, amount: true, is_taxable: true } } },
+  }) : [];
+  slips.sort((a, b) => a.period.period_ym.localeCompare(b.period.period_ym));
+  const out = new Map(employeeIds.map((id) => [id, { taxable: 0, tds: 0, basic: 0, hra: 0, pf_80c: 0, variable: 0, months: 0, regime: null }]));
+  for (const slip of slips) {
+    const y = out.get(slip.employee_id);
+    const f = payslipTaxFigures(slip);
+    for (const k of ['taxable', 'tds', 'basic', 'hra', 'pf_80c', 'variable']) y[k] += f[k] ?? 0;
+    y.months++;
+    y.regime ??= slip.meta?.regime ?? null;
+  }
+  return out;
 }
 
 export function recoveryItems(src) {
@@ -111,8 +172,22 @@ export async function computePayslip(db, e, ym, month, ctx, recoveries, inputs) 
     ctx.rates.esi,
   );
 
-  const regimeCode = e.statutory.tax_regime_code === 'OLD' ? 'OLD' : 'NEW';
+  // Tax: what was paid and deducted earlier this tax year, the regime the year started
+  // on, the previous employer's Form 12B figures, and the months left to spread over.
+  const ytdRow = inputs?.taxYtd?.ym === ym ? inputs.taxYtd.map.get(e.id) : (await loadTaxYtd(db, [e.id], ym)).get(e.id);
+  const ytd = ytdRow ?? { taxable: 0, tds: 0, basic: 0, hra: 0, pf_80c: 0, variable: 0, months: 0, regime: null };
+  const declaredRegime = e.statutory.tax_regime_code === 'OLD' ? 'OLD' : 'NEW';
+  const regimeCode = ytd.regime === 'OLD' || ytd.regime === 'NEW' ? ytd.regime : declaredRegime;
   const mify = monthsInFy(ym, joined, lastDay);
+  const monthsLeft = monthsLeftInFy(ym, lastDay);
+  // Months employed this year with no payroll run on record are estimated at the current salary.
+  const missing = Math.max(0, monthsEmployedBefore(ym, joined) - ytd.months);
+  const fy = financialYearStart(ym);
+  const previous = e.statutory.prev_employer_fy === fy
+    ? { income: n(e.statutory.prev_employer_income ?? 0), tds: n(e.statutory.prev_employer_tds ?? 0) }
+    : { income: 0, tds: 0 };
+  // No PAN on file: the higher TDS rate applies. Only when identity was loaded.
+  const noPan = e.has_pan === false || (e.has_pan === undefined && e.identity !== undefined && !e.identity?.pan_enc);
 
   const result = assemblePayslip({
     ym,
@@ -144,6 +219,10 @@ export async function computePayslip(db, e, ym, month, ctx, recoveries, inputs) 
         decl_metro: e.statutory.decl_metro,
       },
       months_in_fy: mify,
+      months_left: monthsLeft,
+      ytd: { ...ytd, missing },
+      previous,
+      no_pan: noPan,
     },
     adhoc: adhocFor(e, ctx.adhoc),
     recoveries: recoveries ? recoveryItems(recoveries) : [],
@@ -161,7 +240,11 @@ export async function computePayslip(db, e, ym, month, ctx, recoveries, inputs) 
     salary: { mode: salary.mode, amount: salary.amount, monthly_gross: salary.monthly_gross, structure_id: salary.structure_id, salary_id: salary.id },
     esi: { applicable: esi.applicable, locked_until: esi.esi_locked_until, reason: esi.reason },
     regime: regimeCode,
+    declared_regime: declaredRegime,
     pt_state: e.statutory.pt_state,
     months_in_fy: mify,
+    months_left: monthsLeft,
+    tax_ytd_estimated_months: missing,
+    previous_employer: previous,
   };
 }

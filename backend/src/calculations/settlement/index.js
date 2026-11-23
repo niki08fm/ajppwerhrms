@@ -37,6 +37,25 @@ export function describeGratuity(g, rules) {
 
 const NO_ADJUSTMENTS = { excluded: {}, days: {}, extra: [] };
 
+/** Gratuity is exempt up to ₹20,00,000. */
+export const GRATUITY_EXEMPT = 20_00_000_00;
+/** Leave encashment on leaving is exempt up to ₹25,00,000 and ten months' basic. */
+export const LEAVE_ENCASH_EXEMPT = 25_00_000_00;
+
+/**
+ * The taxable part of a settlement's own earnings: HR-added earnings in full, gratuity
+ * above its exemption, leave encashment above its exemption. The final month's salary
+ * and held salary are taxed on payslips, and reimbursements are not income.
+ */
+export function settlementTaxable(earnings, monthlyBasic) {
+  const live = earnings.filter((l) => !l.excluded);
+  const sum = (test) => live.filter((l) => test(l.code)).reduce((s, l) => s + l.amount, 0);
+  const added = sum((c) => c.startsWith('ADJ:'));
+  const gratuity = Math.max(0, sum((c) => c === 'GRATUITY') - GRATUITY_EXEMPT);
+  const leave = Math.max(0, sum((c) => c.startsWith('LEAVE_ENCASH:')) - Math.min(LEAVE_ENCASH_EXEMPT, monthlyBasic * 10));
+  return { added, gratuity, leave, total: added + gratuity + leave };
+}
+
 /** Lines HR can switch off on a settlement. The final month's salary and its statutory deductions stay. */
 const switchable = (code) => /^(LEAVE_ENCASH:|LOAN:|ADVANCE:|HELD:)/.test(code) || ['GRATUITY', 'PENDING_REIMB', 'FINAL_REIMB'].includes(code);
 
@@ -98,6 +117,11 @@ export function computeSettlement(input) {
     for (const s of input.final_month.statutory_lines) {
       if (s.amount > 0) deductions.push({ code: s.code, name: `${s.name} on the final month`, amount: s.amount });
     }
+  }
+
+  // Income tax on the taxable part of the settlement's own payments, worked out by the caller.
+  if (input.settlement_tds?.amount > 0) {
+    deductions.push({ code: 'TDS_FNF', name: 'Income tax on settlement payments', amount: input.settlement_tds.amount, detail: input.settlement_tds.detail });
   }
 
   // At settlement the recovery cap does not apply: the full balance is due.

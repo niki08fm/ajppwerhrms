@@ -1,14 +1,23 @@
-import { clampMin0, divRound, LIMIT_80C, LIMIT_80D, pct, roundRupee } from '@ajpwer/shared';
+import { clampMin0, LIMIT_80C, LIMIT_80D, pct, roundRupee } from '@ajpwer/shared';
 
 /*
- * Income tax — deliberately NOT built:
+ * Income tax on salary, following the AJPWER Income Tax (TDS on Salary) Policy.
  *
- *  1. Surcharge on income above ₹50 lakh. No AJPWER employee is near it today.
- *     It MUST be added here before anyone crosses ₹50 lakh.
- *  2. Quarterly true-up of TDS against what has already been deducted. Monthly
- *     TDS below is a projection that assumes salary continues unchanged and
- *     spreads tax evenly. Add the true-up before the first year-end filing.
+ * Monthly TDS = (tax on the projected income for the year − TDS already deducted
+ * this year) ÷ months left, plus the full extra tax a one-off causes in the month
+ * it is paid. By the last month of employment, TDS deducted equals the year's tax.
+ *
+ * Deliberately NOT built: surcharge on income above ₹50 lakh. No AJPWER employee
+ * is near it today. It MUST be added here before anyone crosses ₹50 lakh.
  */
+
+/** Section 288B: taxable income and tax are rounded to the nearest ₹10 (1,000 paise). */
+export function roundTen(p) {
+  return Math.round(p / 1000) * 1000;
+}
+
+/** The no-PAN floor on salary TDS: the higher of the average rate or this rate. */
+export const NO_PAN_RATE = 20;
 
 /** Tax on a taxable figure by slab, before rebate and cess. */
 export function slabTax(taxable, regime) {
@@ -28,20 +37,30 @@ export function slabTax(taxable, regime) {
   return { bands, tax };
 }
 
-/** HRA exemption, old regime only, all figures annual. */
+/**
+ * HRA exemption, old regime only, all figures annual. Rent counts only for the
+ * months employed (`income.rent_months`, twelve when not given).
+ */
 export function hraExemption(income, decl) {
   if (income.hra <= 0 || decl.decl_rent_monthly <= 0) return 0;
-  const rentLessTenPct = clampMin0(decl.decl_rent_monthly * 12 - pct(income.basic, 10));
+  const rentMonths = income.rent_months ?? 12;
+  const rentLessTenPct = clampMin0(decl.decl_rent_monthly * rentMonths - pct(income.basic, 10));
   const kBasic = pct(income.basic, decl.decl_metro ? 50 : 40);
   return Math.min(income.hra, rentLessTenPct, kBasic);
 }
 
-export function computeAnnualTax(income, decl, regime) {
+/**
+ * Annual tax on an income. `income.pf_80c` (employee PF and VPF for the year) counts
+ * under 80C with the declared amount, within the one ₹1,50,000 limit.
+ */
+export function computeAnnualTax(income, decl, regime, opts = {}) {
   const std = Math.min(regime.std_deduction, income.gross);
   const hra_exemption = regime.allows_hra ? hraExemption(income, decl) : 0;
-  const deduction_80c = regime.allows_80c ? Math.min(decl.decl_80c, LIMIT_80C) : 0;
-  const deduction_80d = regime.allows_80c ? Math.min(decl.decl_80d, LIMIT_80D) : 0;
-  const taxable = clampMin0(income.gross - std - hra_exemption - deduction_80c - deduction_80d);
+  const pf_80c = regime.allows_80c ? income.pf_80c ?? 0 : 0;
+  const deduction_80c = regime.allows_80c ? Math.min(decl.decl_80c + pf_80c, LIMIT_80C) : 0;
+  const allows80d = regime.allows_80d ?? regime.allows_80c;
+  const deduction_80d = allows80d ? Math.min(decl.decl_80d, LIMIT_80D) : 0;
+  const taxable = roundTen(clampMin0(income.gross - std - hra_exemption - deduction_80c - deduction_80d));
 
   const { bands, tax: slab_tax } = slabTax(taxable, regime);
 
@@ -55,7 +74,13 @@ export function computeAnnualTax(income, decl, regime) {
   }
   const tax_after_rebate = clampMin0(slab_tax - rebate - marginal_relief);
   const cess = pct(tax_after_rebate, regime.cess_pct);
-  const total = roundRupee(tax_after_rebate + cess);
+  let total = roundTen(tax_after_rebate + cess);
+  // No PAN: where tax is due, the higher of the average rate or 20% of taxable income.
+  let no_pan_floor = 0;
+  if (opts.no_pan && total > 0) {
+    no_pan_floor = roundTen(pct(taxable, NO_PAN_RATE));
+    total = Math.max(total, no_pan_floor);
+  }
 
   return {
     regime: regime.code,
@@ -63,6 +88,7 @@ export function computeAnnualTax(income, decl, regime) {
     std_deduction: std,
     hra_exemption,
     deduction_80c,
+    pf_80c: Math.min(pf_80c, deduction_80c),
     deduction_80d,
     taxable,
     bands,
@@ -71,6 +97,7 @@ export function computeAnnualTax(income, decl, regime) {
     marginal_relief,
     tax_after_rebate,
     cess,
+    no_pan_floor,
     total,
   };
 }
@@ -85,13 +112,68 @@ export function compareRegimes(income, decl, regimes) {
   return { new: n, old: o, cheaper, difference, sentence };
 }
 
+/** Year-to-date figures before this month: nothing paid yet. */
+export const EMPTY_YTD = Object.freeze({ taxable: 0, tds: 0, basic: 0, hra: 0, pf_80c: 0, variable: 0, months: 0 });
+
 /**
- * Monthly TDS: projected annual tax spread evenly, plus the incremental tax a
- * taxable one-off causes in the month it is paid:  Δ = tax(annual + one-off) − tax(annual).
+ * This month's TDS under the policy.
+ *
+ * `month` is this month's actual figures: `taxable` (taxable pay this month, after LOP,
+ * excluding one-offs and variable pay), `variable` (overtime and off-day pay),
+ * `one_off` (bonus, ad-hoc earnings, leave encashment), `basic`, `hra`, `pf_80c`.
+ * `ahead` is the expected figures for each month after this one: `taxable` (the full
+ * monthly salary), `basic`, `hra`, `pf_80c`, plus `known` (yearly components due in
+ * those months). `ytd` holds what this company paid and deducted earlier this year;
+ * `previous` the previous employer's income and TDS (Form 12B).
+ */
+export function policyTds({ month, ahead, monthsLeft, ytd = EMPTY_YTD, previous = { income: 0, tds: 0 }, decl, regime, noPan = false }) {
+  const left = Math.max(1, monthsLeft);
+  // Months employed earlier this year with no payroll on record are estimated at the
+  // current salary, so their tax is still collected over the months left.
+  const future = left - 1 + (ytd.missing ?? 0);
+  // Recurring variable pay is projected forward at its average so far this year.
+  const variableAverage = Math.round((ytd.variable + month.variable) / (ytd.months + 1));
+  const projectedGross = previous.income + ytd.taxable + month.taxable + month.variable + future * (ahead.taxable + variableAverage) + (ahead.known ?? 0);
+  const income = {
+    gross: projectedGross,
+    basic: ytd.basic + month.basic + future * ahead.basic,
+    hra: ytd.hra + month.hra + future * ahead.hra,
+    pf_80c: ytd.pf_80c + month.pf_80c + future * ahead.pf_80c,
+    rent_months: ytd.months + 1 + future,
+  };
+  const opts = { no_pan: noPan };
+  const base = computeAnnualTax(income, decl, regime, opts);
+  const withOneOff = month.one_off > 0 ? computeAnnualTax({ ...income, gross: income.gross + month.one_off }, decl, regime, opts) : base;
+  const due = clampMin0(base.total - ytd.tds - previous.tds);
+  const regular = roundRupee(Math.round(due / left));
+  const incremental = clampMin0(withOneOff.total - base.total);
+  return {
+    regular,
+    incremental,
+    total: regular + incremental,
+    annual: withOneOff.total,
+    projected_income: income.gross + month.one_off,
+    taxable_income: withOneOff.taxable,
+    tds_to_date: ytd.tds,
+    previous_tds: previous.tds,
+    previous_income: previous.income,
+    months_left: left,
+    variable_average: variableAverage,
+    no_pan: noPan && withOneOff.no_pan_floor > 0,
+    estimated_months: ytd.missing ?? 0,
+    income: { ...income, gross: income.gross + month.one_off },
+    working: withOneOff,
+  };
+}
+
+/**
+ * Monthly TDS with no year-to-date history: projected annual tax spread evenly over
+ * twelve months, plus the incremental tax a taxable one-off causes in the month it is paid.
+ * Kept for callers that only need an estimate (salary previews).
  */
 export function monthlyTds(projected, oneOffTaxable, decl, regime) {
   const base = computeAnnualTax(projected, decl, regime);
-  const regular = roundRupee(divRound(base.total, 12));
+  const regular = roundRupee(Math.round(base.total / 12));
   let incremental = 0;
   if (oneOffTaxable > 0) {
     const withOneOff = computeAnnualTax({ ...projected, gross: projected.gross + oneOffTaxable }, decl, regime);

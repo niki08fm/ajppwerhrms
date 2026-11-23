@@ -1,5 +1,5 @@
-import { lastOfMonth, STEP, ymOf } from '@ajpwer/shared';
-import { baseMonthly, computeSettlement, expandStructure, pickPolicy } from '../calculations/index.js';
+import { formatINR, lastOfMonth, STEP, ymOf } from '@ajpwer/shared';
+import { baseMonthly, computeAnnualTax, computeSettlement, expandStructure, pickPolicy, settlementTaxable } from '../calculations/index.js';
 import { fromDbDate, n } from '../utils/dbDates.js';
 import { AppError } from '../utils/errors.js';
 import { computeMonths } from './attendance.service.js';
@@ -52,7 +52,7 @@ export async function computeSettlementFor(db, employeeId, opts = {}) {
   ]);
   const submitted = opts.attendanceSubmitted ?? (!!period && (period.steps_submitted.includes(STEP.ATTENDANCE) || period.state !== 'DRAFT'));
 
-  const result = computeSettlement({
+  const settlementInput = {
     employee: {
       joined_on: fromDbDate(e.joined_on),
       last_day: lastDay,
@@ -77,7 +77,24 @@ export async function computeSettlementFor(db, employeeId, opts = {}) {
     pending_reimbursements: 0,
     loans_outstanding: loans.map((l) => ({ id: l.id, label: l.loan_type, amount: n(l.principal) - n(l.recovered) })),
     advances_outstanding: advances.map((a) => ({ id: a.id, label: a.reason, amount: n(a.amount) - n(a.recovered) })),
-  });
+  };
+  // Tax on the settlement's taxable payments: the extra tax they add to the final
+  // month's projection for the year, deducted in full.
+  const first = computeSettlement(settlementInput);
+  const taxable = settlementTaxable(first.earnings, full.basic);
+  let settlement_tds = null;
+  const tds = payslip.result.tds;
+  if (taxable.total > 0 && tds?.income) {
+    const regime = ctx.regimes[payslip.regime];
+    const decl = { decl_80c: n(e.statutory.decl_80c), decl_80d: n(e.statutory.decl_80d), decl_rent_monthly: n(e.statutory.decl_rent_monthly), decl_metro: e.statutory.decl_metro };
+    const opts = { no_pan: tds.no_pan };
+    const before = computeAnnualTax(tds.income, decl, regime, opts).total;
+    const after = computeAnnualTax({ ...tds.income, gross: tds.income.gross + taxable.total }, decl, regime, opts).total;
+    const amount = Math.max(0, after - before);
+    const parts = [taxable.added && `HR-added earnings ${formatINR(taxable.added)}`, taxable.gratuity && `gratuity above the exemption ${formatINR(taxable.gratuity)}`, taxable.leave && `leave encashment above the exemption ${formatINR(taxable.leave)}`].filter(Boolean);
+    settlement_tds = { amount, taxable: taxable.total, detail: `Extra tax on ${parts.join(', ')}` };
+  }
+  const result = settlement_tds ? computeSettlement({ ...settlementInput, settlement_tds }) : first;
   return { result, ym, last_day: lastDay, checklist, adjustments, held };
 }
 

@@ -7,6 +7,7 @@ import {
   employeeCoreSchema,
   employeeIdentitySchema,
   employeeUpdateSchema,
+  financialYearStart,
   formatINR,
   formatYearMonth,
   isoDate,
@@ -615,6 +616,19 @@ export const updateStatutory = asyncHandler(async (req, res) => {
   if (b.decl_80c !== undefined) data.decl_80c = BigInt(b.decl_80c);
   if (b.decl_80d !== undefined) data.decl_80d = BigInt(b.decl_80d);
   if (b.decl_rent_monthly !== undefined) data.decl_rent_monthly = BigInt(b.decl_rent_monthly);
+  if (b.prev_employer_income !== undefined) data.prev_employer_income = BigInt(b.prev_employer_income);
+  if (b.prev_employer_tds !== undefined) data.prev_employer_tds = BigInt(b.prev_employer_tds);
+  // Form 12B figures belong to a tax year: the current one unless HR names another.
+  if ((b.prev_employer_income !== undefined || b.prev_employer_tds !== undefined) && b.prev_employer_fy === undefined) data.prev_employer_fy = financialYearStart(today());
+  // The regime holds for the tax year once its first payroll has run.
+  let warning = null;
+  if (b.tax_regime_code && b.tax_regime_code !== before.tax_regime_code) {
+    const fy = financialYearStart(today());
+    const run = await prisma.payslip.findFirst({ where: { employee_id: e.id, deleted_at: null, period: { deleted_at: null, state: { in: ['RUN', 'LOCKED', 'PAID'] }, period_ym: { gte: `${fy}-04` } } }, select: { meta: true } });
+    if (run?.meta?.regime && run.meta.regime !== b.tax_regime_code) {
+      warning = `Payroll keeps the ${run.meta.regime === 'OLD' ? 'old' : 'new'} regime until March: this tax year's payroll has already run on it. The change applies from April.`;
+    }
+  }
   if (b.pt_applicable === true) data.pt_exempt_reason = null;
   // ESI can be switched on only for someone eligible: selected wages within the ceiling, or still
   // covered for the current contribution period.
@@ -636,7 +650,7 @@ export const updateStatutory = asyncHandler(async (req, res) => {
     await audit(tx, { actor, ip, action: 'statutory.update', entity_type: 'employee', entity_id: e.id, detail: { changes } });
     await markTask(tx, e.id, 'STATUTORY', actor);
   });
-  res.json({ data: { ok: true } });
+  res.json({ data: { ok: true }, warning });
 });
 
 /** Everything the pay and statutory tab shows, at full pay. */

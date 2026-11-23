@@ -2,7 +2,7 @@ import { clampMin0, formatLongDate, pct } from '@ajpwer/shared';
 import { computeEsi } from '../statutory/esi.js';
 import { computePf, pfChallanCharges, pfEmployerCost } from '../statutory/pf.js';
 import { computePt } from '../statutory/pt.js';
-import { monthlyTds } from '../statutory/incomeTax.js';
+import { EMPTY_YTD, policyTds } from '../statutory/incomeTax.js';
 import { encashAmount } from '../leave/index.js';
 import { earnedAfterLop, LOP_RULE_TEXT } from './lop.js';
 import { baseMonthly, describeRate, offDayExtra, overtimePay } from './overtime.js';
@@ -10,7 +10,18 @@ import { expandStructure } from './structure.js';
 import { applyRecoveryCap } from './recovery.js';
 
 /** Stored on every payslip. Bump when a computation changes so old months stay explainable. */
-export const ENGINE_VERSION = '1.6.0';
+export const ENGINE_VERSION = '1.7.0';
+
+/** Taxable yearly components due in the `count` months after `ym`: known income the projection includes. */
+export function knownYearlyAhead(yearly, ym, count) {
+  let month = Number(ym.slice(5, 7));
+  let total = 0;
+  for (let i = 0; i < count; i++) {
+    month = month === 12 ? 1 : month + 1;
+    for (const y of yearly) if (y.is_taxable && y.pay_month === month && y.amount > 0) total += y.amount;
+  }
+  return total;
+}
 
 export class PayslipReconciliationError extends Error {
   constructor(message) {
@@ -37,6 +48,7 @@ export function assemblePayslip(input) {
   let pfBaseEarned = 0;
   let esiBaseEarned = 0;
   let taxableRegular = 0;
+  let taxableEarned = 0;
   // The full month's wages, before loss of pay: the fixed salary a register shows beside what was earned.
   let fixedGross = 0;
   let pfBaseFixed = 0;
@@ -53,7 +65,10 @@ export function assemblePayslip(input) {
       esiBaseEarned += earned;
       esiBaseFixed += c.amount;
     }
-    if (c.is_taxable) taxableRegular += c.amount;
+    if (c.is_taxable) {
+      taxableRegular += c.amount;
+      taxableEarned += earned;
+    }
     push({ kind: 'COMPONENT', code: c.name, name: c.name, full_amount: c.amount, amount: earned, is_taxable: c.is_taxable, counts_as_wages: c.counts_as_wages });
   }
 
@@ -137,17 +152,41 @@ export function assemblePayslip(input) {
   const pf = computePf(pfBaseEarned, input.statutory, input.rates.pf);
   const esi = computeEsi(input.statutory.esi_applicable, esi_wage, input.rates.esi);
   const pt = computePt({ pt_applicable: input.statutory.pt_applicable, pt_state: input.statutory.pt_state, gender: input.employee.gender, gross: statutory_gross, month }, input.pt_slabs);
-  const monthsInFy = Math.max(1, input.tax.months_in_fy);
-  const projected = {
-    gross: taxableRegular * monthsInFy,
-    basic: full.basic * monthsInFy,
-    hra: full.hra * monthsInFy,
-  };
-  const oneOffTaxable = yearlyTaxable + adhocTaxable + otAmount + offdayTotal + leaveTotal;
-  const tdsCalc = monthlyTds(projected, oneOffTaxable, input.tax.declarations, input.tax.regime);
-  // monthlyTds spreads over 12; re-spread over the months actually employed this year.
-  const regular = Math.round(tdsCalc.annual / monthsInFy / 100) * 100;
-  const tds = regular + tdsCalc.incremental;
+  // Income tax: the year's projected tax less TDS already deducted, spread over the
+  // months left, plus the full extra tax on this month's one-offs (see incomeTax.js).
+  const monthsLeft = Math.max(1, input.tax.months_left ?? input.tax.months_in_fy ?? 12);
+  const fixedPf = computePf(pfBaseFixed, input.statutory, input.rates.pf);
+  const lopShare = (amount) => earnedAfterLop(amount, input.divisor, rule, att.lop_days, att.paid_days);
+  const tdsCalc = policyTds({
+    month: {
+      taxable: taxableEarned + yearlyTaxable,
+      variable: otAmount + offdayTotal,
+      one_off: adhocTaxable + leaveTotal,
+      basic: lopShare(full.basic),
+      hra: lopShare(full.hra),
+      pf_80c: pf.employee + pf.vpf,
+    },
+    ahead: {
+      taxable: taxableRegular,
+      basic: full.basic,
+      hra: full.hra,
+      pf_80c: fixedPf.employee + fixedPf.vpf,
+      known: knownYearlyAhead(full.yearly, input.ym, monthsLeft - 1),
+    },
+    monthsLeft,
+    ytd: input.tax.ytd ?? EMPTY_YTD,
+    previous: input.tax.previous ?? { income: 0, tds: 0 },
+    decl: input.tax.declarations,
+    regime: input.tax.regime,
+    noPan: !!input.tax.no_pan,
+  });
+  // TDS never takes more than the month's pay after the other statutory deductions.
+  // What it cannot take stays due, and the next month's calculation collects it.
+  const available = clampMin0(gross - pf.employee - pf.vpf - esi.employee - pt.amount);
+  const tds = Math.min(tdsCalc.total, available);
+  if (tds < tdsCalc.total) flags.push('TDS_CAPPED');
+  const incremental = Math.min(tdsCalc.incremental, tds);
+  const regular = tds - incremental;
 
   const statutoryLines = [
     ['PF', 'Provident fund', pf.employee],
@@ -244,7 +283,32 @@ export function assemblePayslip(input) {
     lop_rule_text: LOP_RULE_TEXT[rule],
     ot,
     recovery,
-    tds: { regular, incremental: tdsCalc.incremental, annual: tdsCalc.annual },
+    tds: {
+      regular,
+      incremental,
+      annual: tdsCalc.annual,
+      // What the policy asked for this month, before the cap at available pay.
+      due_this_month: tdsCalc.total,
+      projected_income: tdsCalc.projected_income,
+      taxable_income: tdsCalc.taxable_income,
+      tds_to_date: tdsCalc.tds_to_date,
+      previous_income: tdsCalc.previous_income,
+      previous_tds: tdsCalc.previous_tds,
+      months_left: tdsCalc.months_left,
+      variable_average: tdsCalc.variable_average,
+      no_pan: tdsCalc.no_pan,
+      estimated_months: tdsCalc.estimated_months,
+      regime: input.tax.regime.code,
+      income: tdsCalc.income,
+    },
+    // What this month adds to the year-to-date tax figures of later months.
+    tax_ytd: {
+      taxable: taxableEarned + yearlyTaxable + otAmount + offdayTotal + adhocTaxable + leaveTotal,
+      basic: lopShare(full.basic),
+      hra: lopShare(full.hra),
+      pf_80c: pf.employee + pf.vpf,
+      variable: otAmount + offdayTotal,
+    },
     pt_basis: pt.basis,
     flags,
     engine_version: ENGINE_VERSION,

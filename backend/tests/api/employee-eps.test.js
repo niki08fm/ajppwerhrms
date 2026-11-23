@@ -3,6 +3,7 @@ import request from 'supertest';
 import { prisma } from '../../src/config/db.js';
 import { invalidatePrincipal } from '../../src/middleware/auth.js';
 import { app, buildFixture, R, runAndWait, submitSteps, YM } from './fixture.js';
+import { ENGINE_VERSION } from '../../src/calculations/index.js';
 
 let f;
 beforeEach(async () => { f = await buildFixture(); invalidatePrincipal(); });
@@ -151,7 +152,7 @@ describe('EPS in payroll snapshots and ECR reports', () => {
     expect((await runAndWait(f.agent, YM)).status).toBe('DONE');
     const snapshot = await payrollSnapshot();
     expect(snapshot).toMatchObject({ gross: R(30000), pf_wage: R(15000), employer_total: R(1800),
-      ctc_month: R(31800), engine_version: '1.6.0', meta: { eps_wage: 0 } });
+      ctc_month: R(31800), engine_version: ENGINE_VERSION, meta: { eps_wage: 0 } });
     expect(lineAmount(snapshot, 'PF')).toBe(R(1800));
     expect(lineAmount(snapshot, 'ER_EPF')).toBe(R(1800));
     expect(lineAmount(snapshot, 'ER_EPS')).toBe(0);

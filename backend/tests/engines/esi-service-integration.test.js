@@ -27,6 +27,8 @@ function database(salaries, structures) {
         .sort((a, b) => b.valid_from - a.valid_from)[0] ?? null;
     }) },
     salaryComponent: { findMany: vi.fn(async ({ where }) => structures[where.structure_id]) },
+    // No earlier payslips this tax year: TDS starts from nothing paid.
+    payslip: { findMany: vi.fn(async () => []) },
   };
 }
 async function payslip(db, ym = '2026-08', statutory = {}, rates = RATES) {

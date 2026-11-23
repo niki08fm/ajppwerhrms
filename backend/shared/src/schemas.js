@@ -344,6 +344,10 @@ export const statutoryUpdateSchema = z
     decl_80d: paise.optional(),
     decl_rent_monthly: paise.optional(),
     decl_metro: z.boolean().optional(),
+    /** Form 12B for the tax year starting in April of `prev_employer_fy`. */
+    prev_employer_fy: z.number().int().min(2000).max(2100).nullable().optional(),
+    prev_employer_income: paise.optional(),
+    prev_employer_tds: paise.optional(),
   })
   .strict()
   .refine((v) => v.pt_applicable !== false || (v.pt_exempt_reason && v.pt_exempt_reason.trim().length >= 3), {

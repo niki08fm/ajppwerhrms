@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { formatINR } from '@ajpwer/shared';
+import { financialYearStart, formatINR, istDate } from '@ajpwer/shared';
 import { api, errorMessage } from '@/services/api';
 import { cn, toPaise, toRupeesInput } from '@/utils';
 import { Money } from '@/components/bits';
@@ -175,10 +175,15 @@ export function TaxTab({ e, compact = false, selectedOnly = false }) {
   const st = e.statutory;
   const [d, setD] = useState({ c80: '', d80: '', rent: '', metro: false });
   useEffect(() => setD({ c80: toRupeesInput(st.decl_80c), d80: toRupeesInput(st.decl_80d), rent: toRupeesInput(st.decl_rent_monthly), metro: st.decl_metro }), [st]);
+  const taxYear = financialYearStart(istDate(new Date()));
+  const prevThisYear = st.prev_employer_fy === taxYear;
+  const [prev, setPrev] = useState({ income: '', tds: '' });
+  useEffect(() => setPrev({ income: prevThisYear ? toRupeesInput(st.prev_employer_income) : '', tds: prevThisYear ? toRupeesInput(st.prev_employer_tds) : '' }), [st, prevThisYear]);
   const save = useMutation({
     mutationFn: (body) => api.patch(`/employees/${e.id}/statutory`, body),
-    onSuccess: () => {
-      toast.success('Saved');
+    onSuccess: (r) => {
+      if (r?.warning) toast.warning(r.warning);
+      else toast.success('Saved');
       qc.invalidateQueries({ queryKey: ['employee', e.id] });
       qc.invalidateQueries({ queryKey: ['employee-tax', e.id] });
       qc.invalidateQueries({ queryKey: ['employee-pay', e.id] });
@@ -231,9 +236,24 @@ export function TaxTab({ e, compact = false, selectedOnly = false }) {
         ) : (
           <p className="text-[13px] leading-relaxed text-muted-foreground">80C, 80D and rent declarations apply only to the Old regime. Standard deduction is automatic.</p>
         )}
+        <div className="mt-4 border-t border-dashed pt-3">
+          <div className="text-[13px] font-medium">Previous employer this tax year (Form 12B)</div>
+          <p className="mt-1 text-[13px] text-muted-foreground">
+            {prevThisYear ? 'Recorded for this tax year.' : 'Not recorded for this tax year. Enter zero if there was no earlier employer.'}
+          </p>
+          <div className="mt-2 grid gap-3 sm:grid-cols-2">
+            <Field label="Taxable salary">{(id) => <MoneyInput id={id} value={prev.income} disabled={disabled} onChange={(ev) => setPrev({ ...prev, income: ev.target.value })} />}</Field>
+            <Field label="TDS deducted">{(id) => <MoneyInput id={id} value={prev.tds} disabled={disabled} onChange={(ev) => setPrev({ ...prev, tds: ev.target.value })} />}</Field>
+          </div>
+          <div className="mt-3 flex justify-end">
+            <Button variant="outline" loading={save.isPending} disabled={disabled} onClick={() => save.mutate({ prev_employer_fy: taxYear, prev_employer_income: toPaise(prev.income || '0'), prev_employer_tds: toPaise(prev.tds || '0') })}>
+              Save previous employer
+            </Button>
+          </div>
+        </div>
         {!selectedOnly && (
           <p className="mt-2 text-[13px] text-muted-foreground">
-            TDS is a projection: it assumes salary continues unchanged and spreads the year's tax evenly. Surcharge above ₹50 lakh and quarterly true-up are not built.
+            Monthly TDS is the year's projected tax less TDS already deducted, spread over the months left. One-off payments carry their own extra tax in the month paid. The regime holds for the tax year once its first payroll runs. Surcharge above ₹50 lakh is not built.
           </p>
         )}
       </CardBody>

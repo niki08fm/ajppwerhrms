@@ -1,11 +1,11 @@
-import { firstOfMonth, formatYearMonth, GENERATE_STEP, LAST_REVIEW_STEP, lastOfMonth, STEP, ymOf } from '@ajpwer/shared';
+import { financialYearStart, firstOfMonth, formatYearMonth, GENERATE_STEP, LAST_REVIEW_STEP, lastOfMonth, STEP, ymOf } from '@ajpwer/shared';
 import { solveGrossFromCtc } from '../calculations/index.js';
 import { audit } from '../utils/audit.js';
 import { fromDbDate, n, toDbDate } from '../utils/dbDates.js';
 import { AppError } from '../utils/errors.js';
 import { prisma } from '../config/db.js';
 import { computeMonths } from './attendance.service.js';
-import { computePayslip, loadRecoveries } from './payslip.service.js';
+import { computePayslip, loadRecoveries, loadTaxYtd } from './payslip.service.js';
 import { ptSlabs, ratesOn, regimesOn, structureComponents } from './rules.service.js';
 import { withReadScope } from '../utils/read-scope.js';
 import { mapConcurrent } from '../utils/parallel.js';
@@ -34,7 +34,8 @@ export async function payContext(db, ym, ratesId) {
   const [rates, slabs, regimes, adhoc] = await Promise.all([
     ratesId ? import('./rules.service.js').then((m) => m.ratesById(db, ratesId)) : ratesOn(db, monthEnd),
     ptSlabs(db),
-    regimesOn(db, monthEnd),
+    // Tax rates hold for the whole tax year: pick them as at 1 April.
+    regimesOn(db, `${financialYearStart(ym)}-04-01`),
     db.adhocItem.findMany({ where: { period_ym: ym, deleted_at: null } }),
   ]);
   return { rates, pt_slabs: slabs, regimes, adhoc };
@@ -95,6 +96,8 @@ export function toPayslipEmployee(e) {
     department_id: e.department_id,
     pay_group_id: e.pay_group_id,
     statutory: e.statutory,
+    // Undefined when identity was not loaded: the no-PAN rate is never guessed.
+    has_pan: e.identity === undefined ? undefined : !!e.identity?.pan_enc,
   };
 }
 
@@ -123,10 +126,11 @@ export function computeRun(db, ym, employees, ctx, settlingIds, onProgress) {
 async function readRun(db, ym, employees, ctx, settlingIds, onProgress) {
   const regular = employees.filter((e) => !e.final_ym);
   const ids = employees.map((e) => e.id);
-  const [months, recoveries, inputs, holds, queued, finalRows] = await Promise.all([
+  const [months, recoveries, salaryInputs, taxYtd, holds, queued, finalRows] = await Promise.all([
     computeMonths(db, regular, ym),
     loadRecoveries(db, regular.map(e => e.id), ym),
     payrollSalaryInputs(db, ids),
+    loadTaxYtd(db, regular.map((e) => e.id), ym),
     db.salaryHold.findMany({ where: { employee_id: { in: ids }, deleted_at: null, released_at: null, from_ym: { lte: ym } } }),
     db.heldPay.findMany({ where: { employee_id: { in: ids }, state: 'QUEUED', pay_ym: ym } }),
     mapConcurrent(employees.filter(e => e.final_ym), 4, async e => {
@@ -135,6 +139,7 @@ async function readRun(db, ym, employees, ctx, settlingIds, onProgress) {
     }),
   ]);
   const finals = new Map(finalRows);
+  const inputs = { ...salaryInputs, taxYtd: { ym, map: taxYtd } };
   const payslips = [];
   const errors = [];
   let done = 0;
@@ -186,6 +191,11 @@ export const ISSUE_LABELS = {
   OT_OVER_CAP: 'Overtime over the monthly cap',
   NO_POLICY: 'No attendance policy on some days',
   HELD_NOT_PAID: 'Released held salary not paid',
+  NO_FORM_12B: 'No previous-employer figures',
+  REGIME_LOCKED: 'Regime change waits for April',
+  TDS_ESTIMATED: 'Earlier months estimated for TDS',
+  TDS_OVER: 'TDS above the tax owed',
+  TDS_CAPPED: 'TDS limited by low pay',
 };
 
 export async function computeIssues(db, ym) {
@@ -237,6 +247,14 @@ export async function computeIssues(db, ym) {
     if (p.result.net < 0) add(e, 'NEGATIVE_NET', 'BLOCKING', `Net pay would be −₹${Math.round(-p.result.net / 100).toLocaleString('en-IN')}.`, 'loans');
     const absences = p.result.lop_days;
     if (absences > 3 && !fromDbDate(e.last_day)) add(e, 'MANY_ABSENCES', 'WARNING', `${absences} days loss of pay this month.`, 'attendance');
+    const tds = p.result.tds;
+    const fy = financialYearStart(ym);
+    if (fromDbDate(e.joined_on) > `${fy}-04-01` && e.statutory?.prev_employer_fy !== fy) add(e, 'NO_FORM_12B', 'WARNING', 'Joined this tax year with no previous-employer salary recorded. Enter the Form 12B figures (zero if none) so TDS covers the whole year.', 'salary');
+    if (p.regime !== p.declared_regime) add(e, 'REGIME_LOCKED', 'WARNING', `Declared the ${p.declared_regime === 'OLD' ? 'old' : 'new'} regime, but this tax year's payroll started on the ${p.regime === 'OLD' ? 'old' : 'new'} one. It stays until March.`, 'salary');
+    if (tds.estimated_months > 0) add(e, 'TDS_ESTIMATED', 'WARNING', `${tds.estimated_months} earlier month${tds.estimated_months === 1 ? '' : 's'} this tax year ${tds.estimated_months === 1 ? 'has' : 'have'} no payroll on record; TDS estimates ${tds.estimated_months === 1 ? 'it' : 'them'} at the current salary.`, 'salary');
+    const overBy = tds.tds_to_date + tds.previous_tds + tds.regular + tds.incremental - tds.annual;
+    if (p.result.flags.includes('TDS_CAPPED')) add(e, 'TDS_CAPPED', 'WARNING', `This month's pay covers only ₹${Math.round((tds.regular + tds.incremental) / 100).toLocaleString('en-IN')} of the ₹${Math.round(tds.due_this_month / 100).toLocaleString('en-IN')} TDS due. ${tds.months_left > 1 ? 'The rest is collected over the months left.' : 'The rest stays unpaid: the employee pays it with their return.'}`, 'salary');
+    if (tds.months_left === 1 && overBy > 100000) add(e, 'TDS_OVER', 'WARNING', `TDS this tax year is ₹${Math.round(overBy / 100).toLocaleString('en-IN')} more than the tax owed. Payroll does not refund it; the employee claims it in their return.`, 'salary');
     if (p.result.flags.includes('OT_OVER_CAP')) add(e, 'OT_OVER_CAP', 'WARNING', `${Math.round((p.result.ot?.excess_min ?? 0) / 60)} hours of overtime above the cap are unpaid.`, 'attendance');
     if (p.salary.mode === 'CTC' && e.statutory?.esi_enabled && ctxForBand) {
       const components = await structureComponents(db, p.salary.structure_id);
@@ -455,6 +473,9 @@ export async function executeRun(ym, actor, onProgress) {
                 // Calculated as usual and kept out of the bank file until HR releases it.
                 held: ps.hold ? { hold_id: ps.hold.id, reason: ps.hold.reason, from_ym: ps.hold.from_ym } : null,
                 months_in_fy: ps.months_in_fy,
+                months_left: ps.months_left,
+                tax_ytd: r.tax_ytd,
+                previous_employer: ps.previous_employer,
               }),
             ),
           },

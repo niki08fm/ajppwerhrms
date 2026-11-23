@@ -716,6 +716,12 @@ model EmployeeStatutory {
   decl_80d               BigInt    @default(0)
   decl_rent_monthly      BigInt    @default(0)
   decl_metro             Boolean   @default(false)
+  /// Form 12B: the tax year (April start year) the previous-employer figures belong to
+  prev_employer_fy       Int?
+  /// Taxable salary from earlier employers this tax year, paise
+  prev_employer_income   BigInt    @default(0)
+  /// TDS earlier employers deducted this tax year, paise
+  prev_employer_tds      BigInt    @default(0)
   created_at             DateTime  @default(now()) @db.Timestamptz(6)
   updated_at             DateTime? @updatedAt @db.Timestamptz(6)
   deleted_at             DateTime? @db.Timestamptz(6)

@@ -118,6 +118,8 @@ export async function employeeView(db, e, today, fullPii) {
           decl_80c: n(e.statutory.decl_80c),
           decl_80d: n(e.statutory.decl_80d),
           decl_rent_monthly: n(e.statutory.decl_rent_monthly),
+          prev_employer_income: n(e.statutory.prev_employer_income ?? 0),
+          prev_employer_tds: n(e.statutory.prev_employer_tds ?? 0),
         }
       : null,
     salary,
