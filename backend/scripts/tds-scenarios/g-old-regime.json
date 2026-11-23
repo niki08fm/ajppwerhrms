@@ -1,0 +1,62 @@
+{
+  "name": "G. Old regime: ₹1,25,000, PF on, 80C ₹1,00,000, 80D ₹25,000, rent ₹30,000 in a metro",
+  "regime": "OLD",
+  "pf": true,
+  "declarations": {
+    "80c": 100000,
+    "80d": 25000,
+    "rent_monthly": 30000,
+    "metro": true
+  },
+  "expect_total_tds": 122740,
+  "months": [
+    {
+      "month": "2026-04",
+      "gross": 125000
+    },
+    {
+      "month": "2026-05",
+      "gross": 125000
+    },
+    {
+      "month": "2026-06",
+      "gross": 125000
+    },
+    {
+      "month": "2026-07",
+      "gross": 125000
+    },
+    {
+      "month": "2026-08",
+      "gross": 125000
+    },
+    {
+      "month": "2026-09",
+      "gross": 125000
+    },
+    {
+      "month": "2026-10",
+      "gross": 125000
+    },
+    {
+      "month": "2026-11",
+      "gross": 125000
+    },
+    {
+      "month": "2026-12",
+      "gross": 125000
+    },
+    {
+      "month": "2027-01",
+      "gross": 125000
+    },
+    {
+      "month": "2027-02",
+      "gross": 125000
+    },
+    {
+      "month": "2027-03",
+      "gross": 125000
+    }
+  ]
+}

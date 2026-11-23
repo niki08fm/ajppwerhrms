@@ -1,0 +1,66 @@
+{
+  "name": "E. ₹95,000 + 30 hours overtime every month (2× gross, 8-hour day)",
+  "regime": "NEW",
+  "months": [
+    {
+      "month": "2026-04",
+      "gross": 95000,
+      "overtime_hours": 30
+    },
+    {
+      "month": "2026-05",
+      "gross": 95000,
+      "overtime_hours": 30
+    },
+    {
+      "month": "2026-06",
+      "gross": 95000,
+      "overtime_hours": 30
+    },
+    {
+      "month": "2026-07",
+      "gross": 95000,
+      "overtime_hours": 30
+    },
+    {
+      "month": "2026-08",
+      "gross": 95000,
+      "overtime_hours": 30
+    },
+    {
+      "month": "2026-09",
+      "gross": 95000,
+      "overtime_hours": 30
+    },
+    {
+      "month": "2026-10",
+      "gross": 95000,
+      "overtime_hours": 30
+    },
+    {
+      "month": "2026-11",
+      "gross": 95000,
+      "overtime_hours": 30
+    },
+    {
+      "month": "2026-12",
+      "gross": 95000,
+      "overtime_hours": 30
+    },
+    {
+      "month": "2027-01",
+      "gross": 95000,
+      "overtime_hours": 30
+    },
+    {
+      "month": "2027-02",
+      "gross": 95000,
+      "overtime_hours": 30
+    },
+    {
+      "month": "2027-03",
+      "gross": 95000,
+      "overtime_hours": 30
+    }
+  ]
+}

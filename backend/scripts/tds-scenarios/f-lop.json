@@ -1,0 +1,66 @@
+{
+  "name": "F. ₹1,40,000 with 10 days loss of pay in June and December",
+  "regime": "NEW",
+  "months": [
+    {
+      "month": "2026-04",
+      "gross": 140000,
+      "lop_days": 0
+    },
+    {
+      "month": "2026-05",
+      "gross": 140000,
+      "lop_days": 0
+    },
+    {
+      "month": "2026-06",
+      "gross": 140000,
+      "lop_days": 10
+    },
+    {
+      "month": "2026-07",
+      "gross": 140000,
+      "lop_days": 0
+    },
+    {
+      "month": "2026-08",
+      "gross": 140000,
+      "lop_days": 0
+    },
+    {
+      "month": "2026-09",
+      "gross": 140000,
+      "lop_days": 0
+    },
+    {
+      "month": "2026-10",
+      "gross": 140000,
+      "lop_days": 0
+    },
+    {
+      "month": "2026-11",
+      "gross": 140000,
+      "lop_days": 0
+    },
+    {
+      "month": "2026-12",
+      "gross": 140000,
+      "lop_days": 10
+    },
+    {
+      "month": "2027-01",
+      "gross": 140000,
+      "lop_days": 0
+    },
+    {
+      "month": "2027-02",
+      "gross": 140000,
+      "lop_days": 0
+    },
+    {
+      "month": "2027-03",
+      "gross": 140000,
+      "lop_days": 0
+    }
+  ]
+}

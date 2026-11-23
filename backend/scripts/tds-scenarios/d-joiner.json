@@ -1,0 +1,35 @@
+{
+  "name": "D. Joins in October at ₹2,00,000 with ₹6,00,000 from a previous employer",
+  "regime": "NEW",
+  "previous": {
+    "income": 600000,
+    "tds": 0
+  },
+  "expect_total_tds": 150800,
+  "months": [
+    {
+      "month": "2026-10",
+      "gross": 200000
+    },
+    {
+      "month": "2026-11",
+      "gross": 200000
+    },
+    {
+      "month": "2026-12",
+      "gross": 200000
+    },
+    {
+      "month": "2027-01",
+      "gross": 200000
+    },
+    {
+      "month": "2027-02",
+      "gross": 200000
+    },
+    {
+      "month": "2027-03",
+      "gross": 200000
+    }
+  ]
+}

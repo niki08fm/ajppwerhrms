@@ -34,7 +34,8 @@
     "face:install": "npm run service:install --workspace=@ajpwer/face",
     "face:models": "npm run service:models --workspace=@ajpwer/face",
     "face:check": "node face/scripts/check-service.js",
-    "start": "npm run start --workspace=@ajpwer/backend"
+    "start": "npm run start --workspace=@ajpwer/backend",
+    "tds:check": "npm run tds:check --workspace=@ajpwer/backend --"
   },
   "engines": {
     "node": ">=22.9"

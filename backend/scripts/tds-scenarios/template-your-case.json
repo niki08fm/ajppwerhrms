@@ -1,0 +1,103 @@
+{
+  "name": "Your case: edit the months, salary, LOP days, overtime hours and bonus",
+  "regime": "NEW",
+  "pf": false,
+  "declarations": {
+    "80c": 0,
+    "80d": 0,
+    "rent_monthly": 0,
+    "metro": false
+  },
+  "previous": {
+    "income": 0,
+    "tds": 0
+  },
+  "last_month": null,
+  "resignation_known_from": null,
+  "months": [
+    {
+      "month": "2026-04",
+      "gross": 120000,
+      "lop_days": 0,
+      "overtime_hours": 0,
+      "bonus": 0
+    },
+    {
+      "month": "2026-05",
+      "gross": 120000,
+      "lop_days": 0,
+      "overtime_hours": 0,
+      "bonus": 0
+    },
+    {
+      "month": "2026-06",
+      "gross": 120000,
+      "lop_days": 0,
+      "overtime_hours": 0,
+      "bonus": 0
+    },
+    {
+      "month": "2026-07",
+      "gross": 120000,
+      "lop_days": 0,
+      "overtime_hours": 0,
+      "bonus": 0
+    },
+    {
+      "month": "2026-08",
+      "gross": 120000,
+      "lop_days": 0,
+      "overtime_hours": 0,
+      "bonus": 0
+    },
+    {
+      "month": "2026-09",
+      "gross": 120000,
+      "lop_days": 0,
+      "overtime_hours": 0,
+      "bonus": 0
+    },
+    {
+      "month": "2026-10",
+      "gross": 120000,
+      "lop_days": 0,
+      "overtime_hours": 0,
+      "bonus": 0
+    },
+    {
+      "month": "2026-11",
+      "gross": 120000,
+      "lop_days": 0,
+      "overtime_hours": 0,
+      "bonus": 0
+    },
+    {
+      "month": "2026-12",
+      "gross": 120000,
+      "lop_days": 0,
+      "overtime_hours": 0,
+      "bonus": 0
+    },
+    {
+      "month": "2027-01",
+      "gross": 120000,
+      "lop_days": 0,
+      "overtime_hours": 0,
+      "bonus": 0
+    },
+    {
+      "month": "2027-02",
+      "gross": 120000,
+      "lop_days": 0,
+      "overtime_hours": 0,
+      "bonus": 0
+    },
+    {
+      "month": "2027-03",
+      "gross": 120000,
+      "lop_days": 0,
+      "overtime_hours": 0,
+      "bonus": 0
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "name": "C. ₹2,00,000 a month, resigns in October, last day 31 December",
+  "regime": "NEW",
+  "last_month": "2026-12",
+  "resignation_known_from": "2026-10",
+  "expect_total_tds": 150800,
+  "months": [
+    {
+      "month": "2026-04",
+      "gross": 200000
+    },
+    {
+      "month": "2026-05",
+      "gross": 200000
+    },
+    {
+      "month": "2026-06",
+      "gross": 200000
+    },
+    {
+      "month": "2026-07",
+      "gross": 200000
+    },
+    {
+      "month": "2026-08",
+      "gross": 200000
+    },
+    {
+      "month": "2026-09",
+      "gross": 200000
+    },
+    {
+      "month": "2026-10",
+      "gross": 200000
+    },
+    {
+      "month": "2026-11",
+      "gross": 200000
+    },
+    {
+      "month": "2026-12",
+      "gross": 200000
+    }
+  ]
+}

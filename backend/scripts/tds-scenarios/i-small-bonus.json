@@ -1,0 +1,56 @@
+{
+  "name": "I. ₹1,06,000 + ₹20,000 bonus in March (marginal relief)",
+  "regime": "NEW",
+  "expect_total_tds": 17680,
+  "months": [
+    {
+      "month": "2026-04",
+      "gross": 106000
+    },
+    {
+      "month": "2026-05",
+      "gross": 106000
+    },
+    {
+      "month": "2026-06",
+      "gross": 106000
+    },
+    {
+      "month": "2026-07",
+      "gross": 106000
+    },
+    {
+      "month": "2026-08",
+      "gross": 106000
+    },
+    {
+      "month": "2026-09",
+      "gross": 106000
+    },
+    {
+      "month": "2026-10",
+      "gross": 106000
+    },
+    {
+      "month": "2026-11",
+      "gross": 106000
+    },
+    {
+      "month": "2026-12",
+      "gross": 106000
+    },
+    {
+      "month": "2027-01",
+      "gross": 106000
+    },
+    {
+      "month": "2027-02",
+      "gross": 106000
+    },
+    {
+      "month": "2027-03",
+      "gross": 106000,
+      "bonus": 20000
+    }
+  ]
+}
