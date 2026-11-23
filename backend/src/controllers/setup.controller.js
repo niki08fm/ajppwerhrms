@@ -34,6 +34,7 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { prisma } from '../config/db.js';
 import { holidaysBetween, ptSlabs, ratesOn, regimesOn, toAttachedPolicy, toComponentDefs } from '../services/rules.service.js';
 import { clipToLink, effectiveFrom, movePayGroup } from '../services/assignment-dates.service.js';
+import { flagRerun } from '../services/payroll-staleness.service.js';
 import { randomUUID } from 'node:crypto';
 import { addDepartment, changeDepartment, listDepartmentSettings, removeDepartment } from '../services/department.service.js';
 import { editPolicyVersion, lockPolicyRulesRead, policyHistoryProtection, publishPolicyVersion, removePolicyVersion } from '../services/policy-history.service.js';
@@ -378,7 +379,11 @@ export const updatePayGroup = asyncHandler(async (req, res) => {
     if (!before) throw notFound('That pay group');
     const { policy_ids, policies_effective_from, ...core } = b;
     if (policy_ids) await validateGroupPolicies(tx, policy_ids);
-    if (Object.keys(core).length) await tx.payGroup.update({ where: { id: before.id }, data: core });
+    if (Object.keys(core).length) {
+      await tx.payGroup.update({ where: { id: before.id }, data: core });
+      // Calendar, weekly off or shift changes apply to every month that is not locked.
+      await flagRerun(tx, { reason: `the "${before.name}" pay group's settings changed` });
+    }
     if (policy_ids) {
       // A change to the attached policies applies from a date and never reaches locked or paid payroll.
       const from = await effectiveFrom(tx, policies_effective_from, { field: 'policies_effective_from' });
@@ -406,6 +411,7 @@ export const updatePayGroup = asyncHandler(async (req, res) => {
         }
       }
       b.policies_effective_from = from;
+      await flagRerun(tx, { from, reason: `the "${before.name}" pay group's policies changed` });
     }
     await audit(tx, {
       actor, ip, action: 'pay_group.update', entity_type: 'pay_group', entity_id: before.id,
@@ -481,6 +487,7 @@ export const publishStatutoryRates = asyncHandler(async (req, res) => {
       const used = await tx.payrollPeriod.count({ where: { statutory_rates_id: existing.id } });
       if (used) throw new AppError('CONFLICT', `The rates effective ${b.valid_from} were used by a payroll run. Publish new rates with a later effective date.`, 409);
     }
+    await flagRerun(tx, { from: b.valid_from, reason: `statutory rates from ${b.valid_from} were published` });
     const r = existing
       ? await tx.statutoryRates.update({ where: { id: existing.id }, data: { pf: b.pf, esi: b.esi, recovery_cap_pct: b.recovery_cap_pct, deleted_at: null } })
       : await tx.statutoryRates.create({ data: { valid_from: toDbDate(b.valid_from), pf: b.pf, esi: b.esi, recovery_cap_pct: b.recovery_cap_pct, created_by: actor } });
@@ -510,6 +517,7 @@ export const deleteStatutoryRates = asyncHandler(async (req, res) => {
     const earlier = await tx.statutoryRates.count({ where: { deleted_at: null, valid_from: { lt: row.valid_from } } });
     if (!earlier) throw new AppError('CONFLICT', 'These are the earliest rates on record; months before the next rates would have none. Publish corrected rates on the same date instead.', 409);
     await tx.statutoryRates.update({ where: { id }, data: { deleted_at: new Date() } });
+    await flagRerun(tx, { from: date, reason: `statutory rates from ${date} were removed` });
     await audit(tx, { actor, ip, action: 'statutory_rates.delete', entity_type: 'statutory_rates', entity_id: id, detail: { valid_from: date, pf: row.pf, esi: row.esi } });
   });
   res.json({ data: { id, deleted: true } });
@@ -553,6 +561,7 @@ export const replacePtSlabs = asyncHandler(async (req, res) => {
     // With no frozen payroll the new set simply replaces every earlier one, as before.
     const start = requested ?? '2000-01-01';
     const replaced = requested ? existing.filter((o) => fromDbDate(o.valid_from) >= start) : existing;
+    await flagRerun(tx, { from: requested, reason: `professional tax slabs for ${b.state} changed` });
     if (replaced.length) await tx.ptSlab.updateMany({ where: { id: { in: replaced.map((o) => o.id) } }, data: { deleted_at: new Date() } });
     await tx.ptSlab.createMany({
       data: b.slabs.map((s) => ({
@@ -604,6 +613,7 @@ export const publishTaxRegime = asyncHandler(async (req, res) => {
       ? await tx.taxRegime.update({ where: { id: existing.id }, data })
       : await tx.taxRegime.create({ data: { ...data, code: b.code, valid_from: toDbDate(b.valid_from) } });
     if (existing) await tx.taxSlab.updateMany({ where: { regime_id: r.id, deleted_at: null }, data: { deleted_at: new Date() } });
+    await flagRerun(tx, { from: b.valid_from, to: `${fy + 1}-03-31`, reason: `income tax rates for ${fy}-${String(fy + 1).slice(2)} were published` });
     await tx.taxSlab.createMany({ data: b.slabs.map((x) => ({ regime_id: r.id, upto_amount: x.upto_amount === null ? null : BigInt(x.upto_amount), rate: x.rate })) });
     await audit(tx, {
       actor, ip, action: 'tax_regime.publish', entity_type: 'tax_regime', entity_id: r.id,
@@ -672,12 +682,14 @@ async function holidayLockWarning(date) {
 export const createHoliday = asyncHandler(async (req, res) => {
   const b = holidaySchema.parse(req.body);
   const h = await prisma.holiday.upsert({ where: { date: toDbDate(b.date) }, update: { name: b.name, deleted_at: null }, create: { date: toDbDate(b.date), name: b.name } });
+  await flagRerun(prisma, { from: b.date, to: b.date, reason: `a holiday was added on ${b.date}` });
   await auditReq(req, { action: 'holiday.add', entity_type: 'holiday', entity_id: h.id, detail: b });
   res.status(201).json({ data: { id: h.id, date: b.date, name: b.name }, warning: await holidayLockWarning(b.date) });
 });
 
 export const deleteHoliday = asyncHandler(async (req, res) => {
   const h = await prisma.holiday.update({ where: { id: req.params.id }, data: { deleted_at: new Date() } });
+  await flagRerun(prisma, { from: fromDbDate(h.date), to: fromDbDate(h.date), reason: `the holiday on ${fromDbDate(h.date)} was removed` });
   await auditReq(req, { action: 'holiday.remove', entity_type: 'holiday', entity_id: h.id, detail: { date: fromDbDate(h.date), name: h.name } });
   res.json({ data: { ok: true }, warning: await holidayLockWarning(fromDbDate(h.date)) });
 });

@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { audit } from '../utils/audit.js';
 import { fromDbDate, toDbDate } from '../utils/dbDates.js';
 import { AppError, notFound } from '../utils/errors.js';
+import { flagRerunRanges } from './payroll-staleness.service.js';
 
 const start = (row) => fromDbDate(row.valid_from);
 const end = (row) => fromDbDate(row.valid_to);
@@ -74,6 +75,13 @@ function assertAllowed(context, key, before, after) {
   const changed = changedRanges(before, after);
   const frozen = familyRanges(context, key, before[0]?.kind ?? after[0]?.kind).find((range) => changed.some((interval) => overlaps(interval, range)));
   if (frozen) throw new AppError('POLICY_PROTECTED', frozen.reason, 409);
+  return changed;
+}
+
+/** Generated months the change reaches must be regenerated. Leave balances carry forward, so a leave change reaches every later month. */
+async function flagChanged(tx, changed, kind, name) {
+  const ranges = kind === 'LEAVE' ? changed.map((r) => ({ from: r.from, to: null })) : changed.map((r) => ({ from: addDays(r.from, -7), to: r.to ? addDays(r.to, 7) : null }));
+  await flagRerunRanges(tx, ranges, `the ${String(kind).toLowerCase().replace('_', ' ')} policy "${name}" changed`);
 }
 
 /** The version that takes over a deleted version's dates: the one before it, or for the first version the one after. */
@@ -161,8 +169,9 @@ export async function editPolicyVersion(tx, key, version, body, who) {
   const after = before.map((row) => row.id === previous.id ? { ...row, name: body.name ?? row.name, rules, valid_from: toDbDate(validFrom) }
     : validFrom !== start(previous) && row.id === before[index - 1]?.id ? { ...row, valid_to: toDbDate(addDays(validFrom, -1)) } : row);
   const context = await protectionContext(tx, [key]);
-  assertAllowed(context, key, before, after);
+  const changed = assertAllowed(context, key, before, after);
   await saveChangedRows(tx, before, after);
+  await flagChanged(tx, changed, previous.kind, previous.name);
   const updated = await tx.policy.findUniqueOrThrow({ where: { id: previous.id }, include: { pay_groups: { where: { deleted_at: null }, include: { pay_group: { select: { id: true, name: true } } } } } });
   await audit(tx, { ...who, action: 'policy.edit', entity_type: 'policy', entity_id: previous.id, detail: { before: auditRow(previous), after: auditRow(updated), neighbors: after.filter((row) => row.id !== previous.id && end(row) !== end(before.find((old) => old.id === row.id))).map(auditRow) } });
   return updated;
@@ -175,11 +184,12 @@ export async function removePolicyVersion(tx, key, version, who) {
   if (!previous) throw notFound('That policy version');
   const context = await protectionContext(tx, [key]);
   const after = deletionResult(before, previous.id);
-  assertAllowed(context, key, before, after);
+  const changed = assertAllowed(context, key, before, after);
   if (before.length === 1 && context.attached.has(key)) throw new AppError('POLICY_ATTACHED', 'Remove this policy from its pay groups before deleting its only version.', 409);
   const restored = restoredLinks(before, after, previous.id);
   assertRestoredLinksAllowed(context, key, previous.kind, restored);
   await saveChangedRows(tx, before, after);
+  await flagChanged(tx, changed, previous.kind, previous.name);
   for (const link of restored) await tx.payGroupPolicy.upsert({ where: { pay_group_id_policy_id: { pay_group_id: link.pay_group_id, policy_id: link.policy_id } }, update: { deleted_at: null }, create: { pay_group_id: link.pay_group_id, policy_id: link.policy_id, effective_from: link.effective_from } });
   await audit(tx, { ...who, action: 'policy.delete', entity_type: 'policy', entity_id: previous.id, detail: { before: auditRow(previous), neighbors: after.filter((row) => { const old = before.find((item) => item.id === row.id); return end(row) !== end(old) || start(row) !== start(old); }).map(auditRow), restored_links: restored.map(({ policy_id, pay_group_id }) => ({ policy_id, pay_group_id })) } });
   return { id: previous.id, policy_key: key, version, deleted: true };
@@ -195,8 +205,9 @@ export async function publishPolicyVersion(tx, key, body, who) {
   const highest = await tx.policy.aggregate({ where: { policy_key: key }, _max: { version: true } });
   const next = { id: 'new', policy_key: key, kind: latest.kind, version: highest._max.version + 1, name: body.name ?? latest.name, valid_from: toDbDate(body.valid_from), valid_to: null, rules };
   const after = [...before.map((row) => row.id === latest.id ? { ...row, valid_to: toDbDate(addDays(body.valid_from, -1)) } : row), next];
-  assertAllowed(await protectionContext(tx, [key]), key, before, after);
+  const changed = assertAllowed(await protectionContext(tx, [key]), key, before, after);
   await saveChangedRows(tx, before, after.filter((row) => row.id !== 'new'));
+  await flagChanged(tx, changed, latest.kind, next.name);
   const { id: _id, ...values } = next;
   const created = await tx.policy.create({ data: { ...values, created_by: who.actor } });
   for (const link of latest.pay_groups.filter((item) => item.pay_group)) await tx.payGroupPolicy.create({ data: { pay_group_id: link.pay_group_id, policy_id: created.id, effective_from: link.effective_from ?? null } });

@@ -115,7 +115,9 @@ export function PayrollOverview({ ym, period, periods, meta, company, onOpen, on
             </Select>
             <Button size="icon" variant="outline" aria-label="Later months" disabled={addMonths(ym, 1) > meta.current} onClick={() => onMonth(addMonths(ym, 1))}><ChevronRight /></Button>
             {!generated && ym <= meta.suggested && <Button disabled={cur !== GENERATE_STEP || !can('payroll.run') || !!period.running || summary.isFetching || summary.isError || !!summary.data?.errors} onClick={() => onOpen(GENERATE_STEP)}>Generate payroll</Button>}
-            {period.state === 'RUN' && can('payroll.run') && <Button disabled={!!period.running} onClick={() => onOpen(GENERATE_STEP, null, 'lock')}>Lock payroll</Button>}
+            {period.state === 'RUN' && can('payroll.run') && (period.rerun_reason
+              ? <Button variant="outline" disabled={!!period.running} title={`Generated before ${period.rerun_reason}`} onClick={() => onOpen(GENERATE_STEP)}>Regenerate before locking</Button>
+              : <Button disabled={!!period.running} onClick={() => onOpen(GENERATE_STEP, null, 'lock')}>Lock payroll</Button>)}
             {period.state === 'LOCKED' && <>
               {can('payroll.run') && <Button variant="outline" onClick={() => onOpen(GENERATE_STEP, null, 'unlock')}>Unlock</Button>}
               {can('payroll.pay') && <Button onClick={() => onOpen(GENERATE_STEP, null, 'mark-paid')}>Mark paid</Button>}

@@ -1276,6 +1276,9 @@ model PayrollPeriod {
   running_job_id     String?            @db.Uuid
   run_at             DateTime?          @db.Timestamptz(6)
   run_by             String?
+  /// Set when rules, rates or salaries this generated month uses change; cleared by regenerating. Locking waits for it.
+  rerun_reason       String?
+  rerun_flagged_at   DateTime?          @db.Timestamptz(6)
   locked_at          DateTime?          @db.Timestamptz(6)
   paid_at            DateTime?          @db.Timestamptz(6)
   payment_ref        String?            @unique

@@ -1300,6 +1300,11 @@ export function StepGenerate({ ym, period, company, onBack, initialAction }) {
         </Card>
       ) : (
         <>
+          {period.state === 'RUN' && period.rerun_reason && (
+            <Notice tone="warning">
+              <strong>Regenerate before locking.</strong> This payroll was generated before {period.rerun_reason}. Use More actions → Generate again; locking waits until then.
+            </Notice>
+          )}
           <Card className="flex flex-wrap items-center gap-4 px-5 py-4">
             <div className="min-w-60 flex-1">
               <div className="text-[17px] font-semibold">
@@ -1316,7 +1321,7 @@ export function StepGenerate({ ym, period, company, onBack, initialAction }) {
                   { label: 'Generate again', onSelect: () => askTransition('rerun') },
                   { label: 'Back to the steps', destructive: true, onSelect: () => askTransition('back-to-steps') },
                 ]} />
-                <Button disabled={transition.isPending || !!jobId} onClick={() => askTransition('lock')}><Lock /> Lock</Button>
+                <Button disabled={transition.isPending || !!jobId || !!period.rerun_reason} title={period.rerun_reason ? 'Regenerate first: something this month uses has changed' : undefined} onClick={() => askTransition('lock')}><Lock /> Lock</Button>
               </>
             )}
             {period.state === 'LOCKED' && (

@@ -1,3 +1,4 @@
+import { flagRerunRanges } from './payroll-staleness.service.js';
 import { addDays, addMonths, firstOfMonth, formatINR, formatYearMonth, lastOfMonth } from '@ajpwer/shared';
 import { ctcForGross, salaryPreview } from '../calculations/index.js';
 import {lockAssignments,assertAssignableStructure} from './master-data-lock.js';
@@ -209,6 +210,7 @@ async function assertSalaryChangesAllowed(tx, employeeId, before, after, changed
       || ranges.some((range) => overlaps(range, month));
   });
   if (protectedSlip) throw new AppError('SALARY_PROTECTED', protectedReason(protectedSlip), 409);
+  await flagRerunRanges(tx, ranges, 'a salary changed');
 }
 
 function rebuildDates(rows) {

@@ -34,6 +34,9 @@ function periodOut(p) {
     running_job_id: p.running_job_id,
     run_at: p.run_at,
     run_by: p.run_by,
+    /** Set when something this generated month uses changed; regenerate before locking. */
+    rerun_reason: p.rerun_reason ?? null,
+    rerun_flagged_at: p.rerun_flagged_at ?? null,
     locked_at: p.locked_at,
     paid_at: p.paid_at,
     payment_ref: p.payment_ref,

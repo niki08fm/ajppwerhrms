@@ -1,6 +1,7 @@
 import { addDays, addMonths, firstOfMonth, formatYearMonth, ymOf } from '@ajpwer/shared';
 import { fromDbDate, toDbDate } from '../utils/dbDates.js';
 import { AppError } from '../utils/errors.js';
+import { flagRerun } from './payroll-staleness.service.js';
 
 /*
  * Dated assignments: which policies a pay group uses, and which pay group a person is in.
@@ -84,6 +85,7 @@ export async function movePayGroup(tx, employee, toGroupId, from, actor = null) 
     await tx.employeePayGroup.create({ data: { employee_id: employee.id, pay_group_id: toGroupId, valid_from: toDbDate(from), created_by: actor } });
   }
   await tx.employee.update({ where: { id: employee.id }, data: { pay_group_id: toGroupId } });
+  await flagRerun(tx, { from, reason: `${employee.name ?? 'an employee'} moved pay group` });
 }
 
 /** A pay-group policy link's window as dates. */

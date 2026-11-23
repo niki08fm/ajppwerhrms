@@ -10,6 +10,7 @@ import { ptSlabs, ratesOn, regimesOn, structureComponents } from './rules.servic
 import { withReadScope } from '../utils/read-scope.js';
 import { mapConcurrent } from '../utils/parallel.js';
 import { payrollSalaryInputs } from './payroll-inputs.service.js';
+import { assertNotStale } from './payroll-staleness.service.js';
 import { computeSettlementFor } from './settlement.service.js';
 
 export const employeeInclude = {
@@ -512,6 +513,9 @@ export async function executeRun(ym, actor, onProgress) {
           state: 'RUN',
           run_at: computedAt,
           run_by: actor,
+          // Regenerated from today's rules: any earlier "regenerate before locking" is settled.
+          rerun_reason: null,
+          rerun_flagged_at: null,
           statutory_rates_id: ctx.rates.id,
           steps_submitted: steps,
           totals: { ...totals, excluded: population.excluded.length, settlements: p.settlement_ids.length },
@@ -561,13 +565,18 @@ export async function transition(ym, t, actor, ip, opts = {}) {
       if (moved) throw new AppError('CONFLICT', `Salary held in ${formatYearMonth(ym)} has been released or paid. Unlocking would let it be paid twice.`, 409);
     }
     if (t === 'back_to_steps') {
+      data.rerun_reason = null;
+      data.rerun_flagged_at = null;
       await tx.payslip.deleteMany({ where: { period_id: p.id } });
       await tx.heldPay.deleteMany({ where: { period_ym: p.period_ym, state: 'HELD' } });
       data.steps_submitted = p.steps_submitted.filter((s) => s !== GENERATE_STEP);
       data.run_at = null;
       data.totals = null;
     }
-    if (t === 'lock') data.locked_at = new Date();
+    if (t === 'lock') {
+      assertNotStale(p);
+      data.locked_at = new Date();
+    }
     if (t === 'unlock') data.locked_at = null;
     if (t === 'mark_paid') {
       if (!opts.payment_ref) throw new AppError('VALIDATION', 'A payment reference is required.', 422, 'payment_ref');
