@@ -1141,8 +1141,11 @@ model SiteChange {
   in_punch_id   String?          @db.Uuid
   left_at       DateTime         @db.Timestamptz(6)
   arrived_at    DateTime?        @db.Timestamptz(6)
-  /// Minutes between the OUT and the IN at the named site, capped by FACE_TRAVEL_MAX_MIN
+  /// Minutes between the OUT and the IN at the named site, capped by the grace (or FACE_TRAVEL_MAX_MIN)
   travel_min    Int?
+  /// The grace the transfer request allowed, when the move came from one
+  grace_min     Int?
+  transfer_id   String?          @db.Uuid
   status        SiteChangeStatus @default(PENDING)
   /// HR's figure, which replaces travel_min when set (HR's decision is final)
   hr_travel_min Int?
@@ -1169,6 +1172,8 @@ model SiteTransferRequest {
   to_site        Site               @relation("TransferToSite", fields: [to_site_id], references: [id])
   departure_date DateTime           @db.Date
   reason         String
+  /// Travel time the sending site allows; the travel credited is the actual time, up to this
+  grace_min      Int                @default(30)
   status         SiteTransferStatus @default(PENDING)
   requested_by   String
   requested_at   DateTime           @default(now()) @db.Timestamptz(6)

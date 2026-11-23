@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { isoDate, istDate, yearMonth } from '@ajpwer/shared';
+import { isoDate, istDate, yearMonth, TRANSFER_RULES } from '@ajpwer/shared';
 import { prisma } from '../config/db.js';
 import { AppError, notFound } from '../utils/errors.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
@@ -40,6 +40,8 @@ const transferCreate = z.object({
   employee_code: z.string().trim().min(1).max(40),
   to_site_id: z.string().uuid(), departure_date: isoDate,
   reason: z.string().trim().min(3, 'Say why the person is going to another site.').max(300),
+  /** Travel time this site allows; the credited travel is the actual time, up to this. */
+  grace_min: z.number().int().min(0).max(TRANSFER_RULES.max_grace_min).default(TRANSFER_RULES.default_grace_min),
 }).strict();
 const transferDecision = z.object({ decision: z.enum(['APPROVED', 'REJECTED']), note: z.string().trim().max(300).optional() }).strict();
 const transferInclude = {
@@ -47,7 +49,7 @@ const transferInclude = {
   from_site: { select: { id: true, name: true } }, to_site: { select: { id: true, name: true } },
 };
 export const transferReply = (r) => ({ id: r.id, employee: r.employee, from_site: r.from_site, to_site: r.to_site,
-  departure_date: fromDbDate(r.departure_date), reason: r.reason, status: r.status,
+  departure_date: fromDbDate(r.departure_date), reason: r.reason, grace_min: r.grace_min, status: r.status,
   requested_by: r.requested_by, requested_at: r.requested_at.toISOString(),
   decided_by: r.decided_by, decided_at: r.decided_at?.toISOString() ?? null, decision_note: r.decision_note });
 
@@ -58,7 +60,11 @@ export const listTransfers = asyncHandler(async (req, res) => {
   res.json({ data: rows.map(transferReply) });
 });
 
-/** A request records intent only: a normal OUT and IN still record the actual movement. */
+/**
+ * A transfer lets the person punch in at the destination the same day; a normal OUT here and
+ * IN there record the movement. No HR approval is needed: HR sees the arrival in Approvals and
+ * can change the travel credited. At most one transfer a person a day.
+ */
 export const createTransfer = asyncHandler(async (req, res) => {
   const b = transferCreate.parse(req.body);
   if (b.departure_date < today()) throw new AppError('VALIDATION', 'Choose today or a future departure date.', 422, 'departure_date');
@@ -72,13 +78,14 @@ export const createTransfer = asyncHandler(async (req, res) => {
     await tx.$queryRaw`SELECT id FROM employee WHERE id = ${person.id}::uuid FOR UPDATE`;
     const stillHere = (await currentSitePeople(tx, req.site.id)).some((p) => p.id === person.id);
     if (!stillHere) throw new AppError('EMPLOYEE_NOT_AT_SITE', 'This person has already signed out. Refresh the site attendance.', 409, 'employee_code');
-    const pending = await tx.siteTransferRequest.findFirst({ where: { employee_id: person.id, status: 'PENDING' } });
-    if (pending) throw new AppError('TRANSFER_PENDING', 'This person already has a transfer request waiting for HR.', 409, 'employee_code');
+    const sameDay = await tx.siteTransferRequest.findFirst({ where: { employee_id: person.id, departure_date: toDbDate(b.departure_date), status: { not: 'REJECTED' } } });
+    if (sameDay) throw new AppError('ONE_TRANSFER_A_DAY', 'This person already has a site transfer that day. Only one transfer is allowed a day.', 409, 'employee_code');
     const row = await tx.siteTransferRequest.create({ data: { employee_id: person.id, from_site_id: req.site.id,
-      to_site_id: destination.id, departure_date: toDbDate(b.departure_date), reason: b.reason,
+      to_site_id: destination.id, departure_date: toDbDate(b.departure_date), reason: b.reason, grace_min: b.grace_min,
+      status: 'APPROVED', decided_by: 'automatic', decided_at: new Date(), decision_note: 'No HR action needed. HR can change the travel credited after arrival.',
       requested_by: `site:${req.site.code}` }, include: transferInclude });
     await auditReq(req, { action: 'site_transfer.request', entity_type: 'site_transfer_request', entity_id: row.id,
-      detail: { employee_id: person.id, from_site_id: req.site.id, to_site_id: destination.id, departure_date: b.departure_date } }, tx);
+      detail: { employee_id: person.id, from_site_id: req.site.id, to_site_id: destination.id, departure_date: b.departure_date, grace_min: b.grace_min } }, tx);
     return row;
   });
   res.status(201).json({ data: transferReply(result) });

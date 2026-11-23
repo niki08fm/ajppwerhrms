@@ -177,6 +177,8 @@ async function build(db, now, register) {
         arrived_at: c.arrived_at?.toISOString() ?? null,
         status: c.status,
         travel_min: effectiveTravel(c),
+        grace_min: c.grace_min ?? null,
+        actual_min: c.arrived_at ? Math.max(0, Math.floor((c.arrived_at.getTime() - c.left_at.getTime()) / 60_000)) : null,
       },
     });
   }

@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createReadStream, existsSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
 import {
+  istDate,
   punchChangeSiteSchema,
   punchConfirmSchema,
   punchFramesSchema,
@@ -80,6 +81,40 @@ function requireSourcePunchOut(last, siteId, now) {
   if (last?.direction === 'IN' && last.site_id !== siteId && now.getTime() - last.punched_at.getTime() <= OVERNIGHT_MAX_GAP_MIN * 60_000) {
     throw new AppError('CROSS_SITE_OPEN_SHIFT', `Still punched in at ${last.site?.name ?? 'the previous site'}. Punch out there before punching in here.`, 409);
   }
+}
+
+/**
+ * One punch-in and one punch-out per site a day. A punch-in at a second site needs that
+ * day's transfer request to it (at most one a day). Returns a refusal, or the transfer that
+ * allows the punch-in, or null when nothing special applies.
+ */
+async function sitePunchRule(db, employeeId, siteId, direction, now) {
+  if (direction !== 'IN') return null;
+  const date = istDate(now);
+  const ins = await db.punch.findMany({ where: { employee_id: employeeId, work_date: toDbDate(date), direction: 'IN' }, orderBy: { punched_at: 'asc' }, select: { site_id: true, punched_at: true } });
+  if (!ins.length) return null;
+  const here = ins.find((p) => p.site_id === siteId);
+  if (here) return { refusal: { code: 'ALREADY_PUNCHED_HERE', message: `Already punched in here today at ${hhmm(here.punched_at)}. Each site allows one punch-in and one punch-out a day.` } };
+  const transfer = await db.siteTransferRequest.findFirst({ where: { employee_id: employeeId, to_site_id: siteId, departure_date: toDbDate(date), status: { not: 'REJECTED' } }, orderBy: { requested_at: 'desc' } });
+  const legacy = transfer ? null : await db.siteChange.findFirst({ where: { employee_id: employeeId, to_site_id: siteId, work_date: toDbDate(date), status: 'PENDING' } });
+  if (!transfer && !legacy) return { refusal: { code: 'TRANSFER_NEEDED', message: 'Already punched in at another site today. To work here, the other site sends a transfer request before you leave.' } };
+  const moved = await db.siteChange.count({ where: { employee_id: employeeId, work_date: toDbDate(date), status: 'COUNTED' } });
+  if (moved) return { refusal: { code: 'ONE_TRANSFER_A_DAY', message: 'Only one site transfer is allowed a day.' } };
+  return { transfer };
+}
+
+/** Arriving under a transfer request: travel counts from the punch-out at the source, up to the request's grace. */
+async function recordTransferArrival(tx, punch, work_date, transfer) {
+  const out = await tx.punch.findFirst({ where: { employee_id: punch.employee_id, direction: 'OUT', punched_at: { lt: punch.punched_at }, work_date: toDbDate(work_date) }, orderBy: { punched_at: 'desc' } });
+  if (!out) return;
+  const actual = Math.max(0, Math.floor((punch.punched_at.getTime() - out.punched_at.getTime()) / 60_000));
+  await tx.siteChange.create({
+    data: {
+      employee_id: punch.employee_id, work_date: toDbDate(work_date), from_site_id: out.site_id, to_site_id: punch.site_id,
+      out_punch_id: out.id, in_punch_id: punch.id, left_at: out.punched_at, arrived_at: punch.punched_at,
+      travel_min: Math.min(actual, transfer.grace_min), grace_min: transfer.grace_min, transfer_id: transfer.id, status: 'COUNTED',
+    },
+  });
 }
 
 function duplicateOf(direction, last, siteId, now) {
@@ -431,7 +466,8 @@ export const uploadFrames = asyncHandler(async (req, res) => {
     const last = await lastPunch(d.employee_id);
     requireSourcePunchOut(last, row.site_id, now);
     const direction = nextDirection(last, now);
-    const dup = duplicateOf(direction, last, row.site_id, now);
+    const rule = await sitePunchRule(prisma, d.employee_id, row.site_id, direction, now);
+    const dup = duplicateOf(direction, last, row.site_id, now) ?? rule?.refusal ?? null;
     const e = await prisma.employee.findFirst({ where: { id: d.employee_id, deleted_at: null, status: { in: ['ACTIVE', 'NOTICE'] } }, select: { id: true, name: true, code: true, designation: true } });
     if (!e) throw new AppError('EMPLOYEE_NOT_ACTIVE', 'This employee is not active for attendance. Ask HR to check their status.', 409);
     if (dup) {
@@ -487,6 +523,8 @@ async function writePunch(tx, { row, s, siteId, direction, distance_m, deviceId 
   requireSourcePunchOut(last, siteId, now);
   const dup = duplicateOf(direction, last, siteId, now);
   if (dup) throw new AppError('DUPLICATE_PUNCH', dup.message, 409);
+  const rule = await sitePunchRule(tx, id.employee_id, siteId, direction, now);
+  if (rule?.refusal) throw new AppError(rule.refusal.code, rule.refusal.message, 409);
   const work_date = assignWorkDate(now, direction, last ? { direction: last.direction, work_date: fromDbDate(last.work_date), at: last.punched_at.getTime() } : null);
   const flags = [];
   const frozen = await attendanceFrozen(tx, work_date.slice(0, 7));
@@ -515,7 +553,7 @@ async function writePunch(tx, { row, s, siteId, direction, distance_m, deviceId 
   const staleCapture = latestReplacement && latestReplacement.used_at.getTime() >= captureTime.getTime();
   const learned = staleCapture ? { learned: false, trimmed: 0 } : await learnFromPunch(tx, { employeeId: id.employee_id, embedding: id.embedding, score: id.score, liveScore: id.live_score, siteId });
   await tx.punchAttempt.updateMany({ where: { session_id: row.id, request_id: id.request_id }, data: { resolution: 'CONFIRMED' } });
-  return { punch: p, work_date, learned };
+  return { punch: p, work_date, learned, transfer: rule?.transfer ?? null };
 }
 
 /** Arriving at a named site the same day counts the travel; any other pending change for the person no longer can. */
@@ -549,7 +587,8 @@ export const confirmPunch = asyncHandler(async (req, res) => {
   const direction = s.state.identified.direction;
   const result = await prisma.$transaction(async (tx) => {
     const r = await writePunch(tx, { row, s, siteId: req.site.id, direction, distance_m: check.distance_m, deviceId: b.device_id ?? null });
-    await settleSiteChanges(tx, r.punch, r.work_date);
+    if (r.transfer) await recordTransferArrival(tx, r.punch, r.work_date, r.transfer);
+    else await settleSiteChanges(tx, r.punch, r.work_date);
     s.finish({ punch_id: r.punch.id });
     await saveSession(tx, row.id, s, { punch_id: r.punch.id });
     return r;

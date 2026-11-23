@@ -572,7 +572,7 @@ function TransferDecision({ it, allowed, onDecided }) {
   );
 }
 
-/** Someone used Change site on a tablet. HR's travel figure is final. */
+/** Someone moved sites under a transfer request. The travel is counted already; HR's figure, if given, is final. */
 function MoveDecision({ it, allowed, onDecided }) {
   const x = it.detail;
   const [minutes, setMinutes] = useState(String(x.travel_min));
@@ -587,12 +587,15 @@ function MoveDecision({ it, allowed, onDecided }) {
     <>
       <p className="m-0 text-[15px]">
         {first(it.employee?.name)} left {x.from_site?.name} at {istTime(x.left_at)} for {x.to_site?.name}
-        {x.arrived_at ? ` and punched in there at ${istTime(x.arrived_at)}.` : ', but did not punch in there that day.'} Travel counts toward the day's hours once you accept it.
+        {x.arrived_at ? ` and punched in there at ${istTime(x.arrived_at)}.` : ', but did not punch in there that day.'}{' '}
+        {x.grace_min !== null ? `${x.travel_min} min of travel is counted in the day: the actual time, up to the ${x.grace_min}-minute grace the site allowed.` : `${x.travel_min} min of travel is counted in the day.`} Nothing is needed unless you want to change it.
       </p>
       <Facts
         items={[
           ['Left', `${x.from_site?.name} · ${istTime(x.left_at)}`],
           ['Arrived', x.arrived_at ? `${x.to_site?.name} · ${istTime(x.arrived_at)}` : 'No punch-in there'],
+          x.actual_min !== null && ['Actual travel', `${x.actual_min} min`],
+          x.grace_min !== null && ['Grace allowed', `${x.grace_min} min`],
           ['Travel counted now', `${x.travel_min} min`],
           ['Status', MOVE_STATUS[x.status] ?? x.status],
         ]}

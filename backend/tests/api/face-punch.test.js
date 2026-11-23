@@ -256,25 +256,27 @@ describe('Identify, then confirm', () => {
 });
 
 describe('Shared site device and repeat visits', () => {
-  it('records two employees and two visits each on one site login, counting only time inside', async () => {
+  it('records two employees on one site login; each gets one punch-in and one punch-out at the site a day', async () => {
     const tablet = await tabletFor('ALPHA');
     const directions = [];
     for (const face of [FACE.A, FACE.B]) directions.push((await punch(tablet, face)).direction);
     at(180); // Leave at noon.
     for (const face of [FACE.A, FACE.B]) directions.push((await punch(tablet, face)).direction);
-    at(60); // Return at 13:00.
-    for (const face of [FACE.A, FACE.B]) directions.push((await punch(tablet, face)).direction);
-    at(180); // Leave again at 16:00.
-    for (const face of [FACE.A, FACE.B]) directions.push((await punch(tablet, face)).direction);
-    expect(directions).toEqual(['IN', 'IN', 'OUT', 'OUT', 'IN', 'IN', 'OUT', 'OUT']);
+    expect(directions).toEqual(['IN', 'IN', 'OUT', 'OUT']);
+    at(60); // Back at 13:00: a second punch-in at the same site that day is refused.
+    for (const face of [FACE.A, FACE.B]) {
+      const { d } = await scan(tablet, face);
+      expect(d.outcome).toBe('DUPLICATE');
+      expect(d.code).toBe('ALREADY_PUNCHED_HERE');
+      expect(d.message).toMatch(/one punch-in and one punch-out/);
+    }
     const date = new Date(clock.getTime() + 330 * 60_000).toISOString().slice(0, 10);
     const register = await tablet.get('/api/v1/tablet/attendance/day').query({ date });
     expect(register.status).toBe(200);
     for (const employeeId of [f.employees.A, f.employees.B]) {
       const punches = await prisma.punch.findMany({ where: { employee_id: employeeId, work_date: new Date(date) }, orderBy: { punched_at: 'asc' } });
-      expect(punches.map((p) => p.direction)).toEqual(['IN', 'OUT', 'IN', 'OUT']);
-      expect(new Set(punches.map((p) => p.site_id))).toEqual(new Set([sites.ALPHA]));
-      expect(register.body.data.rows.find((r) => r.id === employeeId)).toMatchObject({ punches_in: 2, punches_out: 2, worked_min: 360, on_site_now: false });
+      expect(punches.map((p) => p.direction)).toEqual(['IN', 'OUT']);
+      expect(register.body.data.rows.find((r) => r.id === employeeId)).toMatchObject({ punches_in: 1, punches_out: 1, worked_min: 180, on_site_now: false });
     }
   });
 });
@@ -504,10 +506,18 @@ describe('Register face on the tablet: four guided pictures', () => {
 
 describe('Rolling templates', () => {
   it('confident punches teach new templates; only the newest rolling ones are kept, registered ones never go', async () => {
+    // A site allows one punch-in and one punch-out a day, so the day's punches are cleared after
+    // each pair (test-only retention switch); the templates they taught stay.
     const tablet = await tabletFor('ALPHA');
     for (let i = 0; i < 7; i++) {
       await punch(tablet, FACE.A);
       at(30);
+      if (i % 2 === 1) {
+        await prisma.$transaction(async (tx) => {
+          await tx.$executeRawUnsafe("SET LOCAL ajpwer.retention = 'on'");
+          await tx.punch.deleteMany({ where: { employee_id: f.employees.A } });
+        });
+      }
     }
     const live = await prisma.employeeFace.findMany({ where: { employee_id: f.employees.A, deleted_at: null, model_version: MODEL_VERSION } });
     expect(live.filter((t) => t.kind === 'REGISTERED')).toHaveLength(1);
@@ -569,7 +579,7 @@ describe('Change site with travel minutes', () => {
     expect((await computeMonth1(prisma, e, ym)).result.days.find((x) => x.date === date).worked_min).toBe(7 * 60 + 30);
   });
 
-  it('no travel when he punches in at a different site than he named', async () => {
+  it('a punch-in at a site other than the one he named is refused the same day', async () => {
     const alpha = await tabletFor('ALPHA');
     const gamma = await tabletFor('GAMMA');
     await punch(alpha, FACE.B);
@@ -577,9 +587,11 @@ describe('Change site with travel minutes', () => {
     const { s, d } = await scan(alpha, FACE.B);
     await alpha.post(`/api/v1/punches/sessions/${s.session_id}/change-site`).send({ confirm_token: d.confirm_token, to_site_id: sites.BETA, ...alpha.pos });
     at(30);
-    await punch(gamma, FACE.B);
+    const refused = await scan(gamma, FACE.B);
+    expect(refused.d.outcome).toBe('DUPLICATE');
+    expect(refused.d.code).toBe('TRANSFER_NEEDED');
     const change = await prisma.siteChange.findFirst({ where: { employee_id: f.employees.B }, orderBy: { created_at: 'desc' } });
-    expect(change.status).toBe('NOT_COUNTED');
+    expect(change.status).toBe('PENDING');
     expect(change.travel_min).toBeNull();
   });
 

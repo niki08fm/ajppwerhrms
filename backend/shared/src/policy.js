@@ -339,6 +339,12 @@ export const DEFAULT_ATTENDANCE_RULES = { standard_min: 480, half_day_min: 240, 
  */
 export const ATTENDANCE_RULES = Object.freeze({ grace_min: 15, half_day_below_min: 240, default_shift_min: 540 });
 
+/**
+ * Site transfers: at most one a day. The sending site sets the travel grace; the travel
+ * credited is the actual time from punch-out to punch-in at the destination, up to the grace.
+ */
+export const TRANSFER_RULES = Object.freeze({ default_grace_min: 30, max_grace_min: 240 });
+
 /** The built-in rules for a shift: `required_min` is what a full day should serve. */
 export function attendanceRulesFor(shift) {
   const start = shift?.start_min ?? null;

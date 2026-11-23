@@ -13,7 +13,7 @@ import { Chip, EmptyState, ErrorState, Notice, SkeletonRows } from '@/components
 
 const STATUS = {
   PENDING: ['Pending', 'warning'],
-  APPROVED: ['Approved', 'success'],
+  APPROVED: ['Recorded', 'success'],
   REJECTED: ['Rejected', 'destructive'],
   CANCELLED: ['Cancelled', 'muted'],
 };
@@ -31,7 +31,7 @@ export function TabletTransfers({ site, today, online }) {
   };
   return (
     <div className="space-y-4">
-      {sent && <Notice tone="success" icon={<Check className="size-4 shrink-0" />}>Transfer request sent to HR for approval.</Notice>}
+      {sent && <Notice tone="success" icon={<Check className="size-4 shrink-0" />}>Transfer recorded. HR is informed; no approval is needed. The person punches out here and in at the destination.</Notice>}
       <Card className="overflow-hidden">
         <CardHeader title="Transfer requests" description="Requests to move people from this site." actions={<Button disabled={!online} onClick={() => close(true)}><ArrowRightLeft /> Request transfer</Button>} />
         {requests.isLoading ? <SkeletonRows rows={5} cols={4} /> : requests.isError ? <ErrorState error={requests.error} onRetry={() => requests.refetch()} /> : !requests.data?.length ? <EmptyState title="No transfer requests" body="Request a transfer before someone leaves for another site." icon={<ArrowRightLeft className="size-6" />} /> : (
@@ -39,7 +39,7 @@ export function TabletTransfers({ site, today, online }) {
             {requests.data.map((r) => {
               const [label, tone] = STATUS[r.status] ?? [r.status, 'muted'];
               return <li key={r.id} className="flex flex-wrap items-start justify-between gap-3 px-5 py-4">
-                <div className="min-w-0 flex-1"><p className="text-sm font-semibold">{r.employee.name} <span className="ml-1 text-[12px] font-normal text-muted-foreground num">{r.employee.code}</span></p><p className="mt-1 flex flex-wrap items-center gap-1.5 text-[13px]">{r.from_site.name}<ArrowRight className="size-3 text-muted-foreground" aria-hidden="true" />{r.to_site.name}</p><p className="mt-1 text-[12px] text-muted-foreground">{fullDate(r.departure_date)}</p>{r.reason && <p className="mt-2 text-[13px] text-muted-foreground">{r.reason}</p>}{r.decision_note && <p className="mt-1 text-[12px] text-muted-foreground">HR: {r.decision_note}</p>}</div>
+                <div className="min-w-0 flex-1"><p className="text-sm font-semibold">{r.employee.name} <span className="ml-1 text-[12px] font-normal text-muted-foreground num">{r.employee.code}</span></p><p className="mt-1 flex flex-wrap items-center gap-1.5 text-[13px]">{r.from_site.name}<ArrowRight className="size-3 text-muted-foreground" aria-hidden="true" />{r.to_site.name}</p><p className="mt-1 text-[12px] text-muted-foreground">{fullDate(r.departure_date)}{r.grace_min !== undefined ? ` · ${r.grace_min} min travel grace` : ''}</p>{r.reason && <p className="mt-2 text-[13px] text-muted-foreground">{r.reason}</p>}{r.decision_note && <p className="mt-1 text-[12px] text-muted-foreground">HR: {r.decision_note}</p>}</div>
                 <div className="flex shrink-0 flex-col items-end gap-1.5"><Chip tone={tone}>{label}</Chip><span className="text-[11px] text-muted-foreground">Requested {istTime(r.requested_at, true)}</span></div>
               </li>;
             })}
@@ -57,14 +57,15 @@ function TransferForm({ site, today, online, onClose, onSubmitted }) {
   const [destination, setDestination] = useState('');
   const [date, setDate] = useState(today);
   const [reason, setReason] = useState('');
+  const [grace, setGrace] = useState('30');
   const q = useDebounced(search.trim(), 250);
   const sites = useQuery({ queryKey: ['tablet-sites', site.id], queryFn: () => api.get('/tablet/sites').then((r) => r.data), enabled: online });
   const people = useQuery({ queryKey: ['tablet-transfer-employees', site.id, q], queryFn: () => api.get('/tablet/employees', { for: 'transfer', q }).then((r) => r.data), enabled: online && !employee && q.length >= 2 });
-  const submit = useMutation({ mutationFn: () => api.post('/tablet/transfers', { employee_code: employee.code, to_site_id: destination, departure_date: date, reason: reason.trim() }), onSuccess: onSubmitted });
+  const submit = useMutation({ mutationFn: () => api.post('/tablet/transfers', { employee_code: employee.code, to_site_id: destination, departure_date: date, reason: reason.trim(), grace_min: Number(grace) }), onSuccess: onSubmitted });
   const start = (e) => { e.preventDefault(); if (employee && destination && date && reason.trim().length >= 3 && online) submit.mutate(); };
 
   return (
-    <Dialog className="site-workspace site-dialog" open onOpenChange={(next) => !next && !submit.isPending && onClose()} title="Request transfer" description={`From ${site.name}. HR approval is required.`} footer={<><Button variant="outline" disabled={submit.isPending} onClick={onClose}>Cancel</Button><Button type="submit" form="site-transfer-form" disabled={!online || !employee || !destination || !date || reason.trim().length < 3 || sites.isError} loading={submit.isPending}>Send request</Button></>}>
+    <Dialog className="site-workspace site-dialog" open onOpenChange={(next) => !next && !submit.isPending && onClose()} title="Request transfer" description={`From ${site.name}. One transfer a person a day; HR is informed and need not approve.`} footer={<><Button variant="outline" disabled={submit.isPending} onClick={onClose}>Cancel</Button><Button type="submit" form="site-transfer-form" disabled={!online || !employee || !destination || !date || reason.trim().length < 3 || sites.isError || grace === '' || Number(grace) < 0 || Number(grace) > 240} loading={submit.isPending}>Send request</Button></>}>
       <form id="site-transfer-form" onSubmit={start} className="space-y-4">
         {!online && <Notice tone="warning">Connect to send the request.</Notice>}
         {submit.isError && <Notice tone="destructive">{errorMessage(submit.error)}</Notice>}
@@ -76,8 +77,9 @@ function TransferForm({ site, today, online, onClose, onSubmitted }) {
         {sites.isError && <ErrorState error={sites.error} onRetry={() => sites.refetch()} compact />}
         {sites.data?.length === 0 && <p className="text-[13px] text-muted-foreground">No other active site is available.</p>}
         <Field label="Departure date" required>{(id) => <Input id={id} type="date" value={date} min={today} onChange={(e) => { setDate(e.target.value); submit.reset(); }} required disabled={submit.isPending} />}</Field>
+        <Field label="Travel grace (minutes)" hint="Travel counted in the day: the actual time from punch-out here to punch-in there, up to this." required>{(id) => <Input id={id} type="number" min={0} max={240} value={grace} onChange={(e) => { setGrace(e.target.value); submit.reset(); }} required disabled={submit.isPending} className="max-w-32 num" />}</Field>
         <Field label="Reason" required>{(id) => <Textarea id={id} value={reason} onChange={(e) => setReason(e.target.value)} minLength={3} maxLength={300} required placeholder="Why is this person moving to another site?" disabled={submit.isPending} />}</Field>
-        <p className="border-t pt-3 text-[12px] text-muted-foreground">Attendance is recorded separately. The employee must punch out here and punch in at the destination.</p>
+        <p className="border-t pt-3 text-[12px] text-muted-foreground">The employee punches out here and punches in at the destination; without this transfer the destination refuses a second punch-in that day.</p>
       </form>
     </Dialog>
   );

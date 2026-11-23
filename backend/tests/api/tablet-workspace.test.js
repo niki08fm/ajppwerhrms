@@ -208,7 +208,7 @@ describe('A site login reads only its own recorded attendance', () => {
 
 describe('Transfer requests are separate from punches', () => {
   const body = () => ({ employee_code: 'T001', to_site_id: beta.id, departure_date: DATE, reason: 'Work at the next site' });
-  it('offers only people currently here, stores a pending request and never writes a punch or travel credit', async () => {
+  it('offers only people currently here, records the transfer without HR approval and never writes a punch or travel credit', async () => {
     await recorded(f.employees.A, 'IN', 540);
     await recorded(f.employees.B, 'IN', 540, beta.id);
     const search = await alphaTablet.get('/api/v1/tablet/employees?for=transfer&q=Person');
@@ -216,14 +216,14 @@ describe('Transfer requests are separate from punches', () => {
     const before = await prisma.punch.count();
     const r = await alphaTablet.post('/api/v1/tablet/transfers').send(body());
     expect(r.status, JSON.stringify(r.body)).toBe(201);
-    expect(r.body.data).toMatchObject({ status: 'PENDING', departure_date: DATE, from_site: { id: f.siteId }, to_site: { id: beta.id } });
+    expect(r.body.data).toMatchObject({ status: 'APPROVED', decided_by: 'automatic', grace_min: 30, departure_date: DATE, from_site: { id: f.siteId }, to_site: { id: beta.id } });
     expect(await prisma.punch.count()).toBe(before);
     expect(await prisma.siteChange.count()).toBe(0);
     expect((await alphaTablet.get('/api/v1/tablet/summary')).body.data.counts.on_site_now).toBe(1);
     expect((await betaTablet.get('/api/v1/tablet/transfers')).body.data).toEqual([]);
     const duplicate = await alphaTablet.post('/api/v1/tablet/transfers').send(body());
     expect(duplicate.status).toBe(409);
-    expect(duplicate.body.error.code).toBe('TRANSFER_PENDING');
+    expect(duplicate.body.error.code).toBe('ONE_TRANSFER_A_DAY');
   });
   it('rejects another site employee, inactive destination, same-site and source-site spoofing', async () => {
     await recorded(f.employees.A, 'IN', 540);
@@ -235,15 +235,14 @@ describe('Transfer requests are separate from punches', () => {
     expect((await alphaTablet.post('/api/v1/tablet/transfers').send(body())).status).toBe(422);
     await prisma.site.update({ where: { id: beta.id }, data: { is_active: true } });
   });
-  it('only HR can review, a decision is final, and approval leaves attendance unchanged', async () => {
+  it('needs no HR decision: the site sets the grace, a site cannot decide, and nothing changes until arrival', async () => {
     await recorded(f.employees.A, 'IN', 540);
-    const r = await alphaTablet.post('/api/v1/tablet/transfers').send(body());
+    const r = await alphaTablet.post('/api/v1/tablet/transfers').send({ ...body(), grace_min: 45 });
     const id = r.body.data.id;
+    expect(r.body.data).toMatchObject({ status: 'APPROVED', grace_min: 45 });
     expect((await alphaTablet.post(`/api/v1/site-transfer-requests/${id}/decide`).send({ decision: 'APPROVED' })).status).toBe(401);
-    const reviewed = await hr.post(`/api/v1/site-transfer-requests/${id}/decide`).send({ decision: 'APPROVED', note: 'Approved by HR' });
-    expect(reviewed.status, JSON.stringify(reviewed.body)).toBe(200);
-    expect(reviewed.body.data).toMatchObject({ status: 'APPROVED', decided_by: 'hr@test.in', decision_note: 'Approved by HR' });
     expect((await hr.post(`/api/v1/site-transfer-requests/${id}/decide`).send({ decision: 'REJECTED' })).status).toBe(409);
+    expect((await alphaTablet.post('/api/v1/tablet/transfers').send({ ...body(), grace_min: 500 })).status).toBe(422);
     expect(await prisma.punch.count()).toBe(1);
     expect(await prisma.siteChange.count()).toBe(0);
     expect((await alphaTablet.get('/api/v1/tablet/transfers')).body.data[0].status).toBe('APPROVED');
@@ -301,8 +300,30 @@ describe('Moving to another site cannot accidentally punch OUT at the destinatio
     expect(blocked.body.error.code).toBe('CROSS_SITE_OPEN_SHIFT');
     expect(await prisma.punch.count()).toBe(1);
     await recorded(f.employees.A, 'OUT', 1050);
-    const allowed = await upload(betaTablet, s.body.data.session_id);
-    expect(allowed.body.data).toMatchObject({ outcome: 'IDENTIFIED', direction: 'IN' });
+    // Out at the source, but no transfer: a second site's punch-in is refused that day.
+    const refused = await upload(betaTablet, s.body.data.session_id);
+    expect(refused.body.data).toMatchObject({ outcome: 'DUPLICATE', code: 'TRANSFER_NEEDED' });
+  });
+  it('a transfer lets the destination take the punch-in, credits travel up to the grace, and allows one a day', async () => {
+    await registerTemplate(f.employees.A);
+    await recorded(f.employees.A, 'IN', 540);
+    // Alpha sends A to beta with 30 minutes' grace; A leaves alpha at 17:10 (now is 18:00).
+    expect((await alphaTablet.post('/api/v1/tablet/transfers').send({ employee_code: 'T001', to_site_id: beta.id, departure_date: DATE, reason: 'Cable pull at beta', grace_min: 30 })).status).toBe(201);
+    await recorded(f.employees.A, 'OUT', 1030);
+    const s = await start(betaTablet);
+    const identified = await upload(betaTablet, s.body.data.session_id);
+    expect(identified.body.data).toMatchObject({ outcome: 'IDENTIFIED', direction: 'IN' });
+    const confirmed = await betaTablet.post(`/api/v1/punches/sessions/${s.body.data.session_id}/confirm`).send({ ...POS, confirm_token: identified.body.data.confirm_token });
+    expect(confirmed.status, JSON.stringify(confirmed.body)).toBe(201);
+    // 50 minutes' actual travel (17:10 → 18:00); 30 are credited, the grace.
+    const change = await prisma.siteChange.findFirstOrThrow({ where: { employee_id: f.employees.A } });
+    expect(change).toMatchObject({ status: 'COUNTED', travel_min: 30, grace_min: 30, from_site_id: f.siteId, to_site_id: beta.id });
+    const waiting = await hr.get('/api/v1/approvals');
+    const move = (waiting.body.data.items ?? waiting.body.data).find((i) => i.kind === 'move');
+    expect(move.detail).toMatchObject({ travel_min: 30, grace_min: 30, actual_min: 50 });
+    // A second transfer that day is refused.
+    const again = await betaTablet.post('/api/v1/tablet/transfers').send({ employee_code: 'T001', to_site_id: f.siteId, departure_date: DATE, reason: 'Back to alpha' });
+    expect(again.body.error.code).toBe('ONE_TRANSFER_A_DAY');
   });
   it('rechecks the source IN at confirmation time and refuses a punch after the employee becomes inactive', async () => {
     await registerTemplate(f.employees.A);
