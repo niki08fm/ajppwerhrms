@@ -5,3 +5,4 @@ export * from './overtime.js';
 export * from './recovery.js';
 export * from './payslip.js';
 export * from './preview.js';
+export * from './loan-rules.js';

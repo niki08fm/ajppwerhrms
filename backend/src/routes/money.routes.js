@@ -9,6 +9,11 @@ export const moneyRouter = Router();
 moneyRouter.get('/advances-loans', requirePerm('salary.read'), moneyController.listAdvancesAndLoans);
 moneyRouter.post('/advances', requirePerm('salary.write'), moneyController.createAdvance);
 moneyRouter.post('/loans', requirePerm('salary.write'), moneyController.createLoan);
+moneyRouter.post('/loans/preview', requirePerm('salary.read'), moneyController.previewLoan);
+moneyRouter.get('/loan-types', requirePerm('salary.read'), moneyController.listLoanTypes);
+moneyRouter.post('/loan-types', requirePerm('setup.write'), moneyController.createLoanType);
+moneyRouter.patch('/loan-types/:id', requirePerm('setup.write'), moneyController.updateLoanType);
+moneyRouter.delete('/loan-types/:id', requirePerm('setup.write'), moneyController.deleteLoanType);
 
 // ─── Exits and settlement ───────────────────────────────────────────────────
 moneyRouter.get('/settlements', requirePerm('payroll.read'), moneyController.listSettlements);

@@ -649,12 +649,16 @@ async function main() {
   }
 
   // ── Loans and advances ────────────────────────────────────────────────────
+  // Starting types: HR changes or adds to them under Setup → Loan and advance types.
+  const personalLoan = await prisma.loanType.create({ data: { name: 'Personal loan', kind: 'LOAN', max_gross_multiple: 3, max_amount: BigInt(R(150000)), max_instalments: 12, recovery_method: 'EQUAL_INSTALMENTS', max_instalment_pct: 40, min_service_months: 6, created_by: 'seed' } });
+  await prisma.loanType.create({ data: { name: 'Emergency loan', kind: 'LOAN', max_amount: BigInt(R(25000)), max_instalments: 10, recovery_method: 'PCT_OF_GROSS', recovery_pct: 10, min_service_months: 0, created_by: 'seed' } });
+  const salaryAdvance = await prisma.loanType.create({ data: { name: 'Salary advance', kind: 'ADVANCE', max_gross_multiple: 1, max_instalments: 3, recovery_method: 'FIXED_AMOUNT', max_instalment_pct: 33, created_by: 'seed' } });
   const loanee = created.find((c) => c.p.tag === 'big-loan');
   await prisma.loan.create({
-    data: { employee_id: loanee.id, loan_type: 'Personal loan', principal: BigInt(R(120000)), months: 10, emi: BigInt(R(12000)), started_on: toDbDate(firstOfMonth(M1)), created_by: 'seed' },
+    data: { employee_id: loanee.id, loan_type: 'Personal loan', type_id: personalLoan.id, principal: BigInt(R(120000)), months: 10, emi: BigInt(R(12000)), started_on: toDbDate(firstOfMonth(M1)), created_by: 'seed' },
   });
   await prisma.advance.create({
-    data: { employee_id: created[8].id, amount: BigInt(R(10000)), reason: 'Festival advance', granted_on: toDbDate(firstOfMonth(M1)), instalment: BigInt(R(2500)), created_by: 'seed' },
+    data: { employee_id: created[8].id, amount: BigInt(R(10000)), reason: 'Festival advance', type_id: salaryAdvance.id, granted_on: toDbDate(firstOfMonth(M1)), instalment: BigInt(R(2500)), created_by: 'seed' },
   });
 
   // ── Leave ─────────────────────────────────────────────────────────────────

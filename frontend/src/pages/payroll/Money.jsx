@@ -84,7 +84,7 @@ export default function MoneyPage() {
                     <PersonLink id={x.employee.id} name={x.employee.name} code={x.employee.code} tab="loans" />
                   </td>
                   <td>{x.type === 'LOAN' ? 'Loan' : 'Advance'}</td>
-                  <td>{x.label}</td>
+                  <td>{x.type === 'ADVANCE' && x.type_name ? `${x.type_name} · ${x.label}` : x.label}</td>
                   <td className="num">{x.started_on}</td>
                   <td className="text-right">
                     <M value={x.amount} />
@@ -131,23 +131,32 @@ export default function MoneyPage() {
 export function GrantDialog({ type, employee, onClose }) {
   const qc = useQueryClient();
   const people = useQuery({ queryKey: ['people', 'active-money'], queryFn: () => api.get('/employees', { 'filter[status]': 'ACTIVE,NOTICE', limit: 200 }).then((r) => r.data), enabled: !employee });
+  const types = useQuery({ queryKey: ['loan-types'], queryFn: () => api.get('/loan-types').then((r) => r.data) });
+  const choices = (types.data ?? []).filter((t) => t.kind === type && t.active);
   const today = istDate(new Date());
-  const [f, setF] = useState({ employee_id: employee?.id ?? '', amount: '', months: '6', instalment: '', reason: '', loan_type: 'Personal loan', date: today });
+  const [f, setF] = useState({ employee_id: employee?.id ?? '', type_id: '', amount: '', instalments: '', instalment: '', reason: '', date: today });
+  const kind = choices.find((t) => t.id === f.type_id) ?? null;
   const amount = toPaise(f.amount);
+  const instalments = Number(f.instalments);
   const instalment = toPaise(f.instalment);
-  const months = Number(f.months);
-  const validMonths = Number.isInteger(months) && months >= 1 && months <= 120;
-  const validInstalment = instalment > 0 && instalment <= amount;
-  const valid = !!f.employee_id && !!f.date && amount > 0 && (type === 'LOAN' ? validMonths && !!f.loan_type.trim() && f.loan_type.trim().length <= 40 : validInstalment && f.reason.trim().length >= 3 && f.reason.trim().length <= 300);
-  const emi = amount > 0 && validMonths ? Math.ceil(amount / months) : 0;
+  const ready = !!f.employee_id && !!kind && amount > 0
+    && (kind.recovery_method !== 'EQUAL_INSTALMENTS' || (Number.isInteger(instalments) && instalments >= 1))
+    && (kind.recovery_method !== 'FIXED_AMOUNT' || instalment > 0);
+  const debounced = useDebounced(JSON.stringify({ e: f.employee_id, t: f.type_id, a: amount, n: f.instalments, i: instalment, d: f.date }), 300);
+  const plan = useQuery({
+    queryKey: ['loan-plan', debounced],
+    queryFn: () => api.post('/loans/preview', { type_id: f.type_id, employee_id: f.employee_id, amount, granted_on: f.date, ...(kind?.recovery_method === 'EQUAL_INSTALMENTS' ? { instalments } : {}), ...(kind?.recovery_method === 'FIXED_AMOUNT' ? { instalment } : {}) }).then((r) => r.data),
+    enabled: ready,
+  });
+  const ok = ready && plan.data && !plan.data.errors.length && (type === 'LOAN' || f.reason.trim().length >= 3);
   const save = useMutation({
     mutationFn: () =>
       type === 'LOAN'
-        ? api.post('/loans', { employee_id: f.employee_id, loan_type: f.loan_type.trim(), principal: toPaise(f.amount), months: Number(f.months), started_on: f.date })
-        : api.post('/advances', { employee_id: f.employee_id, amount: toPaise(f.amount), reason: f.reason.trim(), granted_on: f.date, instalment: toPaise(f.instalment) }),
+        ? api.post('/loans', { employee_id: f.employee_id, type_id: f.type_id, principal: amount, started_on: f.date, ...(kind.recovery_method === 'EQUAL_INSTALMENTS' ? { months: instalments } : {}), ...(kind.recovery_method === 'FIXED_AMOUNT' ? { instalment } : {}) })
+        : api.post('/advances', { employee_id: f.employee_id, type_id: f.type_id, amount, reason: f.reason.trim(), granted_on: f.date, ...(kind.recovery_method === 'EQUAL_INSTALMENTS' ? { instalments } : {}), ...(kind.recovery_method === 'FIXED_AMOUNT' ? { instalment } : {}) }),
     onSuccess: () => {
       toast.success(type === 'LOAN' ? 'Loan recorded' : 'Advance recorded');
-      for (const key of ['advances-loans', 'settlement', 'payroll-preview', 'payroll-summary', 'payroll-issues', 'payroll-fnf']) qc.invalidateQueries({ queryKey: [key] });
+      for (const key of ['advances-loans', 'settlement', 'payroll-preview', 'payroll-summary', 'payroll-issues', 'payroll-fnf', 'loan-types']) qc.invalidateQueries({ queryKey: [key] });
       onClose();
     },
   });
@@ -156,13 +165,13 @@ export function GrantDialog({ type, employee, onClose }) {
       open
       onOpenChange={(o) => !o && !save.isPending && onClose()}
       title={type === 'LOAN' ? 'New loan' : 'New advance'}
-      description="Record the amount and monthly recovery through payroll. This does not transfer money to the employee."
+      description="Choose the type: its limits are checked against this person's salary. This records the recovery through payroll; it does not transfer money."
       footer={
         <>
           <Button variant="outline" disabled={save.isPending} onClick={onClose}>
             Cancel
           </Button>
-          <Button loading={save.isPending} disabled={!valid} onClick={() => save.mutate()}>
+          <Button loading={save.isPending} disabled={!ok} onClick={() => save.mutate()}>
             {type === 'LOAN' ? 'Record loan' : 'Record advance'}
           </Button>
         </>
@@ -170,6 +179,7 @@ export function GrantDialog({ type, employee, onClose }) {
     >
       {save.isError && <p role="alert" className="mb-3 text-sm text-destructive">{errorMessage(save.error)}{save.error?.code === 'NETWORK' && ' Check the records before trying again; the server may have received this request.'}</p>}
       {!employee && people.isError && <ErrorState error={people.error} onRetry={() => people.refetch()} />}
+      {types.data && !choices.length && <p className="mb-3 text-sm text-muted-foreground">No active {type === 'LOAN' ? 'loan' : 'advance'} types. Add one under Setup → Loan and advance types.</p>}
       <fieldset disabled={save.isPending} className="grid gap-3 sm:grid-cols-2">
         {employee ? (
           <p className="sm:col-span-2 text-[14px]">For {employee.name}</p>
@@ -187,24 +197,36 @@ export function GrantDialog({ type, employee, onClose }) {
             )}
           </Field>
         )}
-        {type === 'LOAN' ? (
-          <>
-            <Field label="Loan type">{(id) => <Input id={id} maxLength={40} value={f.loan_type} onChange={(e) => setF({ ...f, loan_type: e.target.value })} />}</Field>
-            <Field label="Principal">{(id) => <MoneyInput id={id} value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} />}</Field>
-            <Field label="Months" error={f.months && !validMonths ? 'Enter 1 to 120 whole months.' : undefined} hint={emi > 0 && validMonths ? `Monthly repayment ${formatINR(emi, { paise: true })}; the final instalment may be lower.` : undefined}>
-              {(id) => <Input id={id} type="number" min={1} max={120} step={1} value={f.months} onChange={(e) => setF({ ...f, months: e.target.value })} />}
-            </Field>
-            <Field label="First EMI month from">{(id) => <Input id={id} type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} />}</Field>
-          </>
-        ) : (
-          <>
-            <Field label="Amount">{(id) => <MoneyInput id={id} value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} />}</Field>
-            <Field label="Instalment per month" error={f.instalment && !validInstalment ? 'Enter an amount greater than zero, up to the advance amount.' : undefined}>{(id) => <MoneyInput id={id} value={f.instalment} onChange={(e) => setF({ ...f, instalment: e.target.value })} />}</Field>
-            <Field label="Reason">{(id) => <Input id={id} maxLength={300} value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} />}</Field>
-            <Field label="Granted on">{(id) => <Input id={id} type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} />}</Field>
-          </>
+        <Field label={type === 'LOAN' ? 'Loan type' : 'Advance type'} className="sm:col-span-2" hint={kind ? (plan.data?.description ?? kind.description) : undefined}>
+          {(id) => (
+            <Select id={id} value={f.type_id} onChange={(e) => setF({ ...f, type_id: e.target.value })}>
+              <option value="">Choose a type…</option>
+              {choices.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </Select>
+          )}
+        </Field>
+        <Field label={type === 'LOAN' ? 'Principal' : 'Amount'} hint={plan.data?.limit != null ? `Most for this person: ${formatINR(plan.data.limit)}` : undefined}>{(id) => <MoneyInput id={id} value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} />}</Field>
+        {kind?.recovery_method === 'EQUAL_INSTALMENTS' && (
+          <Field label="Instalments" hint={`At most ${kind.max_instalments}`}>{(id) => <Input id={id} type="number" min={1} max={kind.max_instalments} value={f.instalments} onChange={(e) => setF({ ...f, instalments: e.target.value })} className="num" />}</Field>
         )}
+        {kind?.recovery_method === 'FIXED_AMOUNT' && (
+          <Field label="Instalment per month">{(id) => <MoneyInput id={id} value={f.instalment} onChange={(e) => setF({ ...f, instalment: e.target.value })} />}</Field>
+        )}
+        {type === 'ADVANCE' && <Field label="Reason">{(id) => <Input id={id} maxLength={300} value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} />}</Field>}
+        <Field label={type === 'LOAN' ? 'First EMI month from' : 'Granted on'}>{(id) => <Input id={id} type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} />}</Field>
       </fieldset>
+      {ready && plan.data && (
+        <div className="mt-4 rounded-md border p-3 text-[14px]" role="status">
+          {plan.data.errors.length ? (
+            <ul className="list-disc space-y-1 pl-5 text-destructive">{plan.data.errors.map((e) => <li key={e}>{e}</li>)}</ul>
+          ) : (
+            <p>
+              Recovers <strong>{formatINR(plan.data.instalment)}</strong> a month for <strong>{plan.data.months}</strong> month{plan.data.months === 1 ? '' : 's'}
+              {plan.data.last_instalment !== plan.data.instalment ? ` (last ${formatINR(plan.data.last_instalment)})` : ''}. Monthly gross {formatINR(plan.data.gross)}.
+            </p>
+          )}
+        </div>
+      )}
     </Dialog>
   );
 }

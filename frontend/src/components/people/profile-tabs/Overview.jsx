@@ -24,7 +24,7 @@ function describePolicy(kind, r) {
         ? `${formatMinutes(r.standard_min)} day, half day from ${formatMinutes(r.half_day_min)}, ${r.grace_min} min grace`
         : `${formatMinutes(r.standard_min)} day, half day up to ${formatMinutes(r.half_day_upto_min)}, ${r.grace_min} min grace`;
     case 'OVERTIME':
-      return `${r.multiplier}× on ${describeOvertimeBase(r)}, ${r.counts_from === 'SHIFT_END' ? 'from shift end' : 'beyond the standard day'}, after ${r.after_min} min, rounded down to ${r.rounding_min} min${r.monthly_cap_min ? `, cap ${formatMinutes(r.monthly_cap_min)} a month` : ''}`;
+      return `${r.multiplier}× on ${describeOvertimeBase(r)}, from shift end, after ${r.after_min} min, rounded down to ${r.rounding_min} min${r.monthly_cap_min ? `, cap ${formatMinutes(r.monthly_cap_min)} a month` : ''}`;
     case 'WEEKOFF_PAY':
     case 'HOLIDAY_PAY':
       return `${r.paid ? 'Paid' : 'Unpaid'}${r.paid && r.sandwich ? ', sandwich rule on' : ''}`;

@@ -31,6 +31,7 @@ const Structures = lazy(() => import('./pages/setup/Structures'));
 const StructureBuilder = lazy(() => import('./pages/setup/StructureBuilder'));
 const Policies = lazy(() => import('./pages/setup/Policies'));
 const Statutory = lazy(() => import('./pages/setup/Statutory'));
+const LoanTypes = lazy(() => import('./pages/setup/LoanTypes'));
 const Calendar = lazy(() => import('./pages/setup/Calendar'));
 const Projects = lazy(() => import('./pages/setup/Projects'));
 const Departments = lazy(() => import('./pages/setup/Departments'));
@@ -132,6 +133,7 @@ export function App() {
                   <Route path="setup/structures/new" element={<StructureBuilder />} />
                   <Route path="setup/policies" element={<Policies />} />
                   <Route path="setup/statutory" element={<Statutory />} />
+                  <Route path="setup/loan-types" element={<LoanTypes />} />
                   <Route path="setup/calendar" element={<Calendar />} />
                   <Route path="setup/projects" element={<Projects />} />
                   <Route path="setup/departments" element={<Departments />} />

@@ -22,7 +22,7 @@ function summary(p) {
         ? `${r.standard_min / 60}h day, half from ${r.half_day_min / 60}h, ${r.grace_min} min grace`
         : `${r.standard_min / 60}h day, half day up to ${r.half_day_upto_min / 60}h, ${r.grace_min} min grace`;
     case 'OVERTIME':
-      return `${r.multiplier}× on ${describeOvertimeBase(r)}, ${r.counts_from === 'SHIFT_END' ? 'from shift end' : 'beyond the standard day'}, after ${r.after_min} min, cap ${r.monthly_cap_min != null ? `${r.monthly_cap_min / 60}h` : 'none'}`;
+      return `${r.multiplier}× on ${describeOvertimeBase(r)}, from shift end, after ${r.after_min} min, cap ${r.monthly_cap_min != null ? `${r.monthly_cap_min / 60}h` : 'none'}`;
     case 'WEEKOFF_PAY':
     case 'HOLIDAY_PAY':
       return `${r.paid ? 'Paid' : 'Unpaid'}${r.sandwich ? ', sandwich' : ''}`;

@@ -11,8 +11,6 @@ import {
   OT_BASE_LABELS,
   OT_COMPONENTS,
   OT_COMPONENT_LABELS,
-  OT_COUNTS_FROM,
-  OT_COUNTS_FROM_LABELS,
   STATUTORY_GRATUITY_RULES,
 } from '@ajpwer/shared';
 import { toPaise, toRupeesInput } from '@/utils';
@@ -106,17 +104,9 @@ export function PolicyForm({ kind, rules, onChange }) {
               {!selected.length && <p className="mt-2 text-[13px] text-destructive" role="alert">Select at least one salary component.</p>}
             </fieldset>
           )}
-          <Field label="Counts from" className="sm:col-span-3">
-            {(id) => (
-              <Select id={id} value={rules.counts_from ?? 'STANDARD_DAY'} onChange={(e) => set({ counts_from: e.target.value })}>
-                {OT_COUNTS_FROM.map((c) => (
-                  <option key={c} value={c}>
-                    {OT_COUNTS_FROM_LABELS[c]}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
+          <p className="sm:col-span-3 text-[13px] text-muted-foreground">
+            When overtime starts is built in: at the shift end, or for a late arrival once the shift less 15 minutes is done. This policy sets how it is paid.
+          </p>
         </div>
       );
     }
@@ -246,9 +236,7 @@ export function WorkedExample({ kind, rules, s }) {
       <>
         On a {formatINR(s.gross)} worker, {describeOvertimeBase(rules)} is {formatINR(base)}, so an hour is {formatINR(base)} ÷ ({div} × {rules.hours_per_day}) ={' '}
         <strong>{r2(hourly)}</strong>; ten hours of overtime at {rules.multiplier}× pays <strong>{formatINR(Math.round(ten))}</strong>.
-        {rules.counts_from === 'SHIFT_END'
-          ? ' It counts from the end of the shift, or for a late arrival from a full standard day after they came in, and only for time beyond a full day.'
-          : ' It is time worked beyond the standard day.'}
+        {' It starts at the shift end, or for a late arrival once the shift less 15 minutes is done (built in).'}
         {rules.after_min > 0 && ` Extra time under ${rules.after_min} minutes earns nothing; above it, time is rounded down to ${rules.rounding_min}-minute steps.`}
         {rules.monthly_cap_min != null ? ` Anything above ${formatMinutes(rules.monthly_cap_min)} a month is unpaid and reported on the payslip.` : ''}
       </>

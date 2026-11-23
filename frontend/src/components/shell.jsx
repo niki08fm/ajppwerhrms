@@ -94,6 +94,7 @@ const SETTINGS = [
   { to: '/setup/structures', label: 'Salary structures', icon: <Layers /> },
   { to: '/setup/policies', label: 'Policies', icon: <Scale /> },
   { to: '/setup/statutory', label: 'Statutory rules', icon: <Landmark /> },
+  { to: '/setup/loan-types', label: 'Loan and advance types', icon: <HandCoins /> },
   { to: '/setup/calendar', label: 'Shifts and holidays', icon: <FileClock /> },
   { to: '/setup/projects', label: 'Projects', icon: <FolderKanban /> },
 ];

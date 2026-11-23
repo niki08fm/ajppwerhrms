@@ -658,18 +658,50 @@ export const advanceCreateSchema = z
     amount: paise.min(1),
     reason: z.string().min(3).max(300),
     granted_on: isoDate,
-    instalment: paise.min(1),
+    /** Without a type: the monthly instalment. With a type it follows the type's recovery. */
+    instalment: paise.min(1).optional(),
+    type_id: uuid.optional(),
+    /** EQUAL_INSTALMENTS types: how many */
+    instalments: z.number().int().min(1).max(120).optional(),
   })
-  .strict();
+  .strict()
+  .refine((v) => v.type_id || v.instalment, { message: 'Enter the instalment', path: ['instalment'] });
 
 export const loanCreateSchema = z
   .object({
     employee_id: uuid,
-    loan_type: z.string().min(1).max(40),
+    loan_type: z.string().min(1).max(40).optional(),
     principal: paise.min(1),
-    months: z.number().int().min(1).max(120),
+    months: z.number().int().min(1).max(120).optional(),
     started_on: isoDate,
+    type_id: uuid.optional(),
+    /** FIXED_AMOUNT types: the monthly instalment */
+    instalment: paise.min(1).optional(),
   })
+  .strict()
+  .refine((v) => v.type_id || (v.loan_type && v.months), { message: 'Choose a loan type', path: ['type_id'] });
+
+/** A loan or advance type and its limits. */
+export const loanTypeSchema = z
+  .object({
+    name: z.string().trim().min(2).max(40),
+    kind: z.enum(['LOAN', 'ADVANCE']),
+    active: z.boolean().default(true),
+    max_gross_multiple: z.number().min(0.1).max(60).nullable().default(null),
+    max_amount: paise.min(100).nullable().default(null),
+    max_instalments: z.number().int().min(1).max(120),
+    recovery_method: z.enum(['EQUAL_INSTALMENTS', 'FIXED_AMOUNT', 'PCT_OF_GROSS']).default('EQUAL_INSTALMENTS'),
+    recovery_pct: z.number().min(1).max(100).nullable().default(null),
+    max_instalment_pct: z.number().min(1).max(100).nullable().default(null),
+    min_service_months: z.number().int().min(0).max(120).default(0),
+    one_at_a_time: z.boolean().default(true),
+  })
+  .strict()
+  .refine((v) => v.recovery_method !== 'PCT_OF_GROSS' || v.recovery_pct, { message: 'Set the percentage of gross recovered each month', path: ['recovery_pct'] });
+
+/** Work out a grant before recording it. */
+export const loanPreviewSchema = z
+  .object({ type_id: uuid, employee_id: uuid, amount: paise.min(0), granted_on: isoDate.optional(), instalments: z.number().int().min(1).max(120).optional(), instalment: paise.optional() })
   .strict();
 
 export const savedViewSchema = z.object({ list: z.string().min(1).max(40), name: z.string().min(1).max(80), query: z.string().max(2000) }).strict();

@@ -1,5 +1,7 @@
 import { z } from 'zod';
-import { advanceCreateSchema, divRound, loanCreateSchema } from '@ajpwer/shared';
+import { advanceCreateSchema, divRound, istDate, loanCreateSchema, loanPreviewSchema, loanTypeSchema } from '@ajpwer/shared';
+import { describeLoanType, loanPlan, monthsFrom } from '../calculations/index.js';
+import { salaryOn } from '../services/rules.service.js';
 import { audit, who } from '../utils/audit.js';
 import { fromDbDate, n, toDbDate } from '../utils/dbDates.js';
 import { AppError, notFound } from '../utils/errors.js';
@@ -19,7 +21,7 @@ export const listAdvancesAndLoans = asyncHandler(async (req, res) => {
   const st = status.length ? { status: { in: status } } : {};
   const [loans, advances, carries] = await Promise.all([
     prisma.loan.findMany({ where: { deleted_at: null, ...st, ...empWhere }, include: { employee: { select: { id: true, code: true, name: true } } }, orderBy: { started_on: 'desc' } }),
-    prisma.advance.findMany({ where: { deleted_at: null, ...st, ...empWhere }, include: { employee: { select: { id: true, code: true, name: true } } }, orderBy: { granted_on: 'desc' } }),
+    prisma.advance.findMany({ where: { deleted_at: null, ...st, ...empWhere }, include: { employee: { select: { id: true, code: true, name: true } }, type: { select: { name: true } } }, orderBy: { granted_on: 'desc' } }),
     prisma.recoveryCarry.findMany({ where: { deleted_at: null, amount: { gt: 0 } }, include: { employee: { select: { id: true, code: true, name: true } } }, orderBy: { period_ym: 'desc' } }),
   ]);
   const rows = [
@@ -31,6 +33,7 @@ export const listAdvancesAndLoans = asyncHandler(async (req, res) => {
         type: 'LOAN',
         employee: l.employee,
         label: l.loan_type,
+        type_id: l.type_id,
         amount: n(l.principal),
         instalment: n(l.emi),
         recovered: n(l.recovered),
@@ -48,6 +51,8 @@ export const listAdvancesAndLoans = asyncHandler(async (req, res) => {
         type: 'ADVANCE',
         employee: a.employee,
         label: a.reason,
+        type_id: a.type_id,
+        type_name: a.type?.name ?? null,
         amount: n(a.amount),
         instalment: n(a.instalment),
         recovered: n(a.recovered),
@@ -69,36 +74,141 @@ export const listAdvancesAndLoans = asyncHandler(async (req, res) => {
   });
 });
 
+// ─── Loan and advance types ─────────────────────────────────────────────────
+
+export const loanTypeView = (t) => ({
+  id: t.id, name: t.name, kind: t.kind, active: t.active,
+  max_gross_multiple: t.max_gross_multiple === null ? null : Number(t.max_gross_multiple),
+  max_amount: t.max_amount === null ? null : n(t.max_amount),
+  max_instalments: t.max_instalments, recovery_method: t.recovery_method,
+  recovery_pct: t.recovery_pct === null ? null : Number(t.recovery_pct),
+  max_instalment_pct: t.max_instalment_pct === null ? null : Number(t.max_instalment_pct),
+  min_service_months: t.min_service_months, one_at_a_time: t.one_at_a_time,
+});
+const typeData = (b) => ({ ...b, max_amount: b.max_amount === null || b.max_amount === undefined ? b.max_amount : BigInt(b.max_amount), recovery_pct: b.recovery_method === 'PCT_OF_GROSS' ? b.recovery_pct : b.recovery_method ? null : b.recovery_pct });
+
+export const listLoanTypes = asyncHandler(async (_req, res) => {
+  const rows = await prisma.loanType.findMany({ where: { deleted_at: null }, orderBy: [{ kind: 'asc' }, { name: 'asc' }], include: { _count: { select: { loans: { where: { status: 'ACTIVE', deleted_at: null } }, advances: { where: { status: 'ACTIVE', deleted_at: null } } } } } });
+  res.json({ data: rows.map((t) => ({ ...loanTypeView(t), description: describeLoanType(loanTypeView(t)), recovering: t._count.loans + t._count.advances })) });
+});
+
+export const createLoanType = asyncHandler(async (req, res) => {
+  const b = loanTypeSchema.parse(req.body);
+  const { actor, ip } = who(req);
+  const t = await prisma.$transaction(async (tx) => {
+    if (await tx.loanType.findFirst({ where: { deleted_at: null, name: { equals: b.name, mode: 'insensitive' } } })) throw new AppError('VALIDATION', 'A type with that name exists.', 422, 'name');
+    const created = await tx.loanType.create({ data: { ...typeData(b), created_by: actor } });
+    await audit(tx, { actor, ip, action: 'loan_type.create', entity_type: 'loan_type', entity_id: created.id, detail: b });
+    return created;
+  });
+  res.status(201).json({ data: loanTypeView(t) });
+});
+
+/** Changing a type's limits affects new grants only; recovering loans keep the instalment fixed when granted. */
+export const updateLoanType = asyncHandler(async (req, res) => {
+  const id = z.string().uuid().parse(req.params.id);
+  const b = loanTypeSchema.innerType().partial().strict().parse(req.body);
+  const { actor, ip } = who(req);
+  const t = await prisma.$transaction(async (tx) => {
+    const before = await tx.loanType.findFirst({ where: { id, deleted_at: null } });
+    if (!before) throw notFound('That loan or advance type');
+    if (b.kind && b.kind !== before.kind) throw new AppError('VALIDATION', 'A type cannot change between loan and advance. Create a new type instead.', 422, 'kind');
+    const merged = { ...loanTypeView(before), ...b };
+    if (merged.recovery_method === 'PCT_OF_GROSS' && !merged.recovery_pct) throw new AppError('VALIDATION', 'Set the percentage of gross recovered each month.', 422, 'recovery_pct');
+    const updated = await tx.loanType.update({ where: { id }, data: typeData(b) });
+    await audit(tx, { actor, ip, action: 'loan_type.update', entity_type: 'loan_type', entity_id: id, detail: { before: loanTypeView(before), after: b } });
+    return updated;
+  });
+  res.json({ data: loanTypeView(t) });
+});
+
+/** A type in use is switched off instead; recovering loans and advances are never affected. */
+export const deleteLoanType = asyncHandler(async (req, res) => {
+  const id = z.string().uuid().parse(req.params.id);
+  const { actor, ip } = who(req);
+  await prisma.$transaction(async (tx) => {
+    const t = await tx.loanType.findFirst({ where: { id, deleted_at: null } });
+    if (!t) throw notFound('That loan or advance type');
+    const used = (await tx.loan.count({ where: { type_id: id } })) + (await tx.advance.count({ where: { type_id: id } }));
+    if (used) throw new AppError('CONFLICT', `${t.name} has been granted ${used} time${used === 1 ? '' : 's'}. Switch it off instead, so its records keep their type.`, 409);
+    await tx.loanType.update({ where: { id }, data: { deleted_at: new Date() } });
+    await audit(tx, { actor, ip, action: 'loan_type.delete', entity_type: 'loan_type', entity_id: id, detail: { name: t.name } });
+  });
+  res.json({ data: { id, deleted: true } });
+});
+
+/** The type's plan for one person: limit, instalment, months and every rule it breaks. */
+async function planFor(db, b) {
+  const t = await db.loanType.findFirst({ where: { id: b.type_id, deleted_at: null } });
+  if (!t) throw notFound('That loan or advance type');
+  const e = await db.employee.findFirst({ where: { id: b.employee_id, deleted_at: null }, select: { id: true, joined_on: true } });
+  if (!e) throw notFound('That employee');
+  const date = b.granted_on ?? istDate(new Date());
+  const salary = await salaryOn(db, e.id, date);
+  const gross = salary ? n(salary.monthly_gross) : 0;
+  const joined = fromDbDate(e.joined_on);
+  const service = joined ? Math.max(0, monthsFrom(joined.slice(0, 7), date.slice(0, 7)) - (Number(date.slice(8, 10)) < Number(joined.slice(8, 10)) ? 1 : 0)) : 0;
+  const model = t.kind === 'LOAN' ? db.loan : db.advance;
+  const active = await model.count({ where: { employee_id: e.id, type_id: t.id, status: 'ACTIVE', deleted_at: null } });
+  const type = loanTypeView(t);
+  const plan = loanPlan(type, { amount: b.amount, gross, instalments: b.instalments ?? null, instalment: b.instalment ?? null, service_months: service, active_of_type: active });
+  return { type, plan: { ...plan, service_months: service, description: describeLoanType(type, gross) } };
+}
+
+export const previewLoan = asyncHandler(async (req, res) => {
+  const b = loanPreviewSchema.parse(req.body);
+  res.json({ data: (await planFor(prisma, b)).plan });
+});
+
 export const createAdvance = asyncHandler(async (req, res) => {
   const b = advanceCreateSchema.parse(req.body);
-  if (b.instalment > b.amount) throw new AppError('VALIDATION', 'The instalment cannot exceed the advance.', 422, 'instalment');
+  if (!b.type_id && b.instalment > b.amount) throw new AppError('VALIDATION', 'The instalment cannot exceed the advance.', 422, 'instalment');
   const { actor, ip } = who(req);
   const a = await prisma.$transaction(async (tx) => {
     await lockAssignments(tx);
     if (!await tx.employee.findFirst({ where: { id: b.employee_id, deleted_at: null }, select: { id: true } })) throw notFound('That employee');
+    let instalment = b.instalment;
+    if (b.type_id) {
+      await tx.$queryRaw`SELECT id FROM employee WHERE id = ${b.employee_id}::uuid FOR UPDATE`;
+      const { type, plan } = await planFor(tx, { ...b, amount: b.amount });
+      if (type.kind !== 'ADVANCE') throw new AppError('VALIDATION', `${type.name} is a loan type.`, 422, 'type_id');
+      if (plan.errors.length) throw new AppError('LOAN_RULES', plan.errors.join(' '), 422, 'type_id', plan.errors);
+      instalment = plan.instalment;
+    }
     const created = await tx.advance.create({
-      data: { employee_id: b.employee_id, amount: BigInt(b.amount), reason: b.reason, granted_on: toDbDate(b.granted_on), instalment: BigInt(b.instalment), created_by: actor },
+      data: { employee_id: b.employee_id, amount: BigInt(b.amount), reason: b.reason, granted_on: toDbDate(b.granted_on), instalment: BigInt(instalment), type_id: b.type_id ?? null, created_by: actor },
     });
-    await audit(tx, { actor, ip, action: 'advance.grant', entity_type: 'employee', entity_id: b.employee_id, detail: { advance_id: created.id, ...b } });
+    await audit(tx, { actor, ip, action: 'advance.grant', entity_type: 'employee', entity_id: b.employee_id, detail: { advance_id: created.id, ...b, instalment } });
     return created;
   });
-  res.status(201).json({ data: { id: a.id } });
+  res.status(201).json({ data: { id: a.id, instalment: n(a.instalment) } });
 });
 
 export const createLoan = asyncHandler(async (req, res) => {
   const b = loanCreateSchema.parse(req.body);
-  const emi = divRound(b.principal, b.months, 'up');
   const { actor, ip } = who(req);
   const l = await prisma.$transaction(async (tx) => {
     await lockAssignments(tx);
     if (!await tx.employee.findFirst({ where: { id: b.employee_id, deleted_at: null }, select: { id: true } })) throw notFound('That employee');
+    let emi;
+    let months = b.months;
+    let label = b.loan_type;
+    if (b.type_id) {
+      await tx.$queryRaw`SELECT id FROM employee WHERE id = ${b.employee_id}::uuid FOR UPDATE`;
+      const { type, plan } = await planFor(tx, { ...b, amount: b.principal, granted_on: b.started_on, instalments: b.months });
+      if (type.kind !== 'LOAN') throw new AppError('VALIDATION', `${type.name} is an advance type.`, 422, 'type_id');
+      if (plan.errors.length) throw new AppError('LOAN_RULES', plan.errors.join(' '), 422, 'type_id', plan.errors);
+      emi = plan.instalment;
+      months = plan.months;
+      label = type.name;
+    } else emi = divRound(b.principal, b.months, 'up');
     const created = await tx.loan.create({
-      data: { employee_id: b.employee_id, loan_type: b.loan_type, principal: BigInt(b.principal), months: b.months, emi: BigInt(emi), started_on: toDbDate(b.started_on), created_by: actor },
+      data: { employee_id: b.employee_id, loan_type: label, principal: BigInt(b.principal), months, emi: BigInt(emi), started_on: toDbDate(b.started_on), type_id: b.type_id ?? null, created_by: actor },
     });
-    await audit(tx, { actor, ip, action: 'loan.grant', entity_type: 'employee', entity_id: b.employee_id, detail: { loan_id: created.id, ...b, emi } });
+    await audit(tx, { actor, ip, action: 'loan.grant', entity_type: 'employee', entity_id: b.employee_id, detail: { loan_id: created.id, ...b, emi, months } });
     return created;
   });
-  res.status(201).json({ data: { id: l.id, emi } });
+  res.status(201).json({ data: { id: l.id, emi: n(l.emi), months: l.months } });
 });
 
 // ─── Exits and settlement ───────────────────────────────────────────────────
