@@ -19,8 +19,10 @@ import {
   Landmark,
   Layers,
   LogOut,
+  Maximize2,
   MapPin,
   Menu as MenuIcon,
+  Minimize2,
   Moon,
   MoreHorizontal,
   PanelLeftClose,
@@ -356,6 +358,56 @@ function GlobalSearch() {
   );
 }
 
+const FULLSCREEN_KEY = 'app.fullscreen';
+const installedApp = () => window.matchMedia?.('(display-mode: standalone), (display-mode: fullscreen)').matches;
+
+/**
+ * Full screen: hides the app window's title bar (and the Mac menu bar). Browsers enter full
+ * screen only on a click, so once turned on, the installed app goes full screen again on the
+ * first click or key press after it opens. Esc leaves it for now; the button turns it off.
+ */
+function FullScreenToggle() {
+  const [on, setOn] = useState(() => !!document.fullscreenElement);
+  useEffect(() => {
+    const sync = () => setOn(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', sync);
+    let wanted = false;
+    try { wanted = localStorage.getItem(FULLSCREEN_KEY) === '1'; } catch { /* ignore */ }
+    const enter = () => {
+      if (!document.fullscreenElement) document.documentElement.requestFullscreen?.().catch(() => {});
+    };
+    const auto = wanted && installedApp();
+    if (auto) {
+      window.addEventListener('pointerdown', enter, { once: true, capture: true });
+      window.addEventListener('keydown', enter, { once: true, capture: true });
+    }
+    return () => {
+      document.removeEventListener('fullscreenchange', sync);
+      if (auto) {
+        window.removeEventListener('pointerdown', enter, { capture: true });
+        window.removeEventListener('keydown', enter, { capture: true });
+      }
+    };
+  }, []);
+  if (!document.fullscreenEnabled) return null;
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      aria-label={on ? 'Leave full screen' : 'Full screen'}
+      title={on ? 'Leave full screen' : 'Full screen'}
+      onClick={() => {
+        const next = !document.fullscreenElement;
+        try { localStorage.setItem(FULLSCREEN_KEY, next ? '1' : '0'); } catch { /* ignore */ }
+        if (next) document.documentElement.requestFullscreen().catch(() => {});
+        else document.exitFullscreen().catch(() => {});
+      }}
+    >
+      {on ? <Minimize2 /> : <Maximize2 />}
+    </Button>
+  );
+}
+
 function ThemeToggle() {
   const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'));
   return (
@@ -413,6 +465,7 @@ export function AppShell() {
           </Button>
           <GlobalSearch />
           <div className="flex-1" />
+          <FullScreenToggle />
           <ThemeToggle />
           <Menu
             trigger={
