@@ -19,6 +19,7 @@ export default function Statutory() {
   const regimes = useQuery({ queryKey: ['tax-regimes'], queryFn: () => api.get('/tax-regimes').then((r) => r.data) });
   const [editing, setEditing] = useState(false);
   const [editPt, setEditPt] = useState(null);
+  const [publishRegime, setPublishRegime] = useState(null);
   const c = rates.data?.current;
   return (
     <div className="flex flex-col gap-4">
@@ -136,7 +137,10 @@ export default function Statutory() {
             {pt.data.map((s) => (
               <div key={s.state} className="rounded-md border p-3 text-[14px]">
                 <div className="mb-1 flex items-center justify-between">
-                  <span className="font-medium">{s.state}</span>
+                  <span className="font-medium">
+                    {s.state}
+                    {s.valid_from && s.valid_from !== '2000-01-01' && <span className="ml-1.5 text-[12px] font-normal text-muted-foreground">from {s.valid_from}</span>}
+                  </span>
                   <span className="flex items-center gap-2">
                     <Chip>{s.headcount} people</Chip>
                     <Button size="sm" variant="ghost" onClick={() => setEditPt(s)} aria-label={`Edit ${s.state}`}>
@@ -190,7 +194,8 @@ export default function Statutory() {
       <Card>
         <CardHeader
           title="Income tax regimes"
-          description="Everyone defaults to the new regime. Confirm the slabs against the Finance Act before the first live run. Surcharge above ₹50 lakh and quarterly TDS true-up are not built."
+          description="Everyone defaults to the new regime. Each tax year's rates start on 1 April; confirm them against the Finance Act before the year's first run. Monthly TDS nets what was already deducted this year. Surcharge above ₹50 lakh is not built."
+          actions={regimes.data?.length ? <Button variant="outline" onClick={() => setPublishRegime(regimes.data[0])}><Plus /> Publish a tax year</Button> : null}
         />
         {regimes.isLoading ? (
           <SkeletonBlock className="h-40" />
@@ -201,8 +206,16 @@ export default function Statutory() {
             {regimes.data.map((r) => (
               <div key={r.id} className="rounded-md border p-3 text-[14px]">
                 <div className="mb-2 flex items-center justify-between">
-                  <span className="font-display font-semibold">{r.name}</span>
-                  <Chip>{r.headcount} people</Chip>
+                  <span className="font-display font-semibold">
+                    {r.name}
+                    <span className="ml-1.5 text-[12px] font-normal text-muted-foreground">from {r.valid_from}</span>
+                  </span>
+                  <span className="flex items-center gap-2">
+                    <Chip>{r.headcount} people</Chip>
+                    <Button size="sm" variant="ghost" onClick={() => setPublishRegime(r)} aria-label={`Publish a tax year from ${r.name}`}>
+                      <Pencil />
+                    </Button>
+                  </span>
                 </div>
                 <table className="w-full text-[13px]">
                   <tbody>
@@ -227,6 +240,7 @@ export default function Statutory() {
       </Card>
       {editing && c && <RatesDialog current={c} onClose={() => setEditing(false)} />}
       {editPt && <PtDialog state={editPt} onClose={() => setEditPt(null)} />}
+      {publishRegime && <RegimeDialog from={publishRegime} onClose={() => setPublishRegime(null)} />}
     </div>
   );
 }
@@ -335,12 +349,14 @@ function RatesDialog({ current, onClose }) {
 function PtDialog({ state, onClose }) {
   const qc = useQueryClient();
   const [name, setName] = useState(state.state);
+  const [from, setFrom] = useState('');
   const [rows, setRows] = useState(state.slabs.map((s) => ({ gender_scope: s.gender_scope, upto: toRupeesInput(s.upto_amount), amount: toRupeesInput(s.amount), feb: toRupeesInput(s.feb_amount) })));
   useEffect(() => void 0, []);
   const save = useMutation({
     mutationFn: () =>
       api.patch('/pt-slabs', {
         state: name,
+        ...(from ? { valid_from: from } : {}),
         slabs: rows.map((r) => ({
           state: name,
           gender_scope: r.gender_scope,
@@ -349,8 +365,8 @@ function PtDialog({ state, onClose }) {
           feb_amount: r.feb ? toPaise(r.feb) : null,
         })),
       }),
-    onSuccess: () => {
-      toast.success('Slabs saved');
+    onSuccess: (r) => {
+      toast.success(`Slabs saved, in force from ${r.data.valid_from}`);
       qc.invalidateQueries({ queryKey: ['pt-slabs'] });
       qc.invalidateQueries({ queryKey: ['lookups'] });
       onClose();
@@ -363,7 +379,7 @@ function PtDialog({ state, onClose }) {
       onOpenChange={(o) => !o && onClose()}
       wide
       title={state.state ? `Professional tax — ${state.state}` : 'Add a state'}
-      description="Slabs are inclusive upper bounds of monthly gross. Leave the last slab's upper bound blank. No slabs means the state levies no professional tax."
+      description="Slabs are inclusive upper bounds of monthly gross. Leave the last slab's upper bound blank. No slabs means the state levies no professional tax. Earlier months keep the slabs in force then."
       footer={
         <>
           <Button variant="outline" onClick={onClose}>
@@ -377,6 +393,9 @@ function PtDialog({ state, onClose }) {
     >
       <div className="flex flex-col gap-3">
         {!state.state && <Field label="State">{(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} />}</Field>}
+        <Field label="Effective from" hint="Leave blank for the first month that is not locked or paid.">
+          {(id) => <Input id={id} type="date" className="max-w-xs" value={from} onChange={(e) => setFrom(e.target.value)} />}
+        </Field>
         <table className="text-[14px]">
           <thead className="text-left text-[13px] text-muted-foreground">
             <tr>
@@ -419,6 +438,136 @@ function PtDialog({ state, onClose }) {
           <Plus /> Add slab
         </Button>
       </div>
+    </Dialog>
+  );
+}
+
+/** Publish a regime's rates for a tax year, starting from an existing year's figures. */
+function RegimeDialog({ from, onClose }) {
+  const qc = useQueryClient();
+  const nextYear = Number(from.valid_from.slice(0, 4)) + 1;
+  const [f, setF] = useState({
+    code: from.code,
+    name: from.name,
+    year: String(nextYear),
+    std: toRupeesInput(from.std_deduction),
+    rebateLimit: toRupeesInput(from.rebate_limit),
+    rebateMax: from.rebate_max === null ? '' : toRupeesInput(from.rebate_max),
+    marginal: from.marginal_relief,
+    allows80c: from.allows_80c,
+    allowsHra: from.allows_hra,
+    cess: String(from.cess_pct),
+  });
+  const [slabs, setSlabs] = useState(from.slabs.map((x) => ({ upto: x.upto_amount === null ? '' : toRupeesInput(x.upto_amount), rate: String(x.rate) })));
+  const save = useMutation({
+    mutationFn: () =>
+      api.post('/tax-regimes', {
+        code: f.code,
+        name: f.name,
+        valid_from: `${f.year}-04-01`,
+        std_deduction: toPaise(f.std || '0'),
+        rebate_limit: toPaise(f.rebateLimit || '0'),
+        rebate_max: f.rebateMax ? toPaise(f.rebateMax) : null,
+        marginal_relief: f.marginal,
+        allows_80c: f.allows80c,
+        allows_hra: f.allowsHra,
+        cess_pct: Number(f.cess),
+        slabs: slabs.map((x, i) => ({ upto_amount: i === slabs.length - 1 ? null : toPaise(x.upto || '0'), rate: Number(x.rate) })),
+      }),
+    onSuccess: () => {
+      toast.success(`Rates for tax year ${f.year}-${String(Number(f.year) + 1).slice(2)} published`);
+      qc.invalidateQueries({ queryKey: ['tax-regimes'] });
+      onClose();
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+  const money = (k, label, hint) => (
+    <Field label={label} hint={hint}>
+      {(id) => <MoneyInput id={id} value={f[k]} onChange={(e) => setF({ ...f, [k]: e.target.value })} />}
+    </Field>
+  );
+  const flag = (k, label) => (
+    <Field label={label}>
+      {(id) => (
+        <Select id={id} value={f[k] ? 'yes' : 'no'} onChange={(e) => setF({ ...f, [k]: e.target.value === 'yes' })}>
+          <option value="yes">Yes</option>
+          <option value="no">No</option>
+        </Select>
+      )}
+    </Field>
+  );
+  return (
+    <Dialog
+      open
+      onOpenChange={(o) => !o && onClose()}
+      wide
+      title="Publish a tax year"
+      description="The rates start on 1 April of the year chosen and apply to the whole tax year. Re-publishing a year corrects it, until its payroll is locked."
+      footer={
+        <>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button disabled={!f.name.trim() || slabs.length === 0} loading={save.isPending} onClick={() => save.mutate()}>
+            Publish
+          </Button>
+        </>
+      }
+    >
+      <div className="grid gap-3 sm:grid-cols-4">
+        <Field label="Regime">
+          {(id) => (
+            <Select id={id} value={f.code} onChange={(e) => setF({ ...f, code: e.target.value })}>
+              <option value="NEW">New regime</option>
+              <option value="OLD">Old regime</option>
+            </Select>
+          )}
+        </Field>
+        <Field label="Name">{(id) => <Input id={id} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />}</Field>
+        <Field label="Tax year starting April" hint={`${f.year}-${String(Number(f.year) + 1).slice(2)}`}>
+          {(id) => <Input id={id} type="number" min={2000} max={2100} value={f.year} onChange={(e) => setF({ ...f, year: e.target.value })} className="num" />}
+        </Field>
+        <Field label="Cess">{(id) => <Input id={id} value={f.cess} onChange={(e) => setF({ ...f, cess: e.target.value })} className="num" />}</Field>
+        {money('std', 'Standard deduction')}
+        {money('rebateLimit', 'Rebate up to taxable')}
+        {money('rebateMax', 'Rebate at most', 'Blank: the full tax')}
+        {flag('marginal', 'Marginal relief')}
+        {flag('allows80c', '80C and 80D allowed')}
+        {flag('allowsHra', 'HRA exemption allowed')}
+      </div>
+      <table className="mt-4 text-[14px]">
+        <thead className="text-left text-[13px] text-muted-foreground">
+          <tr>
+            <th>Taxable income up to</th>
+            <th>Rate</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {slabs.map((x, i) => (
+            <tr key={i}>
+              <td className="py-1 pr-2">
+                {i === slabs.length - 1 ? (
+                  <span className="text-muted-foreground">and above</span>
+                ) : (
+                  <MoneyInput value={x.upto} onChange={(e) => setSlabs(slabs.map((y, j) => (j === i ? { ...y, upto: e.target.value } : y)))} aria-label="Up to" />
+                )}
+              </td>
+              <td className="py-1 pr-2">
+                <Input value={x.rate} onChange={(e) => setSlabs(slabs.map((y, j) => (j === i ? { ...y, rate: e.target.value } : y)))} aria-label="Rate %" className="w-20 num" />
+              </td>
+              <td>
+                <Button size="icon" variant="ghost" onClick={() => setSlabs(slabs.filter((_, j) => j !== i))} aria-label="Remove slab">
+                  <Trash2 />
+                </Button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <Button variant="outline" size="sm" className="mt-2 w-fit" onClick={() => setSlabs([...slabs.slice(0, -1), { upto: '', rate: '' }, ...slabs.slice(-1)])}>
+        <Plus /> Add slab
+      </Button>
     </Dialog>
   );
 }

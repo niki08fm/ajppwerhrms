@@ -1,4 +1,4 @@
-import { esiRatesSchema, parsePolicyRules, pfRatesSchema } from '@ajpwer/shared';
+import { esiRatesSchema, istDate, parsePolicyRules, pfRatesSchema } from '@ajpwer/shared';
 import { AppError } from '../utils/errors.js';
 import { fromDbDate, n, toDbDate } from '../utils/dbDates.js';
 import { scopedRead } from '../utils/read-scope.js';
@@ -36,12 +36,19 @@ export async function ratesById(db, id) {
   };
 }
 
-export function ptSlabs(db) {
-  return scopedRead(db, 'pt-slabs', () => readPtSlabs(db));
+/** Each state's PT slabs in force on a date: its set with the latest valid_from on or before it. */
+export function ptSlabs(db, date = istDate(new Date())) {
+  return scopedRead(db, `pt-slabs:${date}`, () => readPtSlabs(db, date));
 }
 
-async function readPtSlabs(db) {
-  const rows = await db.ptSlab.findMany({ where: { deleted_at: null } });
+async function readPtSlabs(db, date) {
+  const all = await db.ptSlab.findMany({ where: { deleted_at: null, valid_from: { lte: toDbDate(date) } } });
+  const latest = new Map();
+  for (const r of all) {
+    const from = fromDbDate(r.valid_from) ?? '2000-01-01';
+    if (!latest.has(r.state) || from > latest.get(r.state)) latest.set(r.state, from);
+  }
+  const rows = all.filter((r) => (fromDbDate(r.valid_from) ?? '2000-01-01') === latest.get(r.state));
   return rows.map((r) => ({
     state: r.state,
     gender_scope: r.gender_scope,

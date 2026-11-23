@@ -578,11 +578,13 @@ model PtSlab {
   upto_amount  BigInt?
   amount       BigInt
   feb_amount   BigInt?
+  /// A state's slabs are versioned: the set with the latest valid_from on or before a date applies
+  valid_from   DateTime      @default(dbgenerated("'2000-01-01'::date")) @db.Date
   created_at   DateTime      @default(now()) @db.Timestamptz(6)
   updated_at   DateTime?     @updatedAt @db.Timestamptz(6)
   deleted_at   DateTime?     @db.Timestamptz(6)
 
-  @@index([state])
+  @@index([state, valid_from])
   @@map("pt_slab")
 }
 

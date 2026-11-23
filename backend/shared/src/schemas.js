@@ -263,6 +263,27 @@ export const statutoryRatesCreateSchema = z
   })
   .strict();
 
+/** A regime's rates for one tax year, valid from 1 April. Slabs ascend; only the last is open-ended. */
+export const taxRegimePublishSchema = z
+  .object({
+    code: z.enum(['NEW', 'OLD']),
+    name: z.string().min(1).max(60),
+    valid_from: isoDate.refine((d) => d.slice(5) === '04-01', 'A tax year starts on 1 April'),
+    std_deduction: paise,
+    rebate_limit: paise,
+    rebate_max: paise.nullable(),
+    marginal_relief: z.boolean(),
+    allows_80c: z.boolean(),
+    allows_hra: z.boolean(),
+    cess_pct: z.number().min(0).max(100),
+    slabs: z
+      .array(z.object({ upto_amount: paise.nullable(), rate: z.number().min(0).max(100) }).strict())
+      .min(1)
+      .refine((rows) => rows.at(-1).upto_amount === null && rows.slice(0, -1).every((r) => r.upto_amount !== null), 'Every slab but the last needs an upper limit; the last has none')
+      .refine((rows) => rows.slice(1, -1).every((r, i) => r.upto_amount > rows[i].upto_amount), 'Slab limits must rise'),
+  })
+  .strict();
+
 export const ptSlabRowSchema = z
   .object({
     state: z.string().min(1),
@@ -273,7 +294,8 @@ export const ptSlabRowSchema = z
   })
   .strict();
 
-export const ptSlabsReplaceSchema = z.object({ state: z.string().min(1), slabs: z.array(ptSlabRowSchema) }).strict();
+/** A state's slabs from `valid_from` (defaults to the first month not locked or paid). Earlier sets stay for earlier months. */
+export const ptSlabsReplaceSchema = z.object({ state: z.string().min(1), valid_from: isoDate.optional(), slabs: z.array(ptSlabRowSchema) }).strict();
 
 // ─── People ──────────────────────────────────────────────────────────────────
 

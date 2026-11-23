@@ -18,6 +18,7 @@ import {
   ptSlabsReplaceSchema,
   shiftSchema,
   statutoryRatesCreateSchema,
+  taxRegimePublishSchema,
   SEED_TAX_REGIMES,
   STATUTORY_MINIMUM_RATES,
   structureCreateSchema,
@@ -141,7 +142,7 @@ async function sampleInputs(sample) {
   const date = today();
   const [rates, slabs, regimes, ptState] = await Promise.all([
     ratesOn(prisma, date).catch(() => ({ ...STATUTORY_MINIMUM_RATES })),
-    ptSlabs(prisma),
+    ptSlabs(prisma, date),
     regimesOn(prisma, date).catch(() => null),
     sample.pt_state ? Promise.resolve(sample.pt_state) : commonPtState(),
   ]);
@@ -465,18 +466,22 @@ export const getStatutoryRates = asyncHandler(async (_req, res) => {
   res.json({ data: { current: current ? { ...current, valid_from: fromDbDate(current.valid_from) } : null, versions: rows.map((r) => ({ ...r, valid_from: fromDbDate(r.valid_from) })) } });
 });
 
-/** Rates are versioned: a change inserts a new row with its effective date. Old runs keep the row they used. */
+/**
+ * Rates are versioned: a change inserts a new row with its effective date. Old runs keep the
+ * row they used. A date inside locked or paid payroll is refused, as is changing a row a run used.
+ */
 export const publishStatutoryRates = asyncHandler(async (req, res) => {
   const b = statutoryRatesCreateSchema.parse(req.body);
   const { actor, ip } = who(req);
-  const existing = await prisma.statutoryRates.findUnique({ where: { valid_from: toDbDate(b.valid_from) } });
-  if (existing) {
-    const used = await prisma.payrollPeriod.count({ where: { statutory_rates_id: existing.id } });
-    if (used) throw new AppError('CONFLICT', `The rates effective ${b.valid_from} were used by a payroll run. Publish new rates with a later effective date.`, 409);
-  }
   const row = await prisma.$transaction(async (tx) => {
+    await effectiveFrom(tx, b.valid_from, { field: 'valid_from' });
+    const existing = await tx.statutoryRates.findUnique({ where: { valid_from: toDbDate(b.valid_from) } });
+    if (existing && !existing.deleted_at) {
+      const used = await tx.payrollPeriod.count({ where: { statutory_rates_id: existing.id } });
+      if (used) throw new AppError('CONFLICT', `The rates effective ${b.valid_from} were used by a payroll run. Publish new rates with a later effective date.`, 409);
+    }
     const r = existing
-      ? await tx.statutoryRates.update({ where: { id: existing.id }, data: { pf: b.pf, esi: b.esi, recovery_cap_pct: b.recovery_cap_pct } })
+      ? await tx.statutoryRates.update({ where: { id: existing.id }, data: { pf: b.pf, esi: b.esi, recovery_cap_pct: b.recovery_cap_pct, deleted_at: null } })
       : await tx.statutoryRates.create({ data: { valid_from: toDbDate(b.valid_from), pf: b.pf, esi: b.esi, recovery_cap_pct: b.recovery_cap_pct, created_by: actor } });
     await audit(tx, {
       actor,
@@ -484,42 +489,70 @@ export const publishStatutoryRates = asyncHandler(async (req, res) => {
       action: 'statutory_rates.publish',
       entity_type: 'statutory_rates',
       entity_id: r.id,
-      detail: { ...b, replaced: existing ? { pf: existing.pf, esi: existing.esi } : null },
+      detail: { ...b, replaced: existing && !existing.deleted_at ? { pf: existing.pf, esi: existing.esi } : null },
     });
     return r;
   });
   res.json({ data: { ...row, valid_from: fromDbDate(row.valid_from) } });
 });
 
+/** Remove a mistaken rates row: never one a payroll run used, one inside frozen payroll, or the earliest. */
+export const deleteStatutoryRates = asyncHandler(async (req, res) => {
+  const id = uuid.parse(req.params.id);
+  const { actor, ip } = who(req);
+  await prisma.$transaction(async (tx) => {
+    const row = await tx.statutoryRates.findFirst({ where: { id, deleted_at: null } });
+    if (!row) throw notFound('Those rates');
+    const date = fromDbDate(row.valid_from);
+    await effectiveFrom(tx, date, { field: 'valid_from' });
+    if (await tx.payrollPeriod.count({ where: { statutory_rates_id: id } })) throw new AppError('CONFLICT', `The rates effective ${date} were used by a payroll run and stay on record.`, 409);
+    const earlier = await tx.statutoryRates.count({ where: { deleted_at: null, valid_from: { lt: row.valid_from } } });
+    if (!earlier) throw new AppError('CONFLICT', 'These are the earliest rates on record; months before the next rates would have none. Publish corrected rates on the same date instead.', 409);
+    await tx.statutoryRates.update({ where: { id }, data: { deleted_at: new Date() } });
+    await audit(tx, { actor, ip, action: 'statutory_rates.delete', entity_type: 'statutory_rates', entity_id: id, detail: { valid_from: date, pf: row.pf, esi: row.esi } });
+  });
+  res.json({ data: { id, deleted: true } });
+});
+
 export const listPtSlabs = asyncHandler(async (_req, res) => {
   const [slabs, heads] = await Promise.all([
-    prisma.ptSlab.findMany({ where: { deleted_at: null }, orderBy: [{ state: 'asc' }, { gender_scope: 'asc' }, { upto_amount: { sort: 'asc', nulls: 'last' } }] }),
+    prisma.ptSlab.findMany({ where: { deleted_at: null }, orderBy: [{ state: 'asc' }, { valid_from: 'desc' }, { gender_scope: 'asc' }, { upto_amount: { sort: 'asc', nulls: 'last' } }] }),
     prisma.employeeStatutory.groupBy({ by: ['pt_state'], _count: true, where: { employee: { deleted_at: null, status: { in: ['ACTIVE', 'NOTICE'] } } } }),
   ]);
+  const date = today();
+  const view = (s) => ({ id: s.id, gender_scope: s.gender_scope, upto_amount: s.upto_amount === null ? null : n(s.upto_amount), amount: n(s.amount), feb_amount: s.feb_amount === null ? null : n(s.feb_amount) });
   const states = [...new Set([...slabs.map((s) => s.state), ...heads.map((h) => h.pt_state)])].sort();
   res.json({
-    data: states.map((state) => ({
-      state,
-      headcount: heads.find((h) => h.pt_state === state)?._count ?? 0,
-      slabs: slabs
-        .filter((s) => s.state === state)
-        .map((s) => ({
-          id: s.id,
-          gender_scope: s.gender_scope,
-          upto_amount: s.upto_amount === null ? null : n(s.upto_amount),
-          amount: n(s.amount),
-          feb_amount: s.feb_amount === null ? null : n(s.feb_amount),
-        })),
-    })),
+    data: states.map((state) => {
+      const rows = slabs.filter((s) => s.state === state);
+      const starts = [...new Set(rows.map((s) => fromDbDate(s.valid_from)))].sort().reverse();
+      const current = starts.find((d) => d <= date) ?? null;
+      return {
+        state,
+        headcount: heads.find((h) => h.pt_state === state)?._count ?? 0,
+        // The slabs in force today; `versions` lists every dated set, newest first.
+        valid_from: current,
+        slabs: rows.filter((s) => fromDbDate(s.valid_from) === current).map(view),
+        versions: starts.map((d) => ({ valid_from: d, slabs: rows.filter((s) => fromDbDate(s.valid_from) === d).map(view) })),
+      };
+    }),
   });
 });
 
+/**
+ * Publish a state's slabs from a date (by default the first month not locked or paid).
+ * Earlier sets keep applying to earlier months; a set dated on or after the new one is replaced.
+ */
 export const replacePtSlabs = asyncHandler(async (req, res) => {
   const b = ptSlabsReplaceSchema.parse(req.body);
   const { actor, ip } = who(req);
-  await prisma.$transaction(async (tx) => {
-    const old = await tx.ptSlab.findMany({ where: { state: b.state, deleted_at: null } });
-    await tx.ptSlab.updateMany({ where: { state: b.state, deleted_at: null }, data: { deleted_at: new Date() } });
+  const from = await prisma.$transaction(async (tx) => {
+    const requested = await effectiveFrom(tx, b.valid_from);
+    const existing = await tx.ptSlab.findMany({ where: { state: b.state, deleted_at: null } });
+    // With no frozen payroll the new set simply replaces every earlier one, as before.
+    const start = requested ?? '2000-01-01';
+    const replaced = requested ? existing.filter((o) => fromDbDate(o.valid_from) >= start) : existing;
+    if (replaced.length) await tx.ptSlab.updateMany({ where: { id: { in: replaced.map((o) => o.id) } }, data: { deleted_at: new Date() } });
     await tx.ptSlab.createMany({
       data: b.slabs.map((s) => ({
         state: b.state,
@@ -527,6 +560,7 @@ export const replacePtSlabs = asyncHandler(async (req, res) => {
         upto_amount: s.upto_amount === null ? null : BigInt(s.upto_amount),
         amount: BigInt(s.amount),
         feb_amount: s.feb_amount === null ? null : BigInt(s.feb_amount),
+        valid_from: toDbDate(start),
       })),
     });
     await audit(tx, {
@@ -535,10 +569,48 @@ export const replacePtSlabs = asyncHandler(async (req, res) => {
       action: 'pt_slabs.replace',
       entity_type: 'pt_slab',
       entity_id: null,
-      detail: { state: b.state, old: old.map((o) => ({ upto: n(o.upto_amount), amount: n(o.amount) })), new: b.slabs },
+      detail: { state: b.state, valid_from: start, old: replaced.map((o) => ({ valid_from: fromDbDate(o.valid_from), upto: n(o.upto_amount), amount: n(o.amount) })), new: b.slabs },
     });
+    return start;
   });
-  res.json({ data: { ok: true } });
+  res.json({ data: { ok: true, valid_from: from } });
+});
+
+/**
+ * Publish a regime's rates for a tax year (valid from 1 April). Refused once that year's
+ * payroll is locked or paid. Re-publishing the same year corrects it in place.
+ */
+export const publishTaxRegime = asyncHandler(async (req, res) => {
+  const b = taxRegimePublishSchema.parse(req.body);
+  const { actor, ip } = who(req);
+  const fy = Number(b.valid_from.slice(0, 4));
+  const row = await prisma.$transaction(async (tx) => {
+    const frozen = await tx.payrollPeriod.count({ where: { deleted_at: null, state: { in: ['LOCKED', 'PAID'] }, period_ym: { gte: `${fy}-04`, lte: `${fy + 1}-03` } } });
+    if (frozen) throw new AppError('PAYROLL_FROZEN', `Payroll in tax year ${fy}-${String(fy + 1).slice(2)} is already locked or paid. Its tax rates cannot change; unlock those months first.`, 409, 'valid_from');
+    const data = {
+      name: b.name,
+      std_deduction: BigInt(b.std_deduction),
+      rebate_limit: BigInt(b.rebate_limit),
+      rebate_max: b.rebate_max === null ? null : BigInt(b.rebate_max),
+      marginal_relief: b.marginal_relief,
+      allows_80c: b.allows_80c,
+      allows_hra: b.allows_hra,
+      cess_pct: b.cess_pct,
+      deleted_at: null,
+    };
+    const existing = await tx.taxRegime.findUnique({ where: { code_valid_from: { code: b.code, valid_from: toDbDate(b.valid_from) } }, include: { slabs: { where: { deleted_at: null } } } });
+    const r = existing
+      ? await tx.taxRegime.update({ where: { id: existing.id }, data })
+      : await tx.taxRegime.create({ data: { ...data, code: b.code, valid_from: toDbDate(b.valid_from) } });
+    if (existing) await tx.taxSlab.updateMany({ where: { regime_id: r.id, deleted_at: null }, data: { deleted_at: new Date() } });
+    await tx.taxSlab.createMany({ data: b.slabs.map((x) => ({ regime_id: r.id, upto_amount: x.upto_amount === null ? null : BigInt(x.upto_amount), rate: x.rate })) });
+    await audit(tx, {
+      actor, ip, action: 'tax_regime.publish', entity_type: 'tax_regime', entity_id: r.id,
+      detail: { ...b, replaced: existing ? { std_deduction: n(existing.std_deduction), rebate_limit: n(existing.rebate_limit), slabs: existing.slabs.map((x) => ({ upto_amount: x.upto_amount === null ? null : n(x.upto_amount), rate: Number(x.rate) })) } : null },
+    });
+    return r;
+  });
+  res.status(201).json({ data: { id: row.id, code: row.code, valid_from: fromDbDate(row.valid_from) } });
 });
 
 export const listTaxRegimes = asyncHandler(async (_req, res) => {

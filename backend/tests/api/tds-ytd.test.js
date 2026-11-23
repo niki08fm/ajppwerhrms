@@ -49,7 +49,7 @@ describe('TDS year to date across payroll runs', () => {
     expect(september.meta.tds.estimated_months).toBe(4);
   });
 
-  it('counts a previous employer recorded for this tax year', async () => {
+  it('counts pay recorded earlier this tax year and stops estimating those months', async () => {
     const f = await buildFixture();
     const A = f.employees.A;
     await prisma.employeeSalary.updateMany({ where: { employee_id: A }, data: { amount: BigInt(R(100000)), monthly_gross: BigInt(R(100000)) } });
@@ -60,5 +60,8 @@ describe('TDS year to date across payroll runs', () => {
     expect(withPrevious.previous_income).toBe(R(600000));
     expect(withPrevious.previous_tds).toBe(R(10000));
     expect(withPrevious.annual).toBeGreaterThan(without.annual);
+    // Recorded earlier pay replaces the estimate for April–July.
+    expect(without.estimated_months).toBe(4);
+    expect(withPrevious.estimated_months).toBe(0);
   });
 });

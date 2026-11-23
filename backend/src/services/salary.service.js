@@ -7,7 +7,7 @@ import { ptSlabs, ratesOn, regimesOn, structureComponents } from './rules.servic
 
 export async function previewSalary(db, r) {
   await requireSalaryStructure(db, r.structure_id);
-  const [components, rates, slabs, regimes] = await Promise.all([structureComponents(db, r.structure_id), ratesOn(db, r.date), ptSlabs(db), regimesOn(db, r.date)]);
+  const [components, rates, slabs, regimes] = await Promise.all([structureComponents(db, r.structure_id), ratesOn(db, r.date), ptSlabs(db, r.date), regimesOn(db, r.date)]);
   if (components.length === 0) throw new AppError('VALIDATION', 'That salary structure has no components.', 422);
   return salaryPreview({
     mode: r.mode,

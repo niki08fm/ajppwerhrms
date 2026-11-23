@@ -202,12 +202,15 @@ export async function computePayslip(db, e, ym, month, ctx, recoveries, inputs) 
   const regimeCode = ytd.regime === 'OLD' || ytd.regime === 'NEW' ? ytd.regime : declaredRegime;
   const mify = monthsInFy(ym, joined, lastDay);
   const monthsLeft = monthsLeftInFy(ym, lastDay);
-  // Months employed this year with no payroll run on record are estimated at the current salary.
-  const missing = Math.max(0, monthsEmployedBefore(ym, joined) - ytd.months);
+  // Salary and TDS earlier this tax year outside this payroll (a previous employer, or
+  // months before AJPWER Workforce). Once recorded, those months are not estimated;
+  // until then, months employed with no payroll on record are estimated at the current salary.
   const fy = financialYearStart(ym);
-  const previous = e.statutory.prev_employer_fy === fy
+  const recorded = e.statutory.prev_employer_fy === fy;
+  const previous = recorded
     ? { income: n(e.statutory.prev_employer_income ?? 0), tds: n(e.statutory.prev_employer_tds ?? 0) }
     : { income: 0, tds: 0 };
+  const missing = recorded ? 0 : Math.max(0, monthsEmployedBefore(ym, joined) - ytd.months);
   // No PAN on file: the higher TDS rate applies. Only when identity was loaded.
   const noPan = e.has_pan === false || (e.has_pan === undefined && e.identity !== undefined && !e.identity?.pan_enc);
 

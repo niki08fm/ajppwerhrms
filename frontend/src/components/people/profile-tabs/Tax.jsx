@@ -237,9 +237,10 @@ export function TaxTab({ e, compact = false, selectedOnly = false }) {
           <p className="text-[13px] leading-relaxed text-muted-foreground">80C, 80D and rent declarations apply only to the Old regime. Standard deduction is automatic.</p>
         )}
         <div className="mt-4 border-t border-dashed pt-3">
-          <div className="text-[13px] font-medium">Previous employer this tax year (Form 12B)</div>
+          <div className="text-[13px] font-medium">Paid earlier this tax year outside this payroll</div>
           <p className="mt-1 text-[13px] text-muted-foreground">
-            {prevThisYear ? 'Recorded for this tax year.' : 'Not recorded for this tax year. Enter zero if there was no earlier employer.'}
+            A previous employer's Form 12B, and any months paid before AJPWER Workforce.{' '}
+            {prevThisYear ? 'Recorded for this tax year.' : 'Not recorded: earlier months with no payroll here are estimated with nothing deducted. Enter zero if there was nothing.'}
           </p>
           <div className="mt-2 grid gap-3 sm:grid-cols-2">
             <Field label="Taxable salary">{(id) => <MoneyInput id={id} value={prev.income} disabled={disabled} onChange={(ev) => setPrev({ ...prev, income: ev.target.value })} />}</Field>
@@ -247,7 +248,7 @@ export function TaxTab({ e, compact = false, selectedOnly = false }) {
           </div>
           <div className="mt-3 flex justify-end">
             <Button variant="outline" loading={save.isPending} disabled={disabled} onClick={() => save.mutate({ prev_employer_fy: taxYear, prev_employer_income: toPaise(prev.income || '0'), prev_employer_tds: toPaise(prev.tds || '0') })}>
-              Save previous employer
+              Save earlier pay
             </Button>
           </div>
         </div>

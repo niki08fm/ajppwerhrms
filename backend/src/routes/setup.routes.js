@@ -29,9 +29,11 @@ setupRouter.patch('/pay-groups/:id', requirePerm('setup.write'), setupController
 // ─── Statutory ───────────────────────────────────────────────────────────────
 setupRouter.get('/statutory-rates', requirePerm('setup.read'), setupController.getStatutoryRates);
 setupRouter.patch('/statutory-rates', requirePerm('setup.write'), setupController.publishStatutoryRates);
+setupRouter.delete('/statutory-rates/:id', requirePerm('setup.write'), setupController.deleteStatutoryRates);
 setupRouter.get('/pt-slabs', requirePerm('setup.read'), setupController.listPtSlabs);
 setupRouter.patch('/pt-slabs', requirePerm('setup.write'), setupController.replacePtSlabs);
 setupRouter.get('/tax-regimes', requirePerm('setup.read'), setupController.listTaxRegimes);
+setupRouter.post('/tax-regimes', requirePerm('setup.write'), setupController.publishTaxRegime);
 
 // ─── Shifts, holidays, departments, company ──────────────────────────────────
 setupRouter.get('/shifts', requirePerm('setup.read'), setupController.listShifts);
