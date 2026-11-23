@@ -1,46 +1,15 @@
 import { istMidnight } from '@ajpwer/shared';
-import { siteOvertimeMinutes } from './site-overtime.js';
+import { qualifyingIntervals, siteOvertimeMinutes } from './site-overtime.js';
 
 /** Closed work intervals plus qualifying OT, preserving their actual order. */
 export function recordedSiteIntervals(day, input) {
-  const pairs = day.pairs.filter((p) => p.out)
-    .sort((a, b) => a.in.at - b.in.at || a.in.id.localeCompare(b.in.id));
+  const intervals = qualifyingIntervals(day, input);
   const budgets = siteOvertimeMinutes(day, input);
-  const rows = pairs.map((p) => ({ date: input.date, site_id: p.site_id, worked_min: p.minutes,
-    ot_min: 0, first_at: p.in.at, first_ot_at: p.out.at }));
-  const policy = input.policies.overtime;
-  if (!policy || !budgets.size) return rows;
-  let worked = 0;
-  const midnight = istMidnight(input.date).getTime();
-  const eligible = pairs.map((p) => {
-    const start = Math.floor((p.in.at - midnight) / 60_000);
-    const end = Math.floor((p.out.at - midnight) / 60_000);
-    let minutes;
-    if (policy.counts_from === 'SHIFT_END') minutes = Math.max(0, end - Math.max(start, day.due_out_min));
-    else {
-      const standard = input.policies.attendance.standard_min;
-      minutes = Math.max(0, worked + p.minutes - standard) - Math.max(0, worked - standard);
-      worked += p.minutes;
-    }
-    return minutes;
+  return intervals.map(({ pair, minutes }) => {
+    const ot = Math.min(budgets.get(pair.site_id) ?? 0, minutes);
+    budgets.set(pair.site_id, (budgets.get(pair.site_id) ?? 0) - ot);
+    return { date: input.date, site_id: pair.site_id, worked_min: pair.minutes, ot_min: ot, first_at: pair.in.at, first_ot_at: pair.out.at - minutes * 60_000 };
   });
-  if (policy.counts_from === 'SHIFT_END') {
-    const allowedBreak = Math.min(Math.max(0, day.break_min), input.shift_break_min ?? 0);
-    const graceUsed = day.late_min > 0 ? 0 : Math.max(0, day.first_punch_min - input.shift_start_min);
-    const excess = Math.max(0, day.worked_min + allowedBreak + graceUsed - input.policies.attendance.standard_min);
-    let skip = Math.max(0, eligible.reduce((sum, m) => sum + m, 0) - excess);
-    eligible.forEach((minutes, i) => {
-      const ignored = Math.min(skip, minutes);
-      eligible[i] -= ignored;
-      skip -= ignored;
-    });
-  }
-  rows.forEach((r, i) => {
-    r.ot_min = Math.min(budgets.get(r.site_id) ?? 0, eligible[i]);
-    budgets.set(r.site_id, (budgets.get(r.site_id) ?? 0) - r.ot_min);
-    r.first_ot_at = pairs[i].out.at - eligible[i] * 60_000;
-  });
-  return rows;
 }
 
 /**

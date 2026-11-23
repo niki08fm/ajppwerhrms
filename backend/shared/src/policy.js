@@ -327,6 +327,34 @@ export function parsePolicyRules(kind, rules) {
 
 /** Documented fallbacks the engine uses when a pay group has no policy of a kind on a date. */
 export const DEFAULT_ATTENDANCE_RULES = { standard_min: 480, half_day_min: 240, half_day_upto_min: null, grace_min: 0 };
+
+/**
+ * Built-in attendance rules. No attendance policy applies: every day is judged by these.
+ * - Time counts from the punch-in.
+ * - Under 4 hours worked is a half day; 4 hours or more is a full day.
+ * - A full day short of the shift less 15 minutes (8 h 45 m of a 9-hour shift) is shown to HR.
+ * - A missing punch-out is a full day with no overtime, shown to HR.
+ * - More than 15 minutes after shift start is late.
+ * - Overtime starts at the later of the shift end and punch-in + the shift less 15 minutes.
+ */
+export const ATTENDANCE_RULES = Object.freeze({ grace_min: 15, half_day_below_min: 240, default_shift_min: 540 });
+
+/** The built-in rules for a shift: `required_min` is what a full day should serve. */
+export function attendanceRulesFor(shift) {
+  const start = shift?.start_min ?? null;
+  const end = shift ? (shift.crosses_midnight || shift.end_min <= shift.start_min ? shift.end_min + 1440 : shift.end_min) : null;
+  const shift_min = start !== null && end !== null && end > start ? end - start : ATTENDANCE_RULES.default_shift_min;
+  const required_min = Math.max(0, shift_min - ATTENDANCE_RULES.grace_min);
+  return {
+    shift_min,
+    required_min,
+    // Kept under the names screens already read: a day is judged against required_min.
+    standard_min: required_min,
+    grace_min: ATTENDANCE_RULES.grace_min,
+    half_day_min: 0,
+    half_day_upto_min: ATTENDANCE_RULES.half_day_below_min - 1,
+  };
+}
 export const DEFAULT_OFFDAY_PAY_RULES = { paid: false, sandwich: false };
 
 const leaveType = (t) => ({ ...LEAVE_TYPE_DEFAULTS, ...t });

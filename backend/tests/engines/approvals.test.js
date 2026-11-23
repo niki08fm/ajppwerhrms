@@ -66,9 +66,9 @@ const register = async (_db, date) => {
   if (date === '2026-09-29') return [row(people.naresh, { status: 'MISSING_PUNCH', sites: ['s-b'] }), row(people.harish, {})];
   if (date === NOW)
     return [
-      row(people.suresh, { status: 'HALF_DAY', worked_min: 391, early_min: 149 }),
+      row(people.suresh, { status: 'HALF_DAY', worked_min: 391, early_min: 149, flags: ['SHORT_HOURS'] }),
       row(people.harish, { status: 'MISSING_PUNCH' }, { open_now: true }),
-      row(people.padma, { status: 'HALF_DAY', worked_min: 400, early_min: 140 }, { override: { id: 'o-1' } }),
+      row(people.padma, { status: 'HALF_DAY', worked_min: 400, early_min: 140, flags: ['SHORT_HOURS'] }, { override: { id: 'o-1' } }),
     ];
   return [];
 };

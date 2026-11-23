@@ -170,7 +170,7 @@ export function PayGroupRulesCard({ e }) {
         <Line label="Shift">
           {r.shift.name} {hhmm(r.shift.start_min)}–{hhmm(r.shift.end_min)}
         </Line>
-        {ruleLine('ATTENDANCE', 'Attendance')}
+        <Line label="Attendance">Built in: half day under 4 h, full day from 4 h, 15 min grace, overtime after the shift end</Line>
         <details className="mt-3">
           <summary className="cursor-pointer py-1 text-sm font-medium text-primary">Overtime, leave and other policies</summary>
         {ruleLine('OVERTIME', 'Overtime')}

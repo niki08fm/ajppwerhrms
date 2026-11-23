@@ -47,7 +47,8 @@ describe('Salary records never overlap', () => {
 });
 
 describe('Attendance corrections', () => {
-  // A Monday: Person A punched 09:00–17:30. The shift is 09:00–17:30, an 8-hour day, 15 minutes' grace.
+  // A Monday: Person A punched 09:00–17:30. The shift is 09:00–17:30 (8 h 30 m): built-in rules
+  // need 8 h 15 m (the shift less 15 minutes); overtime starts at 17:30 or 8 h 15 m after a late punch-in.
   const D = `${YM}-03`;
   const correct = (body, date = D) => f.agent.post('/api/v1/attendance/overrides').send({ employee_id: f.employees.A, work_date: date, ...body });
   const preview = (body) => f.agent.post('/api/v1/attendance/overrides/preview').send({ employee_id: f.employees.A, work_date: D, ...body });
@@ -57,7 +58,7 @@ describe('Attendance corrections', () => {
     const day = await dayOf();
     const c = day.computed;
     expect([day.in_min, day.out_min]).toEqual([540, 1050]);
-    expect(day.context).toMatchObject({ kind: 'WORKING', shift_start_min: 540, grace_min: 15, standard_min: 480 });
+    expect(day.context).toMatchObject({ kind: 'WORKING', shift_start_min: 540, grace_min: 15, standard_min: 495 });
     const same = await correct({ mode: 'TIMES', in_min: 540, out_min: 1050, reason_text: 'Nothing actually changes here' });
     expect(same.status).toBe(422);
     expect(same.body.error.code).toBe('NO_CHANGE');
@@ -65,7 +66,7 @@ describe('Attendance corrections', () => {
 
     const ok = await correct({ mode: 'MARK', status: 'HALF_DAY', reason_text: 'Sent home at noon by the site engineer' });
     expect(ok.status).toBe(201);
-    expect(ok.body.data).toMatchObject({ status: 'HALF_DAY', day_value: 0.5, worked_min: 240, in_min: null, out_min: null });
+    expect(ok.body.data).toMatchObject({ status: 'HALF_DAY', day_value: 0.5, worked_min: 248, in_min: null, out_min: null });
     const stored = await prisma.attendanceOverride.findUniqueOrThrow({ where: { id: ok.body.data.id } });
     expect(stored.computed_snapshot).toMatchObject({ status: c.status, worked_min: c.worked_min });
 
@@ -88,19 +89,21 @@ describe('Attendance corrections', () => {
     const ids = (await f.agent.get(`/api/v1/pay-groups/${f.payGroupId}`)).body.data.policies.map((p) => p.id);
     expect((await f.agent.patch(`/api/v1/pay-groups/${f.payGroupId}`).send({ policy_ids: [...ids, pol.body.data.id] })).status).toBe(200);
 
-    // In at 09:40, past the grace: 40 minutes late, and the day ends a full day later, at 17:40.
+    // In at 09:40, past the grace: 40 minutes late; overtime starts 8 h 15 m later, at 17:55.
+    // Out at 19:10: 75 minutes after, rounded down to 60 by the policy.
     const late = await preview({ in_min: 580, out_min: 1150 });
     expect(late.status).toBe(200);
-    expect(late.body.data).toMatchObject({ status: 'PRESENT', late_min: 40, due_out_min: 1060, ot_min: 90, worked_min: 570 });
+    expect(late.body.data).toMatchObject({ status: 'PRESENT', late_min: 40, due_out_min: 1075, ot_min: 60, worked_min: 570 });
     // Given an hour of overtime instead, the out time is the end of the day plus the hour.
     expect((await preview({ in_min: 540, ot_min: 60 })).body.data).toMatchObject({ out_min: 1110, ot_min: 60, late_min: 0 });
-    expect((await preview({ in_min: 580, ot_min: 60 })).body.data).toMatchObject({ out_min: 1120, ot_min: 60, late_min: 40 });
-    // Five hours: a half day.
-    expect((await preview({ in_min: 540, out_min: 840 })).body.data).toMatchObject({ status: 'HALF_DAY', day_value: 0.5, ot_min: 0 });
+    expect((await preview({ in_min: 580, ot_min: 60 })).body.data).toMatchObject({ out_min: 1135, ot_min: 60, late_min: 40 });
+    // Five hours is a full day; three and a half is a half day.
+    expect((await preview({ in_min: 540, out_min: 840 })).body.data).toMatchObject({ status: 'PRESENT', day_value: 1, ot_min: 0 });
+    expect((await preview({ in_min: 540, out_min: 750 })).body.data).toMatchObject({ status: 'HALF_DAY', day_value: 0.5, ot_min: 0 });
 
     const saved = await correct({ mode: 'TIMES', in_min: 580, out_min: 1150, reason_text: "Punched out on a colleague's phone" });
     expect(saved.status).toBe(201);
-    expect(saved.body.data).toMatchObject({ status: 'PRESENT', late_min: 40, ot_min: 90, in_min: 580, out_min: 1150 });
+    expect(saved.body.data).toMatchObject({ status: 'PRESENT', late_min: 40, ot_min: 60, in_min: 580, out_min: 1150 });
     // The day now shows HR's times.
     expect(await dayOf()).toMatchObject({ in_min: 580, out_min: 1150 });
     expect((await correct({ mode: 'TIMES', in_min: 600, out_min: 590, reason_text: 'Out before in' })).status).toBe(422);
@@ -111,14 +114,14 @@ describe('Attendance corrections', () => {
   it('a marked day takes overtime directly; on an off day the mark says it was worked', async () => {
     const full = await correct({ mode: 'MARK', status: 'PRESENT', ot_min: 120, reason_text: 'Worked late on the substation' });
     expect(full.status).toBe(201);
-    expect(full.body.data).toMatchObject({ status: 'PRESENT', day_value: 1, worked_min: 480, ot_min: 120 });
+    expect(full.body.data).toMatchObject({ status: 'PRESENT', day_value: 1, worked_min: 495, ot_min: 120 });
     expect((await correct({ mode: 'MARK', status: 'HALF_DAY', ot_min: 30, reason_text: 'Half day with overtime' })).status).toBe(422);
     expect((await f.agent.delete(`/api/v1/attendance/overrides/${full.body.data.id}`)).status).toBe(200);
 
     // A Sunday, the weekly off, paid by its policy.
     const sunday = await correct({ mode: 'MARK', status: 'PRESENT', reason_text: 'Called in on Sunday' }, `${YM}-02`);
     expect(sunday.status).toBe(201);
-    expect(sunday.body.data).toMatchObject({ status: 'OFF_WORKED', day_value: 1, worked_min: 480, ot_min: 0 });
+    expect(sunday.body.data).toMatchObject({ status: 'OFF_WORKED', day_value: 1, worked_min: 495, ot_min: 0 });
     expect((await f.agent.delete(`/api/v1/attendance/overrides/${sunday.body.data.id}`)).status).toBe(200);
   });
 

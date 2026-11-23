@@ -13,19 +13,20 @@ const pass = (days, overrides = {}, patch = {}) => computeMonth({ ym: '2026-09',
   policiesByDate: Object.fromEntries(days.map((d) => [d.date, { weekoff_pay: { paid: true, sandwich: false } }])), ...patch });
 
 describe('Attendance shift shortfall reporting', () => {
-  it('adds 8h40 and 8h45 as 35 minutes of shortfall without changing paid-day tolerance', () => {
-    const days = [makeDay('2026-09-01', 520), makeDay('2026-09-02', 525)];
-    expect(days.map((d) => d.shift_shortfall_min)).toEqual([20, 15]);
+  it('measures shortfall against 8 h 45 m of a 9-hour shift: 8h30 and 8h45 add 15 minutes, both full days', () => {
+    const days = [makeDay('2026-09-01', 510), makeDay('2026-09-02', 525)];
+    expect(days.map((d) => d.shift_shortfall_min)).toEqual([15, 0]);
     expect(days.map((d) => d.status)).toEqual(['PRESENT', 'PRESENT']);
     const m = pass(days);
     expect(m.totals.paid_days).toBe(2);
-    expect(m.attendance_summary).toMatchObject({ present_days: 2, absent_days: 0, late_minutes: 35, shift_shortfall_min: 35, lop_days: 0 });
+    expect(m.attendance_summary).toMatchObject({ present_days: 2, absent_days: 0, late_minutes: 15, shift_shortfall_min: 15, lop_days: 0 });
   });
 
-  it('uses the attendance policy on each date and does not substitute arrival delay', () => {
+  it('follows the shift, not an attendance policy, and does not substitute arrival delay', () => {
     const changed = policy('ATTENDANCE', { standard_min: 480, half_day_min: 240, grace_min: 15 });
-    const eight = makeDay('2026-09-02', 475, { policies: resolvePolicies([changed], '2026-09-02') });
-    expect(eight.required_shift_min).toBe(480);
+    // An 8-hour shift (09:00–17:00) needs 7 h 45 m.
+    const eight = makeDay('2026-09-02', 460, { policies: resolvePolicies([changed], '2026-09-02'), shift_end_min: 1020 });
+    expect(eight.required_shift_min).toBe(465);
     expect(eight.shift_shortfall_min).toBe(5);
     const lateFull = makeDay('2026-09-03', 540, {
       punches: [punch('2026-09-03', '09:40', 'IN'), punch('2026-09-03', '18:40', 'OUT')],
@@ -51,13 +52,13 @@ describe('Attendance shift shortfall reporting', () => {
     const corrected = pass([missing], { '2026-09-02': { status: 'PRESENT', day_value: 1, worked_min: 525,
       in_min: 540, out_min: 1065, late_min: 0, ot_min: 0 } });
     expect(corrected.days[0].flags).toContain('UNMATCHED_IN');
-    expect(corrected.days[0]).toMatchObject({ required_shift_min: 540, shift_shortfall_min: 15, overridden: true });
-    expect(corrected.attendance_summary).toMatchObject({ missing_punch: 0, late_minutes: 15, corrected: 1 });
+    expect(corrected.days[0]).toMatchObject({ required_shift_min: 525, shift_shortfall_min: 0, overridden: true });
+    expect(corrected.attendance_summary).toMatchObject({ missing_punch: 0, late_minutes: 0, corrected: 1 });
   });
 
   it('requires only the non-leave half of an approved half-day leave', () => {
-    const d = makeDay('2026-09-01', 260, { leave: { leave_type: 'PL', paid: true, portion: 0.5 } });
-    expect(d.required_shift_min).toBe(270);
+    const d = makeDay('2026-09-01', 253, { leave: { leave_type: 'PL', paid: true, portion: 0.5 } });
+    expect(d.required_shift_min).toBe(263);
     expect(d.shift_shortfall_min).toBe(10);
   });
 

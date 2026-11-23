@@ -77,8 +77,8 @@ describe('Downloadable attendance registers', () => {
   });
 
   it('reports corrected shift shortfall independently of arrival delays and totals OT', async () => {
-    const policy = await prisma.policy.findFirst({ where: { kind: 'ATTENDANCE' } });
-    await prisma.policy.update({ where: { id: policy.id }, data: { rules: { ...policy.rules, standard_min: 540 } } });
+    // A 9-hour shift (09:00–18:00): a full day should serve 8 h 45 m.
+    await prisma.shift.updateMany({ data: { end_min: 1080 } });
     await mutatePunches(async (tx) => {
       const outs = await tx.punch.findMany({ where: { direction: 'OUT' }, select: { id: true, employee_id: true, work_date: true } });
       await tx.punch.deleteMany({ where: { direction: 'OUT' } });
@@ -90,21 +90,23 @@ describe('Downloadable attendance registers', () => {
       const response = await f.agent.post('/api/v1/attendance/overrides').send({ employee_id: f.employees.A, work_date: date, mode: 'TIMES', in_min: inMin, out_min: outMin, reason_text: 'Actual times confirmed by HR' });
       expect(response.status, JSON.stringify(response.body)).toBe(201);
     };
-    await corrected(`${YM}-03`, 540, 1060); // 8h40m: 20m short.
-    await corrected(`${YM}-04`, 540, 1065); // 8h45m: 15m short.
+    await corrected(`${YM}-03`, 540, 1050); // 8h30m: 15m short of 8h45m.
+    await corrected(`${YM}-04`, 540, 1065); // 8h45m: not short.
     await corrected(`${YM}-05`, 600, 1140); // Late arrival, full 9h: no shortfall.
     await corrected(`${YM}-06`, 540, 1200); // 11h: 2h OT.
     const report = await download('monthly', { ym: YM, report: 'summary', format: 'xlsx', q: 'Person A' });
     const sheet = (await workbook(report)).getWorksheet('Monthly summary');
     const summary = (await f.agent.get('/api/v1/attendance/month').query({ ym: YM })).body.data.rows.find((r) => r.employee.id === f.employees.A).attendance_summary;
     expect(sheet.getRow(7).getCell(col(sheet, 'Late minutes')).value).toBe(summary.late_minutes);
-    expect(summary.late_minutes).toBe(35);
+    expect(summary.late_minutes).toBe(15);
     const detailed = await buildMonthlyAttendanceReport(prisma, { ym: YM, report: 'detailed', q: 'Person A' }, '2026-09-01');
-    expect(detailed.rows[0].details.find((d) => d.date === `${YM}-03`).late_minutes).toBe(20);
-    expect(detailed.rows[0].details.find((d) => d.date === `${YM}-04`).late_minutes).toBe(15);
+    expect(detailed.rows[0].details.find((d) => d.date === `${YM}-03`).late_minutes).toBe(15);
+    expect(detailed.rows[0].details.find((d) => d.date === `${YM}-04`).late_minutes).toBe(0);
     expect(detailed.rows[0].details.find((d) => d.date === `${YM}-05`).late_minutes).toBe(0);
     expect(detailed.rows[0].details.find((d) => d.date === `${YM}-06`).ot_min).toBe(120);
-    expect(sheet.getRow(7).getCell(col(sheet, 'OT hours')).value).toBe(2);
+    // 2 h on the 6th, and 15 m on the 5th: in at 10:00, overtime from 18:45, out at 19:00.
+    expect(detailed.rows[0].details.find((d) => d.date === `${YM}-05`).ot_min).toBe(15);
+    expect(sheet.getRow(7).getCell(col(sheet, 'OT hours')).value).toBe(2.25);
   });
 
   it('uses applied and automatic paid leave before the final LOP, while retaining raw absent days', async () => {
@@ -184,14 +186,15 @@ describe('Downloadable attendance registers', () => {
     expect(c.getCell(19).note).toContain('SL paid leave');
     const totalCol = (label) => sheet.getRow(7).values.findIndex((value) => value === label);
     expect(sheet.getRow(7).getCell(sheet.columnCount).value).toBe('Late minutes');
-    expect(a.getCell(totalCol('Final paid days')).value).toBe(30.5);
-    expect(a.getCell(totalCol('Final LOP')).value).toBe(0.5);
+    // A missing punch-out is a full day: nothing is lost.
+    expect(a.getCell(totalCol('Final paid days')).value).toBe(31);
+    expect(a.getCell(totalCol('Final LOP')).value).toBe(0);
     expect(a.getCell(totalCol('Working days')).value).toBe(25);
     expect(c.getCell(totalCol('Paid leave applied')).value).toBe(1);
     expect(c.getCell(totalCol('Final paid days')).value).toBe(30);
     expect(c.getCell(totalCol('Final LOP')).value).toBe(1);
     expect(sheet.getRow(11).getCell(2).value).toBe('TOTAL');
-    expect(sheet.getRow(11).getCell(totalCol('Final LOP')).value).toBe(2);
+    expect(sheet.getRow(11).getCell(totalCol('Final LOP')).value).toBe(1);
   });
 
   it('keeps future and non-employed dates clear instead of reporting them as absences', async () => {
@@ -225,10 +228,10 @@ describe('Downloadable attendance registers', () => {
     expect(sheet.getRow(7).getCell(col(sheet, 'Notes')).value).toContain('Missing punch-out');
     expect(sheet.getRow(8).getCell(col(sheet, 'OUT')).value).toBe('04:00 (+1d)');
     expect(sheet.getRow(9).getCell(col(sheet, 'Notes')).value).toContain('Missing punch-in');
-    // This fixture pays a full day above its 4-hour half-day cutoff: the 5-hour
-    // overnight day is present, while the two missing punches each lose 0.5d.
-    expect(sheet.getRow(10).getCell(col(sheet, 'Final LOP')).value).toBe(1);
-    expect(sheet.getRow(10).getCell(col(sheet, 'Late minutes')).value).toBe(180);
+    // 4 hours or more is a full day, and a missing punch is a full day too: nobody loses pay.
+    // The 5-hour overnight day is 195 minutes short of 8 h 15 m (the 8 h 30 m shift less 15).
+    expect(sheet.getRow(10).getCell(col(sheet, 'Final LOP')).value).toBe(0);
+    expect(sheet.getRow(10).getCell(col(sheet, 'Late minutes')).value).toBe(195);
     const filtered = await download('daily', { date, format: 'xlsx', 'filter[view]': 'nopunch', 'filter[site]': f.siteId });
     const selected = (await workbook(filtered)).getWorksheet('Daily register');
     expect(selected.getRow(7).getCell(1).value).toBe('T001');

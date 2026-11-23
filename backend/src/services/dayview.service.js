@@ -27,8 +27,8 @@ export function minutesNow(date) {
 
 /**
  * Hours so far for someone still punched in: what the punches have closed plus the open
- * stretch since the last IN; overtime by the same rule the day uses (beyond the standard
- * day, from the overtime threshold, rounded down).
+ * stretch since the last IN; overtime by the same rule the day uses (time after the OT
+ * start, `due_out_min`, with the overtime policy's minimum and rounding when there is one).
  */
 export function liveFigures(r, nowMin) {
   if (!r.open_now) return { worked_min: r.day.worked_min, ot_min: r.day.ot_min };
@@ -36,9 +36,10 @@ export function liveFigures(r, nowMin) {
   const worked = r.day.worked_min + Math.max(0, nowMin - lastIn);
   const ot = r.context?.ot;
   let otMin = 0;
-  if (ot && r.context.kind === 'WORKING') {
-    const raw = Math.max(0, worked - r.context.standard_min);
-    otMin = raw < ot.after_min ? 0 : Math.floor(raw / Math.max(1, ot.rounding_min)) * Math.max(1, ot.rounding_min);
+  if (r.context?.kind === 'WORKING') {
+    const start = r.day.due_out_min ?? (r.in_min ?? lastIn) + (r.context.standard_min ?? 525);
+    const raw = Math.max(0, nowMin - Math.max(start, lastIn));
+    otMin = !ot ? raw : raw < ot.after_min ? 0 : Math.floor(raw / Math.max(1, ot.rounding_min)) * Math.max(1, ot.rounding_min);
   }
   return { worked_min: worked, ot_min: otMin };
 }

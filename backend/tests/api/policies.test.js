@@ -24,14 +24,14 @@ describe('Late penalties are gone', () => {
 
 describe('The overview lists late logins and early punch-outs', () => {
   it('late is past the grace period, early is out before the day ends', async () => {
-    // General shift 09:00–17:30, an 8-hour day, 15 minutes' grace.
+    // General shift 09:00–17:30 (8 h 30 m): a full day is the shift less 15 minutes, 8 h 15 m.
     const at = (key, min, direction) => {
       const t = new Date(istMidnight('2026-09-01').getTime() + min * 60_000);
       return { employee_id: f.employees[key], site_id: f.siteId, direction, punched_at: t, client_punched_at: t, work_date: toDbDate('2026-09-01'), method: 'FACE' };
     };
     await prisma.punch.createMany({
       data: [
-        at('A', 9 * 60 + 40, 'IN'), // late; the day ends eight hours later, at 17:40
+        at('A', 9 * 60 + 40, 'IN'), // late; the day ends 8 h 15 m later, at 17:55
         at('A', 17 * 60 + 30, 'OUT'),
         at('B', 9 * 60, 'IN'),
         at('B', 17 * 60, 'OUT'), // half an hour before the shift ends
@@ -44,7 +44,7 @@ describe('The overview lists late logins and early punch-outs', () => {
     expect(r.body.data.late.map((x) => [x.employee.name, x.late_min])).toEqual([['Person A', 40]]);
     expect(r.body.data.early.map((x) => [x.employee.name, x.early_min])).toEqual([
       ['Person B', 30],
-      ['Person A', 10],
+      ['Person A', 25],
     ]);
 
     const reg = await f.agent.get('/api/v1/attendance').query({ date: '2026-09-01', 'filter[early]': 'yes' });

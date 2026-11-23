@@ -39,8 +39,9 @@ const details = (date) => f.agent.get('/api/v1/attendance/day').query({ employee
 const outAt = (date, min) => new Date(istMidnight(date).getTime() + min * 60_000);
 
 describe('Consistent attendance month metrics', () => {
-  it('shows the same 35 minutes in monthly register, employee profile and payroll without changing paid days', async () => {
-    for (const [date, minutes] of [['2026-08-03', 1060], ['2026-08-04', 1065]]) {
+  it('shows the same 20 minutes in monthly register, employee profile and payroll without changing paid days', async () => {
+    // A 9-hour shift needs 8 h 45 m: out at 17:30 is 15 minutes short, at 17:40 five.
+    for (const [date, minutes] of [['2026-08-03', 1050], ['2026-08-04', 1060]]) {
       await replaceFixtureOutTimes({ employee_id: f.employees.A, work_date: toDbDate(date) }, () => outAt(date, minutes));
     }
     const register = await month();
@@ -51,10 +52,10 @@ describe('Consistent attendance month metrics', () => {
     const pay = payroll.body.data.rows.find((r) => r.employee.id === f.employees.A);
     expect(row.attendance_summary).toEqual(employee.body.data.attendance_summary);
     expect(pay.attendance_summary).toEqual(row.attendance_summary);
-    expect(row.totals.late_minutes).toBe(35);
-    expect(pay.late_minutes).toBe(35);
+    expect(row.totals.late_minutes).toBe(20);
+    expect(pay.late_minutes).toBe(20);
     expect(pay.paid_days).toBe(31);
-    expect(row.days.find((d) => d.date === '2026-08-03')).toMatchObject({ required_shift_min: 540, shift_shortfall_min: 20 });
+    expect(row.days.find((d) => d.date === '2026-08-03')).toMatchObject({ required_shift_min: 525, shift_shortfall_min: 15 });
   });
 
   it('updates effective day details and summaries after a times correction and restores the missing issue on revert', async () => {
@@ -62,10 +63,10 @@ describe('Consistent attendance month metrics', () => {
     await changeFixturePunches((tx) => tx.punch.deleteMany({ where: { employee_id: f.employees.A, work_date: toDbDate(date), direction: 'OUT' } }));
     expect((await profile()).body.data.attendance_summary).toMatchObject({ missing_punch: 1, late_minutes: 0 });
     const saved = await f.agent.post('/api/v1/attendance/overrides').send({ employee_id: f.employees.A, work_date: date,
-      mode: 'TIMES', in_min: 540, out_min: 1065, reason_text: 'Confirmed the actual punch-out with the supervisor.' });
+      mode: 'TIMES', in_min: 540, out_min: 1050, reason_text: 'Confirmed the actual punch-out with the supervisor.' });
     expect(saved.status).toBe(201);
     const day = await details(date);
-    expect(day.body.data).toMatchObject({ required_shift_min: 540, shift_shortfall_min: 15,
+    expect(day.body.data).toMatchObject({ required_shift_min: 525, shift_shortfall_min: 15,
       day: { status: 'PRESENT', shift_shortfall_min: 15, overridden: true } });
     expect((await profile()).body.data.attendance_summary).toMatchObject({ missing_punch: 0, late_minutes: 15, corrected: 1 });
     const reverted = await f.agent.delete(`/api/v1/attendance/overrides/${day.body.data.override.id}`);

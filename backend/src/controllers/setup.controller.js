@@ -10,6 +10,7 @@ import {
   parsePolicyRules,
   payGroupPatchSchema,
   payGroupSchema,
+  CONFIGURABLE_POLICY_KINDS,
   POLICY_KINDS,
   POLICY_KIND_MISSING_WARNING,
   policyCreateSchema,
@@ -310,7 +311,7 @@ async function payGroupView(id, options = {}) {
     headcount: g._count.employees,
     divisor_this_month: calendarDivisor(g.calendar_method, ym, workingDaysInMonth(ym, g.weekly_off, hol)),
     warnings: [
-      ...POLICY_KINDS.filter((k) => !kindsNow.has(k)).map((k) => ({ kind: k, message: POLICY_KIND_MISSING_WARNING[k] })),
+      ...CONFIGURABLE_POLICY_KINDS.filter((k) => !kindsNow.has(k)).map((k) => ({ kind: k, message: POLICY_KIND_MISSING_WARNING[k] })),
       ...findOverlaps(attached).map((o) => ({ kind: o.kind, message: `${o.a} and ${o.b} overlap from ${o.from}${o.to ? ` to ${o.to}` : ''}; the one starting later applies.` })),
     ],
   };

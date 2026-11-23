@@ -17,6 +17,12 @@ export const POLICY_KIND_LABELS = {
 };
 
 /** What it means in practice when a pay group has no policy of this kind. */
+/** Kinds HR sets up per pay group. Attendance rules are built in (see ATTENDANCE_RULES). */
+export const CONFIGURABLE_POLICY_KINDS = POLICY_KINDS.filter((k) => k !== 'ATTENDANCE');
+
+/** The built-in attendance rules, in words for setup screens. */
+export const BUILT_IN_ATTENDANCE_TEXT = 'Built in: time counts from punch-in. Under 4 hours is a half day; 4 hours or more is a full day. A missing punch-out is a full day with no overtime. More than 15 minutes after shift start is late. Overtime starts at the shift end, or 8 h 45 m after a late punch-in on a 9-hour shift. Days short of the shift less 15 minutes are shown to HR.';
+
 export const POLICY_KIND_MISSING_WARNING = {
   ATTENDANCE: 'Days are judged on the built-in default of an 8-hour day, 4-hour half day and no grace period.',
   OVERTIME: 'Nobody in this group earns overtime.',

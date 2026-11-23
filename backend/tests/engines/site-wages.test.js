@@ -87,24 +87,25 @@ function intervals(punches, { attendance = ATTENDANCE, ...extra } = {}) {
 
 describe('Closed site intervals retain exact overtime chronology', () => {
   it('keeps a cross-site OUT on the original IN site', () => {
-    expect(intervals([punch(D1, '09:00', 'IN', 'alpha'), punch(D1, '19:00', 'OUT', 'beta')])[0]).toMatchObject({ site_id: 'alpha', worked_min: 600, ot_min: 120 });
+    expect(intervals([punch(D1, '09:00', 'IN', 'alpha'), punch(D1, '19:00', 'OUT', 'beta')])[0]).toMatchObject({ site_id: 'alpha', worked_min: 600, ot_min: 90 });
   });
   it('preserves separate repeat visits so an early normal visit cannot steal a later OT cap', () => {
     const rows = intervals([punch(D1, '09:00', 'IN', 'alpha'), punch(D1, '17:00', 'OUT', 'alpha'),
       punch(D1, '17:00', 'IN', 'beta'), punch(D1, '18:00', 'OUT', 'beta'),
       punch(D1, '18:00', 'IN', 'alpha'), punch(D1, '19:00', 'OUT', 'alpha')]);
-    expect(rows.map((r) => r.ot_min)).toEqual([0, 60, 60]);
-    const r = allocateSiteWages({ rows, normal_wages: 100000, ot_wages: 10000, paid_ot_min: 60 });
+    // Shift ends 17:30: beta's 17:30–18:00 and alpha's 18:00–19:00 are overtime.
+    expect(rows.map((r) => r.ot_min)).toEqual([0, 30, 60]);
+    const r = allocateSiteWages({ rows, normal_wages: 100000, ot_wages: 10000, paid_ot_min: 30 });
     expect(r.rows.map((x) => x.ot_wages)).toEqual([0, 10000, 0]);
   });
-  it('handles SHIFT_END full-day eligibility and late eligible intervals', () => {
+  it('counts every interval after the shift end (18:00) as overtime', () => {
     const rows = intervals([punch(D1, '09:00', 'IN', 'alpha'), punch(D1, '13:00', 'OUT', 'alpha'),
       punch(D1, '15:00', 'IN', 'beta'), punch(D1, '18:00', 'OUT', 'beta'),
       punch(D1, '18:00', 'IN', 'alpha'), punch(D1, '19:00', 'OUT', 'alpha'),
       punch(D1, '19:00', 'IN', 'beta'), punch(D1, '19:30', 'OUT', 'beta')], {
       attendance: NINE_HOUR_DAY, shift_end_min: 1080, shift_break_min: 60,
       policies: resolvePolicies([NINE_HOUR_DAY, policy('OVERTIME', { ...OVERTIME.rules, counts_from: 'SHIFT_END', after_min: 0, rounding_min: 1 })], D1) });
-    expect(rows.map((r) => r.ot_min)).toEqual([0, 0, 0, 30]);
+    expect(rows.map((r) => r.ot_min)).toEqual([0, 0, 60, 30]);
   });
   it('does not fabricate closed hours or OT from an open punch', () => {
     expect(intervals([punch(D1, '09:00', 'IN', 'alpha')])).toEqual([]);

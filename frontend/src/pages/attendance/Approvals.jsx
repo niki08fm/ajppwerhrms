@@ -249,9 +249,9 @@ function summaryOf(it) {
     case 'face':
       return x.exception_kind === 'FAILED_TRIES' ? `blocked after the try limit${x.crops ? ` · ${x.crops} tries` : ''}` : `${scorePct(x.score) ?? 'no match'}${x.crops ? ` after ${x.crops} tr${x.crops === 1 ? 'y' : 'ies'}` : ''}`;
     case 'miss':
-      return `in ${hhmm(x.in_min)} · auto out 02:00`;
+      return `in ${hhmm(x.in_min)} · no punch-out · full day`;
     case 'short':
-      return `${mins(x.worked_min)} · ${mins(x.early_min)} short`;
+      return x.under_four_hours ? `${mins(x.worked_min)} · under 4 hours · half day` : `${mins(x.worked_min)} · ${mins(x.short_min ?? x.early_min)} short`;
     case 'move':
       return `to ${x.to_site?.name ?? '—'} · ${x.travel_min} min travel`;
     case 'transfer':
@@ -477,13 +477,13 @@ function DayDecision({ it, allowed, onDecided, onOpenDay }) {
     return (
       <>
         <p className="m-0 text-[15px]">
-          {first(e.name)} has an unmatched punch on {date}. This day is provisional until HR checks the real times.
+          {first(e.name)} did not punch out on {date}. The day counts as a full day with no overtime. Nothing is needed unless you want to change it.
         </p>
         <Facts
           items={[
             ['Punched in', `${hhmm(x.in_min)}${x.sites.length ? ` at ${x.sites.join(', ')}` : ''}`],
             ['Recorded out', x.out_min == null ? 'Missing' : hhmm(x.out_min)],
-            ['Counted now', x.status === 'MISSING_PUNCH' ? 'Provisional half day, no overtime' : counted],
+            ['Counted now', x.status === 'MISSING_PUNCH' ? 'Full day, no overtime' : counted],
           ]}
         />
         {allowed && (
@@ -506,13 +506,16 @@ function DayDecision({ it, allowed, onDecided, onOpenDay }) {
   return (
     <>
       <p className="m-0 text-[15px]">
-        {first(e.name)} worked {mins(x.worked_min)} on {date} — {mins(x.early_min)} short of {mins(x.standard_min)}. By the rule this counts as {countedWords}.
+        {x.under_four_hours
+          ? `${first(e.name)} worked ${mins(x.worked_min)} on ${date}, under 4 hours, so it counts as a half day.`
+          : `${first(e.name)} worked ${mins(x.worked_min)} on ${date}, ${mins(x.short_min ?? x.early_min)} short of ${mins(x.standard_min)}. It counts as ${countedWords}.`}{' '}
+        Nothing is needed unless you want to change it; the month's late minutes show the pattern.
       </p>
       <Facts
         items={[
           ['In / out', `${hhmm(x.in_min)} → ${hhmm(x.out_min)}${x.sites.length ? ` at ${x.sites.join(', ')}` : ''}`],
           ['Worked', mins(x.worked_min)],
-          ['Short by', mins(x.early_min)],
+          ['Short by', mins(x.short_min ?? x.early_min)],
           x.late_min > 0 && ['Came in late', mins(x.late_min)],
           ['Counted now', counted],
         ]}

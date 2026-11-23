@@ -1,7 +1,7 @@
-import { addDays, istDate, istMidnight } from '@ajpwer/shared';
+import { addDays, ATTENDANCE_RULES, istDate, istMidnight } from '@ajpwer/shared';
 import { requiredShiftMinutes, shiftShortfall } from './summary.js';
 
-/** Under a policy with no half-day limit, PRESENT needs at least 92% of the standard day. A constant, not a policy. */
+/** Kept for older callers: the built-in rules no longer use a percentage of the day. */
 export const PRESENT_TOLERANCE_PCT = 92;
 
 const minutesBetween = (a, b) => Math.floor((b - a) / 60_000);
@@ -80,9 +80,10 @@ function workedAfter(pairs, workDate, fromMin, travelMin) {
  * (counted only on arrival at the named site the same day, or as HR set it). It is
  * worked time: it adds to the paired minutes and comes out of the break between them.
  *
- * The day ends at the shift end, or — for someone who arrived after the grace period —
- * a standard day after they arrived (`due_out_min`). Leaving before it is flagged
- * EARLY_OUT for HR, never deducted.
+ * Built-in rules: time counts from the punch-in; under 4 hours is a half day, 4 hours or
+ * more a full day; a missing punch-out is a full day without overtime. The day ends
+ * (`due_out_min`, where overtime starts) at the later of the shift end and punch-in + the
+ * shift less 15 minutes. Leaving before it is flagged EARLY_OUT for HR, never deducted.
  */
 export function computeDay(input) {
   const { date, policies } = input;
@@ -94,7 +95,6 @@ export function computeDay(input) {
   if (pr.orphan_outs.length) flags.push('ORPHAN_OUT');
   if (pr.pairs.some((p) => !p.out)) flags.push('UNMATCHED_IN');
   if (pr.sites.length > 1) flags.push('CROSS_SITE');
-  if (policies.attendance_defaulted) flags.push('NO_ATTENDANCE_POLICY');
   if (travel_min > 0) flags.push('TRAVEL');
 
   const sortedAt = input.punches.map((p) => p.at).sort((a, b) => a - b);
@@ -124,7 +124,7 @@ export function computeDay(input) {
     applied: null,
     leave_days: 0,
     auto_leave: 0,
-    standard_min: policies.attendance.standard_min,
+    standard_min: Math.max(0, (input.shift_end_min ?? (input.shift_start_min ?? 540) + ATTENDANCE_RULES.default_shift_min) - (input.shift_start_min ?? 540) - ATTENDANCE_RULES.grace_min),
     shift_kind: input.is_holiday ? 'HOLIDAY' : input.is_weekly_off ? 'WEEKLY_OFF' : 'WORKING',
     required_shift_min: 0,
     shift_shortfall_min: 0,
@@ -145,46 +145,42 @@ export function computeDay(input) {
   if (input.leave) Object.assign(base, { leave_type: input.leave.leave_type, applied: input.leave });
   if (!hasPunches) return { ...base, status: 'ABSENT', day_value: 0 };
 
-  const rules = policies.attendance;
-  // An orphan OUT (an OUT with no IN) is treated like an unmatched pair: someone forgot a punch.
+  // Built-in rules (see ATTENDANCE_RULES): no attendance policy is read.
+  const shiftStart = input.shift_start_min ?? 9 * 60;
+  const shiftEnd = input.shift_end_min ?? shiftStart + ATTENDANCE_RULES.default_shift_min;
+  const shiftMin = shiftEnd > shiftStart ? shiftEnd - shiftStart : ATTENDANCE_RULES.default_shift_min;
+  const required = Math.max(0, shiftMin - ATTENDANCE_RULES.grace_min);
+  // A missing punch-out (an IN never closed, or an OUT with no IN): the time cannot be counted.
   const missing = pr.pairs.some((p) => !p.out) || pr.orphan_outs.length > 0;
+  const firstIn = pr.pairs[0]?.in ? minuteOfWorkDate(pr.pairs[0].in.at, date) : first_punch_min;
 
-  // Step 3 — lateness and the end of the day, working days only. Recorded and flagged, never deducted.
-  // Within the grace period nobody is late; past it, lateness counts from the shift start.
-  const late_min = first_punch_min > input.shift_start_min + rules.grace_min ? first_punch_min - input.shift_start_min : 0;
+  // Step 3 — lateness: more than 15 minutes after shift start. Recorded and shown, never deducted.
+  const late_min = firstIn > shiftStart + ATTENDANCE_RULES.grace_min ? firstIn - shiftStart : 0;
   if (late_min > 0) flags.push('LATE');
-  const shiftEnd = input.shift_end_min ?? input.shift_start_min + rules.standard_min;
-  const due_out_min = late_min > 0 ? Math.max(shiftEnd, first_punch_min + rules.standard_min) : shiftEnd;
+  // Overtime starts at the later of the shift end and punch-in + the shift less 15 minutes.
+  const due_out_min = Math.max(shiftEnd, firstIn + required);
   const early_min = missing ? 0 : Math.max(0, due_out_min - last_punch_min);
   if (early_min > 0) flags.push('EARLY_OUT');
 
-  // Step 4 — overtime, working days only, only with an overtime policy.
-  let ot_min = 0;
+  // Step 4 — overtime: time worked after it starts. The overtime policy's minimum and rounding
+  // still apply when there is one; its rate and cap are for payroll.
   const ot = policies.overtime;
-  if (ot) {
-    let raw;
-    if (ot.counts_from === 'SHIFT_END') {
-      // Time worked after the day ends, and only beyond a full standard day: breaks up to the
-      // shift's allowance count as worked, and so do grace minutes for someone who was not late.
-      const allowedBreak = Math.min(Math.max(0, pr.break_min - travel_min), input.shift_break_min ?? 0);
-      const graceUsed = late_min > 0 ? 0 : Math.max(0, first_punch_min - input.shift_start_min);
-      raw = Math.min(workedAfter(pr.pairs, date, due_out_min, travel_min), Math.max(0, worked_min + allowedBreak + graceUsed - rules.standard_min));
-    } else {
-      raw = Math.max(0, worked_min - rules.standard_min);
-    }
-    ot_min = raw < ot.after_min ? 0 : Math.floor(raw / ot.rounding_min) * ot.rounding_min;
-  }
+  const raw = missing ? 0 : workedAfter(pr.pairs, date, due_out_min, travel_min);
+  const ot_min = ot ? (raw < (ot.after_min ?? 0) ? 0 : Math.floor(raw / Math.max(1, ot.rounding_min ?? 1)) * Math.max(1, ot.rounding_min ?? 1)) : raw;
 
-  const withTime = { ...base, late_min, early_min, due_out_min, ot_min };
-  if (missing) return { ...withTime, status: 'MISSING_PUNCH', day_value: 0.5, ot_min: 0 };
-  const fullDay = (rules.half_day_upto_min ?? null) !== null ? worked_min > rules.half_day_upto_min : worked_min * 100 >= rules.standard_min * PRESENT_TOLERANCE_PCT;
+  const withTime = { ...base, standard_min: required, late_min, early_min, due_out_min, ot_min };
   const complete = (status, day_value) => {
     const result = { ...withTime, status, day_value };
     return { ...result, required_shift_min: requiredShiftMinutes(result), shift_shortfall_min: shiftShortfall(result) };
   };
-  if (fullDay) return complete('PRESENT', 1);
-  if (worked_min >= rules.half_day_min) return complete('HALF_DAY', 0.5);
-  return complete('SHORT', 0);
+  // A missing punch-out is a full day with no overtime; HR is shown it.
+  if (missing) return { ...withTime, status: 'MISSING_PUNCH', day_value: 1, ot_min: 0 };
+  if (worked_min < ATTENDANCE_RULES.half_day_below_min) {
+    flags.push('UNDER_FOUR_HOURS');
+    return complete('HALF_DAY', 0.5);
+  }
+  if (worked_min < required) flags.push('SHORT_HOURS');
+  return complete('PRESENT', 1);
 }
 
 /** An open IN closed within this window by a punch after midnight belongs to the previous work date. */

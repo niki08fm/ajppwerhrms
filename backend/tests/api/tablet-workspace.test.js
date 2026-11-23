@@ -99,36 +99,38 @@ describe('A site login reads only its own recorded attendance', () => {
     expect(alphaDay.status).toBe(200);
     expect(betaDay.status).toBe(200);
     expect(alphaDay.body.data.rows[0]).toMatchObject({ id: f.employees.A, worked_min: 480, ot_min: 0 });
-    expect(betaDay.body.data.rows[0]).toMatchObject({ id: f.employees.A, worked_min: 60, ot_min: 60 });
+    // The shift ends at 17:30: beta's 17:30–18:00 is overtime.
+    expect(betaDay.body.data.rows[0]).toMatchObject({ id: f.employees.A, worked_min: 60, ot_min: 30 });
     expect(betaDay.body.data.rows[0].first_in).toBe(new Date('2026-10-10T17:00:00+05:30').toISOString());
     const alphaMonth = await alphaTablet.get('/api/v1/tablet/attendance/month?ym=2026-10');
     const betaMonth = await betaTablet.get('/api/v1/tablet/attendance/month?ym=2026-10');
     expect(alphaMonth.body.data.rows[0].ot_min).toBe(0);
-    expect(betaMonth.body.data.rows[0].ot_min).toBe(60);
-    expect(betaMonth.body.data.rows[0].days.find((d) => d.date === DATE).ot_min).toBe(60);
+    expect(betaMonth.body.data.rows[0].ot_min).toBe(30);
+    expect(betaMonth.body.data.rows[0].days.find((d) => d.date === DATE).ot_min).toBe(30);
     expect(betaMonth.body.data.rows[0].days.filter((d) => d.date !== DATE).every((d) => d.ot_min === 0)).toBe(true);
     expect(JSON.stringify(betaDay.body)).not.toMatch(/salary|pay_group|policy|embedding/);
   });
   it('applies the daily rounding once when OT intervals are split between sites', async () => {
     await attachOvertime();
     await recorded(f.employees.A, 'IN', 540);
-    await recorded(f.employees.A, 'OUT', 1045);
-    await recorded(f.employees.A, 'IN', 1045, beta.id);
-    await recorded(f.employees.A, 'OUT', 1070, beta.id);
+    await recorded(f.employees.A, 'OUT', 1065);
+    await recorded(f.employees.A, 'IN', 1065, beta.id);
+    await recorded(f.employees.A, 'OUT', 1080, beta.id);
     const alpha = await alphaTablet.get(`/api/v1/tablet/attendance/day?date=${DATE}`);
     const destination = await betaTablet.get(`/api/v1/tablet/attendance/day?date=${DATE}`);
-    expect(alpha.body.data.rows[0].ot_min).toBe(25);
-    expect(destination.body.data.rows[0].ot_min).toBe(5);
+    // 30 minutes after 17:30, counted once for the day: 15 at alpha first, then 15 at beta.
+    expect(alpha.body.data.rows[0].ot_min).toBe(15);
+    expect(destination.body.data.rows[0].ot_min).toBe(15);
     expect(alpha.body.data.rows[0].ot_min + destination.body.data.rows[0].ot_min).toBe(30);
   });
-  it('returns zero recorded site OT when no overtime policy is attached', async () => {
+  it('records site OT after the shift end even without an overtime policy (the policy only sets pay)', async () => {
     await recorded(f.employees.A, 'IN', 540);
     await recorded(f.employees.A, 'OUT', 1080);
     const day = await alphaTablet.get(`/api/v1/tablet/attendance/day?date=${DATE}`);
-    expect(day.body.data.rows[0]).toMatchObject({ worked_min: 540, ot_min: 0 });
+    expect(day.body.data.rows[0]).toMatchObject({ worked_min: 540, ot_min: 30 });
     const month = await alphaTablet.get('/api/v1/tablet/attendance/month?ym=2026-10');
-    expect(month.body.data.rows[0].ot_min).toBe(0);
-    expect(month.body.data.rows[0].days.every((d) => d.ot_min === 0)).toBe(true);
+    expect(month.body.data.rows[0].ot_min).toBe(30);
+    expect(month.body.data.rows[0].days.filter((d) => d.date !== DATE).every((d) => d.ot_min === 0)).toBe(true);
   });
   it('counts unique INs, current presence, late starts and signed-out people; department mix uses the latest punch', async () => {
     await recorded(f.employees.A, 'IN', 570);

@@ -35,7 +35,7 @@ function month({ absent = [], half = [], leave = {}, policies = [ATTENDANCE, WEE
   const punches = {};
   for (const d of monthDates('2026-09')) {
     if (dayName(d) === 'SUN' || absent.includes(d)) continue;
-    punches[d] = half.includes(d) ? [punch(d, '09:00', 'IN'), punch(d, '13:00', 'OUT')] : fullDay(d);
+    punches[d] = half.includes(d) ? [punch(d, '09:00', 'IN'), punch(d, '12:30', 'OUT')] : fullDay(d);
   }
   return runEmployeeMonth({
     ym: '2026-09',
@@ -129,6 +129,8 @@ describe('Absences nobody applied for are paid from paid leave', () => {
     });
     expect(day(missing, '2026-09-08').status).toBe('MISSING_PUNCH');
     expect(day(missing, '2026-09-08').auto_leave).toBe(0);
+    // A missing punch-out is paid as a full day.
+    expect(day(missing, '2026-09-08').day_value).toBe(1);
   });
 
   it('an absence paid from leave does not trigger the sandwich rule', () => {

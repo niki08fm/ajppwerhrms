@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { GitBranchPlus, History, Pencil, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { addDays, describeOvertimeBase, formatINR, MONTH_NAMES, POLICY_KINDS, POLICY_KIND_LABELS, upgradeLeaveRules } from '@ajpwer/shared';
+import { addDays, BUILT_IN_ATTENDANCE_TEXT, CONFIGURABLE_POLICY_KINDS as POLICY_KINDS, describeOvertimeBase, formatINR, MONTH_NAMES, POLICY_KIND_LABELS, upgradeLeaveRules } from '@ajpwer/shared';
 import { api, ApiError, errorMessage } from '@/services/api';
 import { useSession } from '@/context/SessionContext';
 import { PageHeader } from '@/components/bits';
@@ -82,7 +82,7 @@ export default function Policies() {
       ) : q.isError ? (
         <ErrorState error={q.error} onRetry={() => q.refetch()} />
       ) : (
-        POLICY_KINDS.map((k) => {
+        [<Card key="ATTENDANCE"><CardHeader title="Attendance" description={BUILT_IN_ATTENDANCE_TEXT} /></Card>, ...POLICY_KINDS.map((k) => {
           const rows = (q.data ?? []).filter((p) => p.kind === k);
           const families = new Map();
           for (const row of rows) families.set(row.policy_key, [...(families.get(row.policy_key) ?? []), row]);
@@ -147,7 +147,7 @@ export default function Policies() {
               )}
             </Card>
           );
-        })
+        })]
       )}
       {manage && builder && <Builder key={`${builder.mode}-${builder.from?.id ?? builder.kind}`} {...builder} from={latestEditorPolicy || builder.from} onClose={() => setBuilder(null)} />}
       {history && !builder && !deleting && <HistoryDialog {...history} manage={manage} onEdit={edit} onDelete={(policy, versions) => setDeleting({ policy, versions })} onClose={() => setHistory(null)} />}

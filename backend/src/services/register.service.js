@@ -1,4 +1,4 @@
-import { dayName, istMidnight } from '@ajpwer/shared';
+import { dayName, istMidnight, attendanceRulesFor } from '@ajpwer/shared';
 import { computeDay, resolvePolicies, shiftEndOnWorkDate } from '../calculations/index.js';
 import { fromDbDate, toDbDate } from '../utils/dbDates.js';
 import { toEnginePunch, travelMinutes } from './attendance.service.js';
@@ -102,7 +102,8 @@ export async function dayRegister(db, date, employeeIds, today, opts = {}) {
     const outs = ep.filter((p) => p.direction === 'OUT');
     const lastPunch = ep[ep.length - 1];
     const openNow = date === today && lastPunch?.direction === 'IN';
-    const att = policies.attendance;
+    // Built-in rules for the person's shift: no attendance policy applies.
+    const att = attendanceRulesFor(rules.shift);
     rows.push({
       employee: { id: e.id, code: e.code, name: e.name, designation: e.designation, department: e.department, pay_group_id: e.pay_group_id },
       day: eff,

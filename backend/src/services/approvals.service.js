@@ -144,13 +144,16 @@ async function build(db, now, register) {
           early_min: r.day.early_min,
           late_min: r.day.late_min,
           standard_min: r.context.standard_min,
+          short_min: Math.max(0, (r.context.standard_min ?? 0) - (r.day.worked_min ?? 0)),
+          under_four_hours: (r.day.flags ?? []).includes('UNDER_FOUR_HOURS'),
           sites: (r.day.sites ?? []).map((id) => siteName.get(id) ?? 'Unknown site'),
         },
       };
       // A day still open at 2 AM tonight is not missing yet.
       if (r.day.status === 'MISSING_PUNCH' && date < now) {
         items.push({ ...base, id: `miss:${r.employee.id}:${date}`, kind: 'miss', at: new Date(`${date}T23:59:00+05:30`).toISOString() });
-      } else if (r.day.status !== 'MISSING_PUNCH' && r.day.early_min > 0) {
+      } else if (r.day.status !== 'MISSING_PUNCH' && (r.day.flags ?? []).some((f) => f === 'SHORT_HOURS' || f === 'UNDER_FOUR_HOURS')) {
+        // Served less than the shift less 15 minutes: shown to HR, who need not act.
         items.push({ ...base, id: `short:${r.employee.id}:${date}`, kind: 'short', at: new Date(`${date}T23:58:00+05:30`).toISOString() });
       }
     }

@@ -57,12 +57,13 @@ function september(overrides = {}, skip = []) {
 }
 
 describe('Step 1 — pairing', () => {
-  it('two INs with no OUT: the first closes unmatched, the day is MISSING_PUNCH at half value', () => {
-    const d = day('2026-09-01', [punch('2026-09-01', '09:00', 'IN'), punch('2026-09-01', '09:05', 'IN'), punch('2026-09-01', '17:30', 'OUT')]);
+  it('two INs with no OUT: the first closes unmatched; a missing punch-out is a full day with no overtime', () => {
+    const d = day('2026-09-01', [punch('2026-09-01', '09:00', 'IN'), punch('2026-09-01', '09:05', 'IN'), punch('2026-09-01', '20:30', 'OUT')]);
     expect(d.pairs).toHaveLength(2);
     expect(d.pairs[0].out).toBeNull();
     expect(d.status).toBe('MISSING_PUNCH');
-    expect(d.day_value).toBe(0.5);
+    expect(d.day_value).toBe(1);
+    expect(d.ot_min).toBe(0);
   });
 
   it('an OUT with no IN is an orphan, flagged, never negative hours', () => {
@@ -82,21 +83,25 @@ describe('Step 1 — pairing', () => {
 });
 
 describe('Step 2 — classification thresholds', () => {
-  it('92% tolerance: 7h 55m of an 8h day is PRESENT, not half day', () => {
-    const d = day('2026-09-01', [punch('2026-09-01', '09:00', 'IN'), punch('2026-09-01', '16:55', 'OUT')]);
-    expect(d.status).toBe('PRESENT');
+  it('4 hours or more is a full day; short of 8 h 45 m it is shown to HR', () => {
+    const d = day('2026-09-01', [punch('2026-09-01', '09:00', 'IN'), punch('2026-09-01', '13:30', 'OUT')]);
+    expect([d.status, d.day_value]).toEqual(['PRESENT', 1]);
+    expect(d.flags).toContain('SHORT_HOURS');
+    expect(day('2026-09-01', [punch('2026-09-01', '09:00', 'IN'), punch('2026-09-01', '17:45', 'OUT')]).flags).not.toContain('SHORT_HOURS');
   });
-  it('half day and short', () => {
-    expect(day('2026-09-01', [punch('2026-09-01', '09:00', 'IN'), punch('2026-09-01', '13:30', 'OUT')]).status).toBe('HALF_DAY');
-    expect(day('2026-09-01', [punch('2026-09-01', '09:00', 'IN'), punch('2026-09-01', '10:00', 'OUT')]).status).toBe('SHORT');
+  it('under 4 hours is a half day, shown to HR; no punch at all is absent', () => {
+    const d = day('2026-09-01', [punch('2026-09-01', '09:00', 'IN'), punch('2026-09-01', '10:00', 'OUT')]);
+    expect([d.status, d.day_value]).toEqual(['HALF_DAY', 0.5]);
+    expect(d.flags).toContain('UNDER_FOUR_HOURS');
+    expect(day('2026-09-01', []).status).toBe('ABSENT');
   });
   it('before joining is NOT_JOINED, after the last day is EXITED', () => {
     expect(day('2026-09-01', [], [ATTENDANCE], { joined_on: '2026-09-10' }).status).toBe('NOT_JOINED');
     expect(day('2026-09-20', [], [ATTENDANCE], { last_day: '2026-09-15' }).status).toBe('EXITED');
   });
-  it('a gap between policy versions falls back to the documented default and flags, never crashes', () => {
+  it('needs no attendance policy: the rules are built in', () => {
     const d = day('2026-09-01', fullDay('2026-09-01'), []);
-    expect(d.flags).toContain('NO_ATTENDANCE_POLICY');
+    expect(d.flags).not.toContain('NO_ATTENDANCE_POLICY');
     expect(d.status).toBe('PRESENT');
   });
 });
@@ -125,14 +130,11 @@ describe('§20.17 Cross-site day', () => {
 });
 
 describe('§20.18 Policy versioning', () => {
-  it('grace 15 → 10 minutes from 1 April leaves March untouched and changes April', () => {
-    const v1 = policy('ATTENDANCE', { standard_min: 480, half_day_min: 240, grace_min: 15 }, '2025-04-01', '2026-03-31', 1);
-    const v2 = policy('ATTENDANCE', { standard_min: 480, half_day_min: 240, grace_min: 10 }, '2026-04-01', null, 2);
-    const march = day('2026-03-31', [punch('2026-03-31', '09:12', 'IN'), punch('2026-03-31', '17:30', 'OUT')], [v1, v2]);
-    const april = day('2026-04-01', [punch('2026-04-01', '09:12', 'IN'), punch('2026-04-01', '17:30', 'OUT')], [v1, v2]);
-    expect(march.late_min).toBe(0);
-    // Past the grace period, lateness counts from the shift start.
-    expect(april.late_min).toBe(12);
+  it('an attendance policy no longer changes the day: the 15-minute grace is built in', () => {
+    const strict = policy('ATTENDANCE', { standard_min: 480, half_day_min: 240, grace_min: 5 }, '2025-04-01', null, 1);
+    const d = day('2026-04-01', [punch('2026-04-01', '09:12', 'IN'), punch('2026-04-01', '18:00', 'OUT')], [strict]);
+    expect(d.late_min).toBe(0);
+    expect(day('2026-04-01', [punch('2026-04-01', '09:16', 'IN'), punch('2026-04-01', '18:30', 'OUT')], [strict]).late_min).toBe(16);
   });
 
   it('two overlapping versions: the later valid_from covering the date wins', () => {
@@ -230,11 +232,11 @@ const ajDay = (punches, policies = [NINE_HOUR_DAY, OVERTIME_FROM_SHIFT_END], ext
   day('2026-09-01', punches, policies, { shift_end_min: SHIFT_END, shift_break_min: SHIFT_BREAK, ...extra });
 const at = (inAt, outAt) => [punch('2026-09-01', inAt, 'IN'), punch('2026-09-01', outAt, 'OUT')];
 
-describe('AJPWER attendance: a 9-hour day, half day up to 4 hours', () => {
-  it('up to 4 hours worked is a half day; more is a full day', () => {
-    expect(ajDay(at('09:00', '13:00')).status).toBe('HALF_DAY');
-    expect(ajDay(at('09:00', '13:01')).status).toBe('PRESENT');
-    expect(ajDay(at('09:00', '09:30')).status).toBe('HALF_DAY'); // nothing is short: half day from 0
+describe('AJPWER attendance: a 9-hour shift, 15 minutes excused, half day under 4 hours', () => {
+  it('under 4 hours worked is a half day; 4 hours or more is a full day', () => {
+    expect(ajDay(at('09:00', '12:59')).status).toBe('HALF_DAY');
+    expect(ajDay(at('09:00', '13:00')).status).toBe('PRESENT');
+    expect(ajDay(at('09:00', '09:30')).status).toBe('HALF_DAY');
     expect(ajDay(at('09:00', '13:01')).day_value).toBe(1);
   });
 
@@ -245,10 +247,11 @@ describe('AJPWER attendance: a 9-hour day, half day up to 4 hours', () => {
     expect(d.flags).toContain('LATE');
   });
 
-  it('the day ends at 18:00, or nine hours after a late arrival', () => {
+  it('the day ends at 18:00, or 8 h 45 m after a late arrival', () => {
     expect(ajDay(at('08:40', '18:00')).due_out_min).toBe(SHIFT_END);
     expect(ajDay(at('09:15', '18:00')).due_out_min).toBe(SHIFT_END);
-    expect(ajDay(at('09:30', '18:30')).due_out_min).toBe(18 * 60 + 30);
+    expect(ajDay(at('09:30', '18:30')).due_out_min).toBe(18 * 60 + 15);
+    expect(ajDay(at('10:00', '19:00')).due_out_min).toBe(18 * 60 + 45);
   });
 
   it('leaving before the day ends is flagged as early, never deducted', () => {
@@ -257,9 +260,9 @@ describe('AJPWER attendance: a 9-hour day, half day up to 4 hours', () => {
     expect(early.flags).toContain('EARLY_OUT');
     expect(early.status).toBe('PRESENT');
     expect(early.day_value).toBe(1);
-    // In late at 09:30 and out at 18:00: thirty minutes short of the nine hours.
-    expect(ajDay(at('09:30', '18:00')).early_min).toBe(30);
-    expect(ajDay(at('09:30', '18:30')).early_min).toBe(0);
+    // In late at 09:30 and out at 18:00: fifteen minutes short of 8 h 45 m.
+    expect(ajDay(at('09:30', '18:00')).early_min).toBe(15);
+    expect(ajDay(at('09:30', '18:15')).early_min).toBe(0);
     expect(ajDay(at('09:15', '18:00')).early_min).toBe(0);
   });
 
@@ -270,7 +273,7 @@ describe('AJPWER attendance: a 9-hour day, half day up to 4 hours', () => {
   });
 });
 
-describe('AJPWER overtime: from shift end, or once nine hours are done after a late arrival', () => {
+describe('AJPWER overtime: from shift end, or once 8 h 45 m are done after a late arrival', () => {
   it('on time: overtime starts at 18:00; coming in early earns none', () => {
     expect(ajDay(at('09:00', '20:00')).ot_min).toBe(120);
     expect(ajDay(at('08:00', '19:00')).ot_min).toBe(60);
@@ -280,22 +283,18 @@ describe('AJPWER overtime: from shift end, or once nine hours are done after a l
     expect(ajDay(at('09:15', '19:00')).ot_min).toBe(60);
   });
 
-  it('after a late arrival overtime starts once nine hours are done', () => {
-    expect(ajDay(at('09:30', '18:30')).ot_min).toBe(0);
-    expect(ajDay(at('09:30', '19:30')).ot_min).toBe(60);
+  it('after a late arrival overtime starts once 8 h 45 m are done', () => {
+    expect(ajDay(at('09:30', '18:15')).ot_min).toBe(0);
+    expect(ajDay(at('09:30', '20:00')).ot_min).toBe(105);
+    expect(ajDay(at('10:00', '19:00')).ot_min).toBe(15);
     expect(ajDay(at('09:30', '18:00')).ot_min).toBe(0);
   });
 
-  it('a lunch break within the shift allowance does not cut overtime; a longer one does', () => {
-    const lunch = (back) => [punch('2026-09-01', '09:00', 'IN'), punch('2026-09-01', '13:00', 'OUT'), punch('2026-09-01', back, 'IN'), punch('2026-09-01', '20:00', 'OUT')];
-    expect(ajDay(lunch('13:45')).ot_min).toBe(120);
-    expect(ajDay(lunch('15:00')).ot_min).toBe(60); // two hours out: an hour past the allowance comes off
-  });
-
-  it('time after 18:00 earns nothing when the day itself was not worked', () => {
-    const d = ajDay([punch('2026-09-01', '09:00', 'IN'), punch('2026-09-01', '11:00', 'OUT'), punch('2026-09-01', '16:00', 'IN'), punch('2026-09-01', '20:00', 'OUT')]);
-    expect(d.worked_min).toBe(360);
-    expect(d.ot_min).toBe(0);
+  it('overtime is the time worked after it starts, at any site', () => {
+    const moved = [punch('2026-09-01', '09:05', 'IN', 'site-A'), punch('2026-09-01', '13:00', 'OUT', 'site-A'), punch('2026-09-01', '13:40', 'IN', 'site-B'), punch('2026-09-01', '19:30', 'OUT', 'site-B')];
+    const d = ajDay(moved, undefined, { travel_min: 30 });
+    expect(d.worked_min).toBe(235 + 30 + 350);
+    expect(d.ot_min).toBe(90);
   });
 
   it('the policy minimum and rounding still apply', () => {
@@ -311,10 +310,8 @@ describe('AJPWER overtime: from shift end, or once nine hours are done after a l
     expect(d.ot_min).toBe(45);
   });
 
-  it('policies without the new settings keep their old meaning', () => {
-    // 92% of the standard day is still a full day, and overtime is time beyond the standard day.
-    expect(day('2026-09-01', [punch('2026-09-01', '09:00', 'IN'), punch('2026-09-01', '16:55', 'OUT')]).status).toBe('PRESENT');
-    expect(day('2026-09-01', [punch('2026-09-01', '09:00', 'IN'), punch('2026-09-01', '18:00', 'OUT')]).ot_min).toBe(60);
+  it('overtime is recorded without an overtime policy; the policy decides only how it is paid', () => {
+    expect(ajDay(at('09:00', '19:20'), [NINE_HOUR_DAY]).ot_min).toBe(80);
   });
 });
 

@@ -4,7 +4,7 @@ import { completedShiftShortfall, inView, summarize } from '../../src/services/d
 import { NINE_HOUR_DAY, punch } from './fixtures.js';
 
 const DATE = '2026-09-01';
-const day = (start = '09:00', end = '17:40', patch = {}) => computeDay({
+const day = (start = '09:00', end = '17:30', patch = {}) => computeDay({
   date: DATE, joined_on: '2025-01-01', last_day: null, is_holiday: false, is_weekly_off: false, leave: null,
   punches: [punch(DATE, start, 'IN'), ...(end ? [punch(DATE, end, 'OUT')] : [])],
   policies: resolvePolicies([NINE_HOUR_DAY], DATE), shift_start_min: 540, shift_end_min: 1080,
@@ -13,10 +13,10 @@ const day = (start = '09:00', end = '17:40', patch = {}) => computeDay({
 const row = (value, patch = {}) => ({ day: value, open_now: false, ...patch });
 
 describe('Completed shift shortfall views', () => {
-  it('counts a completed 8h40 shift as 20 minutes short without changing paid-day tolerance', () => {
+  it('counts a completed 8h30 shift as 15 minutes short of 8 h 45 m, still a full day', () => {
     const r = row(day());
-    expect(r.day).toMatchObject({ status: 'PRESENT', day_value: 1, required_shift_min: 540 });
-    expect(completedShiftShortfall(r)).toBe(20);
+    expect(r.day).toMatchObject({ status: 'PRESENT', day_value: 1, required_shift_min: 525 });
+    expect(completedShiftShortfall(r)).toBe(15);
     expect(inView('shortfall', r)).toBe(true);
     expect(summarize([r], 1200).shortfall).toBe(1);
   });
@@ -30,7 +30,7 @@ describe('Completed shift shortfall views', () => {
 
   it('never flags a running shift as unfinished', () => {
     const r = row(day(), { open_now: true });
-    expect(r.day.shift_shortfall_min).toBe(20);
+    expect(r.day.shift_shortfall_min).toBe(15);
     expect(completedShiftShortfall(r)).toBe(0);
     expect(inView('shortfall', r)).toBe(false);
   });
@@ -48,15 +48,15 @@ describe('Completed shift shortfall views', () => {
   });
 
   it('uses the remaining half shift after approved half-day leave', () => {
-    const r = row(day('09:00', '13:20', { leave: { leave_type: 'PL', paid: true, portion: 0.5 } }));
-    expect(r.day.required_shift_min).toBe(270);
+    const r = row(day('09:00', '13:13', { leave: { leave_type: 'PL', paid: true, portion: 0.5 } }));
+    expect(r.day.required_shift_min).toBe(263);
     expect(completedShiftShortfall(r)).toBe(10);
     expect(inView('shortfall', r)).toBe(true);
   });
 
   it('honours an HR correction even when the original missing-punch audit flag remains', () => {
     const r = row({ ...day(), overridden: true, flags: ['UNMATCHED_IN'] }, { override: { id: 'confirmed' } });
-    expect(completedShiftShortfall(r)).toBe(20);
+    expect(completedShiftShortfall(r)).toBe(15);
     expect(inView('shortfall', r)).toBe(true);
     // The existing Left early decision remains separate and is not rewritten.
     expect(inView('early', { ...r, day: { ...r.day, early_min: 0 } })).toBe(false);

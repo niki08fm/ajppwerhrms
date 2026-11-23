@@ -15,47 +15,47 @@ function calculate(punches, { attendance = ATTENDANCE, overtime = { ...OVERTIME.
 }
 
 describe('Recorded overtime attributed to the site where its interval occurred', () => {
-  it('fills the standard day across sites and assigns the remaining OT only to the later site', () => {
-    expect(calculate([...interval('alpha', '09:00', '17:00'), ...interval('beta', '17:00', '19:00')]).bySite).toEqual({ beta: 120 });
+  it('assigns overtime to the site where time after the shift end (17:30) was worked', () => {
+    expect(calculate([...interval('alpha', '09:00', '17:00'), ...interval('beta', '17:00', '19:00')]).bySite).toEqual({ beta: 90 });
   });
-  it('rounds once across site intervals, retaining chronological eligible minutes', () => {
-    const r = calculate([...interval('alpha', '09:00', '17:25'), ...interval('beta', '17:25', '17:50')]);
+  it('rounds once for the day, retaining chronological eligible minutes', () => {
+    const r = calculate([...interval('alpha', '09:00', '17:45'), ...interval('beta', '17:45', '18:20')]);
     expect(r.day.ot_min).toBe(30);
-    expect(r.bySite).toEqual({ alpha: 25, beta: 5 });
+    expect(r.bySite).toEqual({ alpha: 15, beta: 15 });
   });
   it.each([
     ['00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000003'],
     ['00000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000002'],
   ])('pairs an equal-time handover independently of OUT/IN UUID order (%s / %s)', (outId, inId) => {
-    const alpha = interval('alpha', '09:00', '17:25');
-    const beta = interval('beta', '17:25', '17:50');
+    const alpha = interval('alpha', '09:00', '17:45');
+    const beta = interval('beta', '17:45', '18:20');
     alpha[1].id = outId;
     beta[0].id = inId;
     // Incoming records may also arrive in a different order from their timestamps.
     const r = calculate([beta[0], alpha[1], beta[1], alpha[0]]);
     expect(r.day.status).toBe('PRESENT');
-    expect(r.day.worked_min).toBe(530);
+    expect(r.day.worked_min).toBe(560);
     expect(r.day.flags).not.toContain('UNMATCHED_IN');
     expect(r.day.flags).not.toContain('ORPHAN_OUT');
     expect(r.day.ot_min).toBe(30);
-    expect(r.bySite).toEqual({ alpha: 25, beta: 5 });
+    expect(r.bySite).toEqual({ alpha: 15, beta: 15 });
   });
   it('applies the minimum OT threshold once to the combined day', () => {
-    expect(calculate(interval('alpha', '09:00', '17:29')).bySite).toEqual({});
-    expect(calculate([...interval('alpha', '09:00', '17:15'), ...interval('beta', '17:15', '17:30')]).bySite).toEqual({ alpha: 15, beta: 15 });
+    expect(calculate(interval('alpha', '09:00', '17:59')).bySite).toEqual({});
+    expect(calculate([...interval('alpha', '09:00', '17:45'), ...interval('beta', '17:45', '18:00')]).bySite).toEqual({ alpha: 15, beta: 15 });
   });
   it('uses SHIFT_END and assigns only time past the shift end', () => {
     const r = calculate([...interval('alpha', '09:00', '17:00'), ...interval('beta', '17:00', '19:00')], {
       overtime: { ...OVERTIME.rules, counts_from: 'SHIFT_END', after_min: 0, rounding_min: 1 } });
     expect(r.bySite).toEqual({ beta: 90 });
   });
-  it('uses full-day eligibility plus break allowance before assigning later SHIFT_END intervals', () => {
+  it('counts every interval after the shift end, whatever came before it', () => {
     const r = calculate([...interval('alpha', '09:00', '13:00'), ...interval('beta', '15:00', '18:00'),
       ...interval('alpha', '18:00', '19:00'), ...interval('beta', '19:00', '19:30')], {
       attendance: NINE_HOUR_DAY, shift_end_min: 1080, shift_break_min: 60,
       overtime: { ...OVERTIME.rules, counts_from: 'SHIFT_END', after_min: 0, rounding_min: 1 } });
-    expect(r.day.ot_min).toBe(30);
-    expect(r.bySite).toEqual({ beta: 30 });
+    expect(r.day.ot_min).toBe(90);
+    expect(r.bySite).toEqual({ alpha: 60, beta: 30 });
   });
   it('credits grace minutes for on-time arrival under SHIFT_END', () => {
     const r = calculate(interval('alpha', '09:15', '19:00'), { attendance: NINE_HOUR_DAY, shift_end_min: 1080,
@@ -67,8 +67,9 @@ describe('Recorded overtime attributed to the site where its interval occurred',
     const r = calculate([...interval('alpha', '09:30', '18:30'), ...interval('beta', '18:30', '19:30')], {
       attendance: NINE_HOUR_DAY, shift_end_min: 1080,
       overtime: { ...OVERTIME.rules, counts_from: 'SHIFT_END', after_min: 0, rounding_min: 1 } });
-    expect(r.day.due_out_min).toBe(1110);
-    expect(r.bySite).toEqual({ beta: 60 });
+    // In at 09:30: overtime starts 8 h 45 m later, at 18:15.
+    expect(r.day.due_out_min).toBe(1095);
+    expect(r.bySite).toEqual({ alpha: 15, beta: 60 });
   });
   it('handles overnight shift ends after midnight on the original work date', () => {
     const out = punch('2026-10-11', '07:00', 'OUT', 'alpha');
@@ -89,7 +90,7 @@ describe('Recorded overtime attributed to the site where its interval occurred',
   });
   it('attributes a legacy interval closed at another site to its original IN site', () => {
     const r = calculate([punch(DATE, '09:00', 'IN', 'alpha'), punch(DATE, '19:00', 'OUT', 'beta')]);
-    expect(r.bySite).toEqual({ alpha: 120 });
+    expect(r.bySite).toEqual({ alpha: 90 });
   });
   it('does not infer OT from missing punches, even when one earlier interval was closed', () => {
     const r = calculate([...interval('alpha', '09:00', '19:00'), punch(DATE, '19:30', 'IN', 'beta')]);
@@ -99,7 +100,7 @@ describe('Recorded overtime attributed to the site where its interval occurred',
   it.each(['is_holiday', 'is_weekly_off'])('keeps %s work out of OT', (kind) => {
     expect(calculate(interval('alpha', '09:00', '20:00'), { [kind]: true }).bySite).toEqual({});
   });
-  it('shows zero when the pay group has no overtime policy', () => {
-    expect(calculate(interval('alpha', '09:00', '20:00'), { overtime: null }).bySite).toEqual({});
+  it('records overtime without an overtime policy, every minute after the shift end', () => {
+    expect(calculate(interval('alpha', '09:00', '20:00'), { overtime: null }).bySite).toEqual({ alpha: 150 });
   });
 });
