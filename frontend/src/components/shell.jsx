@@ -45,6 +45,7 @@ import { useOnline } from '@/hooks';
 import { useSession } from '@/context/SessionContext';
 import { cn, initials } from '@/utils';
 import { OfflineBanner } from './states';
+import { ScreenError } from './ScreenError';
 import { Button } from './ui/button';
 import { Menu, Tooltip } from './ui/overlay';
 
@@ -433,6 +434,7 @@ function ThemeToggle() {
 
 export function AppShell() {
   const { me } = useSession();
+  const location = useLocation();
   const online = useOnline();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(() => remember('nav.collapsed', false));
@@ -497,7 +499,9 @@ export function AppShell() {
         </header>
         <main className="min-h-0 flex-1 overflow-y-auto px-4 py-6 lg:px-8">
           <div className="mx-auto max-w-[1600px]">
-            <Outlet />
+            <ScreenError key={location.pathname}>
+              <Outlet />
+            </ScreenError>
           </div>
         </main>
       </div>

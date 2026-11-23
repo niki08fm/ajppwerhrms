@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { AppShell } from './components/shell';
 import { SkeletonRows } from './components/states';
+import { ScreenError } from './components/ScreenError';
 import { SessionProvider, useSession } from './context/SessionContext';
 
 const Login = lazy(() => import('./pages/auth/Login'));
@@ -64,6 +65,7 @@ function NotFound() {
 
 export function App() {
   return (
+    <ScreenError>
     <Suspense fallback={<Loading />}>
       <Routes>
         {/* The site tablet has its own login and nothing else. */}
@@ -146,5 +148,6 @@ export function App() {
         />
       </Routes>
     </Suspense>
+    </ScreenError>
   );
 }

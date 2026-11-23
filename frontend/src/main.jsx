@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'sonner';
 import { ApiError } from './services/api';
 import { App } from './App';
+import { reloadForUpdate } from './components/ScreenError';
 import './styles.css';
 
 const queryClient = new QueryClient({
@@ -33,3 +34,8 @@ createRoot(document.getElementById('root')).render(
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
 }
+
+// A window opened before an update asks for code files the update replaced: load the update.
+window.addEventListener('vite:preloadError', (event) => {
+  if (reloadForUpdate()) event.preventDefault();
+});
