@@ -1,11 +1,10 @@
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Printer } from 'lucide-react';
 import { api } from '@/services/api';
 import { mins } from '@/utils';
 import { Mono } from '@/components/bits';
 import { ErrorState, SkeletonBlock } from '@/components/states';
-import { Button } from '@/components/ui/button';
+import { PrintToolbar } from '@/components/PrintToolbar';
 import { PayslipBody } from '../../components/payroll/PayslipBody';
 
 /** Clean A4 from the browser: no navigation, no buttons, no colour backgrounds. */
@@ -18,14 +17,10 @@ export default function PayslipPrint() {
   const m = s.meta;
   return (
     <div className="mx-auto max-w-3xl p-6">
-      <div className="no-print mb-4 flex justify-between">
-        <span className="text-[13px] text-muted-foreground">
-          {s.period.state === 'LOCKED' || s.period.state === 'PAID' ? 'Final payslip — this month is locked.' : 'This month is run but not locked; the payslip can still change on a rerun.'}
-        </span>
-        <Button onClick={() => window.print()}>
-          <Printer /> Print
-        </Button>
-      </div>
+      <PrintToolbar
+        backTo={`/people/${employeeId}?tab=payslips`}
+        note={s.period.state === 'LOCKED' || s.period.state === 'PAID' ? 'Final payslip — this month is locked.' : 'This month is run but not locked; the payslip can still change on a rerun.'}
+      />
       <article className="print-area flex flex-col gap-4 rounded-lg border bg-card p-8">
         <header className="flex items-start justify-between border-b pb-3">
           <div>

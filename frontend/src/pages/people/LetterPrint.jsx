@@ -1,11 +1,10 @@
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Printer } from 'lucide-react';
 import { api } from '@/services/api';
 import { longDate } from '@/utils';
 import { Money } from '@/components/bits';
 import { ErrorState, SkeletonBlock } from '@/components/states';
-import { Button } from '@/components/ui/button';
+import { PrintToolbar } from '@/components/PrintToolbar';
 import { hasPaise } from '@/components/people/SalaryDisplay';
 
 /** Printed from the letter's frozen snapshot — what was actually stated, not today's figures. */
@@ -89,11 +88,7 @@ export default function LetterPrint() {
   );
   return (
     <div className="mx-auto max-w-3xl p-6">
-      <div className="no-print mb-4 flex justify-end">
-        <Button onClick={() => window.print()}>
-          <Printer /> Print
-        </Button>
-      </div>
+      <PrintToolbar backTo={`/people/${employeeId}?tab=letters`} />
       <article className="print-area rounded-lg border bg-card p-10 font-serif text-[14px] leading-relaxed">
         <header className="mb-8 border-b pb-4">
           <div className="font-display text-2xl font-semibold">{s.company?.name ?? 'AJ Power Engineering'}</div>

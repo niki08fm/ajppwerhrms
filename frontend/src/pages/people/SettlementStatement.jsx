@@ -12,6 +12,7 @@ import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { Field, Input, MoneyInput, Select, Textarea } from '@/components/ui/form';
 import { Dialog, Menu } from '@/components/ui/overlay';
+import { PrintToolbar } from '@/components/PrintToolbar';
 
 export const useSettlement = (employeeId) => useQuery({ queryKey: ['settlement', employeeId], queryFn: () => api.get(`/settlements/${employeeId}`).then((r) => r.data) });
 
@@ -234,11 +235,7 @@ export default function SettlementStatement({ print }) {
   if (print) {
     return (
       <div className="mx-auto max-w-3xl p-6">
-        <div className="no-print mb-4 flex justify-end">
-          <Button onClick={() => window.print()}>
-            <Printer /> Print
-          </Button>
-        </div>
+        <PrintToolbar backTo={`/exits/${employeeId}`} />
         <SettlementPanel employeeId={employeeId} print />
       </div>
     );
