@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react';
+import { Suspense, useEffect, useId, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Command } from 'cmdk';
@@ -44,7 +44,7 @@ import { api } from '@/services/api';
 import { useOnline } from '@/hooks';
 import { useSession } from '@/context/SessionContext';
 import { cn, initials } from '@/utils';
-import { OfflineBanner } from './states';
+import { OfflineBanner, SkeletonRows } from './states';
 import { ScreenError } from './ScreenError';
 import { Button } from './ui/button';
 import { Menu, Tooltip } from './ui/overlay';
@@ -170,6 +170,14 @@ function Sidebar({ onNavigate, collapsed, onToggleCollapsed }) {
   const [moreOpen, setMoreOpen] = useState(() => remember('nav.more', false));
   const moreId = useId();
   const settingsId = useId();
+  // Opening a page in a section keeps that section open after you leave it, so the list
+  // below does not jump; it closes only when you close it.
+  useEffect(() => {
+    if (inSettings && !settingsOpen) { setSettingsOpen(true); store('nav.settings', true); }
+  }, [inSettings, settingsOpen]);
+  useEffect(() => {
+    if (inMore && !moreOpen) { setMoreOpen(true); store('nav.more', true); }
+  }, [inMore, moreOpen]);
   const showSettings = settingsOpen || inSettings;
   const showMore = moreOpen || inMore;
   return (
@@ -500,7 +508,10 @@ export function AppShell() {
         <main className="min-h-0 flex-1 overflow-y-auto px-4 py-6 lg:px-8">
           <div className="mx-auto max-w-[1600px]">
             <ScreenError key={location.pathname}>
-              <Outlet />
+              {/* Only the content area waits for a screen to load; the sidebar and header stay put. */}
+              <Suspense fallback={<SkeletonRows rows={10} />}>
+                <Outlet />
+              </Suspense>
             </ScreenError>
           </div>
         </main>
