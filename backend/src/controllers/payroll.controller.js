@@ -11,6 +11,7 @@ import { computeMonths } from '../services/attendance.service.js';
 import { onboardingView } from '../services/employee.service.js';
 import { claimRun, releaseRun, computeIssues, getPeriod, heldBackList, ISSUE_LABELS, reopenStep, runPopulation, submitStep, transition } from '../services/payroll.service.js';
 import { buildReport, REPORTS, reportCSV, reportXLSX } from '../services/reports.service.js';
+import { buildPeriodReport, PERIOD_REPORTS } from '../services/period-reports.service.js';
 import { computeSettlementFor, upsertSettlement } from '../services/settlement.service.js';
 import { mapConcurrent } from '../utils/parallel.js';
 import { randomUUID } from 'node:crypto';
@@ -533,6 +534,40 @@ export const getReport = asyncHandler(async (req, res) => {
   await auditReq(req, { action: 'export.report', entity_type: 'report', detail: { report: key, period: ym, format, rows: filtered.rows.length } });
   // The salary register is named like the payroll statement it replaces: Payroll_<COMPANY>_<YYYY-MM>.
   const fileName = filtered.file_name ? `${filtered.file_name}${q ? `-${q.replace(/[^a-z0-9]+/g, '-')}` : ''}` : `payroll-${key}-${ym}${suffix}`;
+  if (format === 'xlsx') {
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}.xlsx"`);
+    return res.send(await reportXLSX(filtered));
+  }
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${fileName}.csv"`);
+  res.send(reportCSV(filtered));
+});
+
+// ─── Report center: reports over a period of months ─────────────────────────
+export const listPeriodReports = asyncHandler(async (_req, res) => {
+  res.json({ data: PERIOD_REPORTS });
+});
+
+/** A report over months `from`–`to`, as JSON, CSV or XLSX. Filters by name or code like the monthly reports. */
+export const getPeriodReport = asyncHandler(async (req, res) => {
+  const from = ymParam(req.query.from);
+  const to = ymParam(req.query.to);
+  const key = String(req.params.name);
+  if (!PERIOD_REPORTS.some((r) => r.key === key)) throw notFound('That report');
+  const format = req.query.format || 'json';
+  const wantsPii = format !== 'json' && can(req, 'pii.read');
+  const company = companyParam(req.query.company);
+  const report = await buildPeriodReport(prisma, from, to, key, { pii: wantsPii, company });
+  const q = req.query.q?.toLowerCase();
+  const filtered = q
+    ? { ...report, rows: report.rows.filter((r) => String(r.name ?? '').toLowerCase().includes(q) || String(r.code ?? '').toLowerCase().includes(q)) }
+    : report;
+  if (format === 'json') return res.json({ data: filtered, meta: { total: filtered.rows.length, nextCursor: null } });
+  if (!can(req, 'reports.export')) throw new AppError('FORBIDDEN', 'Exporting reports needs the export permission.', 403);
+  if (report.pii && wantsPii) await auditReq(req, { action: 'pii.read', entity_type: 'report', entity_id: null, detail: { report: key, from, to, rows: filtered.rows.length } });
+  await auditReq(req, { action: 'export.report', entity_type: 'report', detail: { report: key, from, to, format, rows: filtered.rows.length } });
+  const fileName = `report-${key}-${from}${to !== from ? `-to-${to}` : ''}${company ? `-${company.toLowerCase()}` : ''}${q ? `-${q.replace(/[^a-z0-9]+/g, '-')}` : ''}`;
   if (format === 'xlsx') {
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}.xlsx"`);

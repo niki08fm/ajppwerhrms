@@ -11,6 +11,7 @@ import {
   ChevronRight,
   ClipboardCheck,
   Clock3,
+  FileBarChart,
   FileCheck2,
   FileClock,
   FolderKanban,
@@ -77,6 +78,7 @@ const NAV = [
     group: 'Payroll',
     items: [
       { to: '/payroll', label: 'Monthly payroll', icon: <Banknote /> },
+      { to: '/reports', label: 'Report center', icon: <FileBarChart /> },
       { to: '/held-salaries', label: 'Held salaries', icon: <PauseCircle /> },
       { to: '/money', label: 'Loans and advances', icon: <HandCoins /> },
       { to: '/exits', label: 'Exits and settlement', icon: <UserMinus /> },

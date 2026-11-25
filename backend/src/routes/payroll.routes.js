@@ -47,6 +47,8 @@ payrollRouter.post('/payroll/periods/:ym/mark-paid', requirePerm('payroll.pay'),
 
 // ─── Reports and payslips (from the snapshot) ───────────────────────────────
 payrollRouter.get('/payroll/reports', requirePerm('payroll.read'), payrollController.listReports);
+payrollRouter.get('/reports/period', requirePerm('payroll.read'), payrollController.listPeriodReports);
+payrollRouter.get('/reports/period/:name', requirePerm('payroll.read'), payrollController.getPeriodReport);
 payrollRouter.get('/payroll/periods/:ym/report/:name', requirePerm('payroll.read'), payrollController.getReport);
 payrollRouter.get('/payroll/periods/:ym/payslips/:employeeId', requirePerm('payroll.read'), payrollController.getPayslip);
 payrollRouter.get('/payroll/periods/:ym/payslips.zip', requirePerm('payroll.read', 'reports.export'), periodPayslipsZip);
