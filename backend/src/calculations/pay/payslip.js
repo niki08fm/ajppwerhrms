@@ -108,7 +108,9 @@ export function assemblePayslip(input) {
       hourly: last.hourly,
       amount: otAmount,
       hours_per_day: last.rules.hours_per_day,
-      ...(parts.length > 1 ? { segments: parts.map((o) => ({ from: o.from, to: o.to, minutes: o.minutes, paid_min: o.paid_min, multiplier: o.rules.multiplier, hourly: o.hourly, amount: o.amount })) } : {}),
+      multiplier: last.multiplier,
+      daily_capped_min: att.ot_capped_min ?? 0,
+      ...(parts.length > 1 ? { segments: parts.map((o) => ({ from: o.from, to: o.to, minutes: o.minutes, paid_min: o.paid_min, multiplier: o.multiplier, hourly: o.hourly, amount: o.amount })) } : {}),
     };
     if (ot.excess_min > 0) flags.push('OT_OVER_CAP');
     for (const o of parts) {
@@ -119,7 +121,7 @@ export function assemblePayslip(input) {
       push({
         kind: 'OT',
         code: 'OT',
-        name: `Overtime ${h}h${m ? ` ${m}m` : ''} at ${o.rules.multiplier}×${span}`,
+        name: `Overtime ${h}h${m ? ` ${m}m` : ''} at ${o.multiplier}×${span}`,
         full_amount: o.amount,
         amount: o.amount,
         is_taxable: true,

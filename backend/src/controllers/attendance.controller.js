@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { addDays, bulkOverrideSchema, DAY_STATUS_LABELS, faceExceptionDecideSchema, firstOfMonth, formatMinutes, isoDate, istDate, lastOfMonth, monthDates, overrideCreateSchema, overridePreviewSchema, siteChangeReviewSchema, yearMonth, ymOf } from '@ajpwer/shared';
+import { addDays, bulkOverrideSchema, DAY_STATUS_LABELS, faceExceptionDecideSchema, firstOfMonth, formatMinutes, isoDate, istDate, lastOfMonth, monthDates, overrideCreateSchema, overtimeMultiplier, overridePreviewSchema, siteChangeReviewSchema, yearMonth, ymOf } from '@ajpwer/shared';
 import { assignWorkDate, overrideDiffers, pickPolicy } from '../calculations/index.js';
 import { audit, who } from '../utils/audit.js';
 import { fromDbDate, toDbDate } from '../utils/dbDates.js';
@@ -467,7 +467,10 @@ export const listOvertime = asyncHandler(async (req, res) => {
         paid_min: ps.result.ot?.paid_min ?? 0,
         excess_min: ps.result.ot?.excess_min ?? 0,
         hourly: ps.result.ot?.hourly ?? 0,
-        multiplier: r?.multiplier ?? null,
+        // This person's multiplier: the policy's gross band for their monthly gross, else its single rate.
+        multiplier: ps.result.ot?.multiplier ?? (r ? overtimeMultiplier(r, ps.result.fixed?.gross ?? 0) : null),
+        banded: !!r?.gross_bands?.length,
+        daily_capped_min: m.result.totals.ot_capped_min ?? 0,
         base: r?.base ?? null,
         components: r?.components ?? null,
         policy: pol ? { name: pol.name, version: pol.version } : null,

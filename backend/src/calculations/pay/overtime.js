@@ -1,4 +1,4 @@
-import { overtimeBaseMonthly, toMicroPct } from '@ajpwer/shared';
+import { overtimeBaseMonthly, overtimeMultiplier, toMicroPct } from '@ajpwer/shared';
 
 export function baseMonthly(base, s, components) {
   switch (base) {
@@ -27,6 +27,8 @@ function fraction(base, nums, dens) {
 /**
  * hourly = base_monthly ÷ (divisor × hours_per_day)
  * amount = ot_min ÷ 60 × hourly × multiplier
+ * The multiplier comes from the policy's gross bands for the full monthly gross, else the
+ * policy's single multiplier.
  * Minutes above the monthly cap are unpaid and reported, not hidden.
  */
 export function overtimePay(otMin, rules, s, groupDivisor) {
@@ -35,10 +37,11 @@ export function overtimePay(otMin, rules, s, groupDivisor) {
   const paid_min = rules.monthly_cap_min !== null ? Math.min(otMin, rules.monthly_cap_min) : otMin;
   const excess_min = otMin - paid_min;
   const hpd = toMicroPct(rules.hours_per_day);
-  const mult = toMicroPct(rules.multiplier);
+  const multiplier = overtimeMultiplier(rules, s.gross);
+  const mult = toMicroPct(multiplier);
   const hourly = fraction(base_monthly, [1_000_000n], [BigInt(divisor), hpd]);
   const amount = fraction(base_monthly, [BigInt(paid_min), mult, 1_000_000n], [BigInt(divisor), hpd, 60n, 1_000_000n]);
-  return { hourly, paid_min, excess_min, amount, base_monthly, divisor, multiplier: rules.multiplier };
+  return { hourly, paid_min, excess_min, amount, base_monthly, divisor, multiplier };
 }
 
 /**

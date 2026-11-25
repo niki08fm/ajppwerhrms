@@ -166,15 +166,20 @@ export function computeDay(input) {
   // still apply when there is one; its rate and cap are for payroll.
   const ot = policies.overtime;
   const raw = missing ? 0 : workedAfter(pr.pairs, date, due_out_min, travel_min);
-  const ot_min = ot ? (raw < (ot.after_min ?? 0) ? 0 : Math.floor(raw / Math.max(1, ot.rounding_min ?? 1)) * Math.max(1, ot.rounding_min ?? 1)) : raw;
+  const counted = ot ? (raw < (ot.after_min ?? 0) ? 0 : Math.floor(raw / Math.max(1, ot.rounding_min ?? 1)) * Math.max(1, ot.rounding_min ?? 1)) : raw;
+  // The policy's daily cap: minutes above it that day are not counted, and shown to HR.
+  const dailyCap = ot?.daily_cap_min ?? null;
+  const ot_min = dailyCap !== null ? Math.min(counted, dailyCap) : counted;
+  const ot_capped_min = counted - ot_min;
+  if (ot_capped_min > 0) flags.push('OT_DAILY_CAP');
 
-  const withTime = { ...base, standard_min: required, late_min, early_min, due_out_min, ot_min };
+  const withTime = { ...base, standard_min: required, late_min, early_min, due_out_min, ot_min, ...(ot_capped_min > 0 ? { ot_capped_min } : {}) };
   const complete = (status, day_value) => {
     const result = { ...withTime, status, day_value };
     return { ...result, required_shift_min: requiredShiftMinutes(result), shift_shortfall_min: shiftShortfall(result) };
   };
   // A missing punch-out is a full day with no overtime; HR is shown it.
-  if (missing) return { ...withTime, status: 'MISSING_PUNCH', day_value: 1, ot_min: 0 };
+  if (missing) return { ...withTime, status: 'MISSING_PUNCH', day_value: 1, ot_min: 0, ot_capped_min: undefined };
   if (worked_min < ATTENDANCE_RULES.half_day_below_min) {
     flags.push('UNDER_FOUR_HOURS');
     return complete('HALF_DAY', 0.5);

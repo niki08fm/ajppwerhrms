@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { GitBranchPlus, History, Pencil, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { addDays, BUILT_IN_ATTENDANCE_TEXT, CONFIGURABLE_POLICY_KINDS as POLICY_KINDS, describeOvertimeBase, formatINR, MONTH_NAMES, POLICY_KIND_LABELS, upgradeLeaveRules } from '@ajpwer/shared';
+import { addDays, BUILT_IN_ATTENDANCE_TEXT, CONFIGURABLE_POLICY_KINDS as POLICY_KINDS, describeOvertimeBase, describeOvertimeRate, formatINR, MONTH_NAMES, POLICY_KIND_LABELS, upgradeLeaveRules } from '@ajpwer/shared';
 import { api, ApiError, errorMessage } from '@/services/api';
 import { useSession } from '@/context/SessionContext';
 import { PageHeader } from '@/components/bits';
@@ -14,7 +14,7 @@ import { Field, Input } from '@/components/ui/form';
 import { Dialog, Tooltip } from '@/components/ui/overlay';
 import { DEFAULT_RULES, PolicyForm, WorkedExample } from '../../components/setup/PolicyForm';
 
-function summary(p) {
+function summary(p, full = false) {
   const r = p.rules; // eslint-disable-line @typescript-eslint/no-explicit-any
   switch (p.kind) {
     case 'ATTENDANCE':
@@ -22,7 +22,7 @@ function summary(p) {
         ? `${r.standard_min / 60}h day, half from ${r.half_day_min / 60}h, ${r.grace_min} min grace`
         : `${r.standard_min / 60}h day, half day up to ${r.half_day_upto_min / 60}h, ${r.grace_min} min grace`;
     case 'OVERTIME':
-      return `${r.multiplier}× on ${describeOvertimeBase(r)}, from shift end, after ${r.after_min} min, cap ${r.monthly_cap_min != null ? `${r.monthly_cap_min / 60}h` : 'none'}`;
+      return `${r.gross_bands?.length ? full ? describeOvertimeRate(r) : `${r.gross_bands.map((x) => `${x.multiplier}×`).join(' / ')} by salary band` : `${r.multiplier}×`} on ${describeOvertimeBase(r)}, after ${r.after_min} min, cap ${r.daily_cap_min != null ? `${r.daily_cap_min / 60}h a day, ` : ''}${r.monthly_cap_min != null ? `${r.monthly_cap_min / 60}h a month` : 'none a month'}`;
     case 'WEEKOFF_PAY':
     case 'HOLIDAY_PAY':
       return `${r.paid ? 'Paid' : 'Unpaid'}${r.sandwich ? ', sandwich' : ''}`;
@@ -286,7 +286,7 @@ function HistoryDialog({ policyKey, name, manage, onEdit, onDelete, onClose }) {
               <tr key={p.id} className="border-t align-top">
                 <td className="py-3 pr-3"><Chip>v{p.version}</Chip><span className="mt-1 block font-medium">{p.name}</span></td>
                 <td className="py-3 pr-3 num whitespace-nowrap">{p.valid_from}<span className="block text-muted-foreground">to {p.valid_to ?? 'Ongoing'}</span></td>
-                <td className="py-3 pr-3 whitespace-normal">{summary(p)}{p.protection_reason && <p className="mt-1 text-[12px] text-muted-foreground">{p.protection_reason}</p>}{!p.protection_reason && p.can_delete === false && p.deletion_reason && <p className="mt-1 text-[12px] text-muted-foreground">{p.deletion_reason}</p>}</td>
+                <td className="py-3 pr-3 whitespace-normal">{summary(p, true)}{p.protection_reason && <p className="mt-1 text-[12px] text-muted-foreground">{p.protection_reason}</p>}{!p.protection_reason && p.can_delete === false && p.deletion_reason && <p className="mt-1 text-[12px] text-muted-foreground">{p.deletion_reason}</p>}</td>
                 {manage && <td className="py-2 text-right"><span className="flex justify-end"><VersionActions policy={p} onEdit={() => onEdit(p, q.data)} onDelete={() => onDelete(p, q.data)} /></span></td>}
               </tr>
             ))}

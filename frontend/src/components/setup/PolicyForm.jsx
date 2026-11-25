@@ -5,6 +5,8 @@ import {
   GRATUITY_PART_YEAR_LABELS,
   GRATUITY_PART_YEARS,
   describeOvertimeBase,
+  describeOvertimeRate,
+  overtimeMultiplier,
   overtimeBaseMonthly,
   overtimeComponentKeys,
   OT_BASES,
@@ -13,15 +15,17 @@ import {
   OT_COMPONENT_LABELS,
   STATUTORY_GRATUITY_RULES,
 } from '@ajpwer/shared';
+import { Plus, Trash2 } from 'lucide-react';
 import { toPaise, toRupeesInput } from '@/utils';
+import { Button } from '@/components/ui/button';
 import { Notice } from '@/components/states';
-import { Field, Input, Select } from '@/components/ui/form';
+import { Field, Input, MoneyInput, Select } from '@/components/ui/form';
 import { Switch } from '@/components/ui/overlay';
 import { LeaveExample, LeaveRulesForm } from './LeaveRulesForm';
 
 export const DEFAULT_RULES = {
   ATTENDANCE: { standard_min: 540, half_day_min: 0, half_day_upto_min: 240, grace_min: 15 },
-  OVERTIME: { multiplier: 2, base: 'COMPONENTS', components: ['basic', 'hra'], divisor: null, hours_per_day: 8, after_min: 30, rounding_min: 30, monthly_cap_min: 3000, counts_from: 'SHIFT_END' },
+  OVERTIME: { multiplier: 2, base: 'COMPONENTS', components: ['basic', 'hra'], divisor: null, hours_per_day: 8, after_min: 30, rounding_min: 30, monthly_cap_min: 3000, daily_cap_min: null, gross_bands: [], counts_from: 'SHIFT_END' },
   WEEKOFF_PAY: { paid: true, sandwich: false },
   HOLIDAY_PAY: { paid: true, sandwich: false },
   HOLIDAY_WORK: { holiday: { mode: 'PAY', rate_pct: 200, base: 'GROSS', min_minutes: 240 }, weekly_off: { mode: 'PAY', rate_pct: 200, base: 'GROSS', min_minutes: 240 } },
@@ -41,6 +45,111 @@ function HoursInput({ value, onChange, label }) {
     <Field label={label} hint={formatMinutes(value)}>
       {(id) => <Input id={id} type="number" min={0} value={value} onChange={(e) => onChange(num(e.target.value))} />}
     </Field>
+  );
+}
+
+/**
+ * Overtime multiplier by monthly gross, like PT slabs: each band covers gross up to its limit;
+ * the last covers everyone above. No bands: one multiplier for everyone.
+ */
+function GrossBands({ rules, set }) {
+  const bands = rules.gross_bands ?? [];
+  const put = (next) => set({ gross_bands: next.map((b, i) => (i === next.length - 1 ? { ...b, upto_gross: null } : b)) });
+  const errors = [];
+  bands.slice(0, -1).forEach((b, i) => {
+    if (!b.upto_gross) errors.push(`Band ${i + 1} needs a gross limit.`);
+    else if (i > 0 && bands[i - 1].upto_gross && b.upto_gross <= bands[i - 1].upto_gross) errors.push(`Band ${i + 1} must go higher than band ${i}.`);
+  });
+  return (
+    <fieldset className="rounded-md border p-3 sm:col-span-3">
+      <legend className="px-1 text-[13px] font-medium">Multiplier by salary (monthly gross)</legend>
+      {!bands.length ? (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-[13px] text-muted-foreground">No salary bands: {rules.multiplier}× for everyone.</p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => set({ gross_bands: [{ upto_gross: 2000000, multiplier: rules.multiplier || 2 }, { upto_gross: null, multiplier: 1.5 }] })}
+          >
+            <Plus /> Set by salary bands
+          </Button>
+        </div>
+      ) : (
+        <>
+          <table className="w-full text-[14px]">
+            <thead>
+              <tr className="text-left text-[12px] text-muted-foreground">
+                <th className="pb-1 font-medium">Monthly gross</th>
+                <th className="pb-1 font-medium">Up to</th>
+                <th className="pb-1 font-medium">Multiplier</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {bands.map((b, i) => {
+                const last = i === bands.length - 1;
+                const prev = bands[i - 1];
+                return (
+                  <tr key={i} className="align-middle">
+                    <td className="py-1 pr-3 whitespace-nowrap text-muted-foreground">
+                      {i === 0 ? (last ? 'Everyone' : 'From ₹0') : prev?.upto_gross ? `From ${formatINR(prev.upto_gross + 100)}` : 'From …'}
+                    </td>
+                    <td className="py-1 pr-3">
+                      {last ? (
+                        <span className="text-muted-foreground">and above</span>
+                      ) : (
+                        <MoneyInput
+                          aria-label={`Band ${i + 1} gross up to`}
+                          className="w-36"
+                          value={b.upto_gross ? toRupeesInput(b.upto_gross) : ''}
+                          onChange={(e) => put(bands.map((x, j) => (j === i ? { ...x, upto_gross: e.target.value ? toPaise(e.target.value) : 0 } : x)))}
+                        />
+                      )}
+                    </td>
+                    <td className="py-1 pr-3">
+                      <div className="flex items-center gap-1">
+                        <Input
+                          aria-label={`Band ${i + 1} multiplier`}
+                          type="number"
+                          step="0.25"
+                          min={1}
+                          max={5}
+                          className="w-24 num"
+                          value={b.multiplier}
+                          onChange={(e) => put(bands.map((x, j) => (j === i ? { ...x, multiplier: num(e.target.value) } : x)))}
+                        />
+                        <span className="text-muted-foreground">×</span>
+                      </div>
+                    </td>
+                    <td className="py-1 text-right">
+                      <Button size="icon" variant="ghost" aria-label={`Remove band ${i + 1}`} onClick={() => put(bands.filter((_, j) => j !== i))}>
+                        <Trash2 />
+                      </Button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {errors.map((m) => (
+            <p key={m} className="mt-1 text-[13px] text-destructive" role="alert">{m}</p>
+          ))}
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const top = bands.at(-2)?.upto_gross ?? 0;
+                put([...bands.slice(0, -1), { upto_gross: top + 2000000, multiplier: bands.at(-1).multiplier }, bands.at(-1)]);
+              }}
+            >
+              <Plus /> Add band
+            </Button>
+            <p className="text-[13px] text-muted-foreground">Remove every band to use one multiplier for everyone.</p>
+          </div>
+        </>
+      )}
+    </fieldset>
   );
 }
 
@@ -67,9 +176,14 @@ export function PolicyForm({ kind, rules, onChange }) {
     }
     case 'OVERTIME': {
       const selected = overtimeComponentKeys(rules);
+      const banded = (rules.gross_bands ?? []).length > 0;
       return (
         <div className="grid gap-3 sm:grid-cols-3">
-          <Field label="Multiplier">{(id) => <Input id={id} type="number" step="0.25" min={1} value={rules.multiplier} onChange={(e) => set({ multiplier: num(e.target.value) })} />}</Field>
+          {banded ? (
+            <Field label="Multiplier" hint="Set by the salary bands below">{(id) => <Input id={id} value="By salary band" disabled />}</Field>
+          ) : (
+            <Field label="Multiplier" hint="Same for everyone. Add salary bands to vary it.">{(id) => <Input id={id} type="number" step="0.25" min={1} value={rules.multiplier} onChange={(e) => set({ multiplier: num(e.target.value) })} />}</Field>
+          )}
           <Field label="Worked out on">
             {(id) => (
               <Select id={id} value={rules.base === 'GROSS' ? 'GROSS' : 'COMPONENTS'} onChange={(e) => set(e.target.value === 'GROSS' ? { base: 'GROSS', components: undefined } : { base: 'COMPONENTS', components: selected.length ? selected : ['basic'] })}>
@@ -86,7 +200,10 @@ export function PolicyForm({ kind, rules, onChange }) {
             {(id) => <Input id={id} type="number" min={0} value={rules.after_min} onChange={(e) => set({ after_min: num(e.target.value) })} />}
           </Field>
           <Field label="Round down to (minutes)">{(id) => <Input id={id} type="number" min={1} value={rules.rounding_min} onChange={(e) => set({ rounding_min: num(e.target.value) })} />}</Field>
-          <Field label="Monthly cap (minutes)" hint={rules.monthly_cap_min != null ? formatMinutes(rules.monthly_cap_min) : 'No cap'}>
+          <Field label="Daily cap (minutes)" hint={rules.daily_cap_min != null ? `${formatMinutes(rules.daily_cap_min)} a day at most` : 'Blank: no daily cap'}>
+            {(id) => <Input id={id} type="number" min={0} max={1440} value={rules.daily_cap_min ?? ''} onChange={(e) => set({ daily_cap_min: e.target.value ? num(e.target.value) : null })} />}
+          </Field>
+          <Field label="Monthly cap (minutes)" hint={rules.monthly_cap_min != null ? `${formatMinutes(rules.monthly_cap_min)} a month at most` : 'Blank: no monthly cap'}>
             {(id) => <Input id={id} type="number" min={0} value={rules.monthly_cap_min ?? ''} onChange={(e) => set({ monthly_cap_min: e.target.value ? num(e.target.value) : null })} />}
           </Field>
           {rules.base !== 'GROSS' && (
@@ -104,6 +221,7 @@ export function PolicyForm({ kind, rules, onChange }) {
               {!selected.length && <p className="mt-2 text-[13px] text-destructive" role="alert">Select at least one salary component.</p>}
             </fieldset>
           )}
+          <GrossBands rules={rules} set={set} />
           <p className="sm:col-span-3 text-[13px] text-muted-foreground">
             When overtime starts is built in: at the shift end, or for a late arrival once the shift less 15 minutes is done. This policy sets how it is paid.
           </p>
@@ -231,13 +349,16 @@ export function WorkedExample({ kind, rules, s }) {
     const div = rules.divisor ?? s.divisor;
     const hourly = base / (div * rules.hours_per_day);
     const paidMinutes = Math.min(600, rules.monthly_cap_min ?? 600);
-    const ten = hourly * (paidMinutes / 60) * rules.multiplier;
+    const mult = overtimeMultiplier(rules, s.gross);
+    const ten = hourly * (paidMinutes / 60) * mult;
     body = (
       <>
         On a {formatINR(s.gross)} worker, {describeOvertimeBase(rules)} is {formatINR(base)}, so an hour is {formatINR(base)} ÷ ({div} × {rules.hours_per_day}) ={' '}
-        <strong>{r2(hourly)}</strong>; ten hours of overtime at {rules.multiplier}× pays <strong>{formatINR(Math.round(ten))}</strong>.
+        <strong>{r2(hourly)}</strong>; ten hours of overtime at {mult}×{rules.gross_bands?.length ? ' (the band for this gross)' : ''} pays <strong>{formatINR(Math.round(ten))}</strong>.
+        {rules.gross_bands?.length ? ` Multipliers by gross: ${describeOvertimeRate(rules)}.` : ''}
         {' It starts at the shift end, or for a late arrival once the shift less 15 minutes is done (built in).'}
         {rules.after_min > 0 && ` Extra time under ${rules.after_min} minutes earns nothing; above it, time is rounded down to ${rules.rounding_min}-minute steps.`}
+        {rules.daily_cap_min != null ? ` At most ${formatMinutes(rules.daily_cap_min)} counts in one day; HR sees any time above it.` : ''}
         {rules.monthly_cap_min != null ? ` Anything above ${formatMinutes(rules.monthly_cap_min)} a month is unpaid and reported on the payslip.` : ''}
       </>
     );

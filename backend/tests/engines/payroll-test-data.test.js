@@ -115,7 +115,7 @@ describe('requested test overtime configuration', () => {
     const source = overtimeRules();
     const before = structuredClone(source);
     expect(payrollTestOvertimeRules(source)).toEqual({ base: 'BASIC', multiplier: 2, divisor: null,
-      hours_per_day: 9, after_min: 40, rounding_min: 15, monthly_cap_min: 3120, counts_from: 'SHIFT_END' });
+      hours_per_day: 9, after_min: 40, rounding_min: 15, monthly_cap_min: 3120, daily_cap_min: null, gross_bands: [], counts_from: 'SHIFT_END' });
     expect(source).toEqual(before);
   });
 

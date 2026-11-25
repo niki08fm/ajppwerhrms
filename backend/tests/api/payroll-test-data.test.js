@@ -168,7 +168,7 @@ describe('development payroll test-data replacement', () => {
     expect(configured.policies.some((link) => link.policy.kind === 'LEAVE')).toBe(false);
     expect(configured.policies.find((link) => link.policy.kind === 'OVERTIME').policy.rules).toEqual({
       base: 'BASIC', multiplier: 2, divisor: null, hours_per_day: 9, after_min: 30,
-      rounding_min: 15, monthly_cap_min: 3000, counts_from: 'SHIFT_END' });
+      rounding_min: 15, monthly_cap_min: 3000, daily_cap_min: null, gross_bands: [], counts_from: 'SHIFT_END' });
     expect(await prisma.auditLog.findUnique({ where: { id: old.preservedAudit.id } })).toEqual(old.preservedAudit);
     expect(await prisma.auditLog.count({ where: { action: 'employee.update' } })).toBe(0);
     const audit = await prisma.auditLog.findFirstOrThrow({ where: { action: 'employee.test_data.replace' } });

@@ -190,6 +190,7 @@ export const ISSUE_LABELS = {
   MANY_ABSENCES: 'Many absences',
   CTC_ESI_BAND: 'CTC in the ESI band',
   OT_OVER_CAP: 'Overtime over the monthly cap',
+  OT_DAILY_CAP: 'Overtime over the daily cap',
   NO_POLICY: 'No attendance policy on some days',
   HELD_NOT_PAID: 'Released held salary not paid',
   NO_FORM_12B: 'No previous-employer figures',
@@ -257,6 +258,7 @@ export async function computeIssues(db, ym) {
     if (p.result.flags.includes('TDS_CAPPED')) add(e, 'TDS_CAPPED', 'WARNING', `This month's pay covers only ₹${Math.round((tds.regular + tds.incremental) / 100).toLocaleString('en-IN')} of the ₹${Math.round(tds.due_this_month / 100).toLocaleString('en-IN')} TDS due. ${tds.months_left > 1 ? 'The rest is collected over the months left.' : 'The rest stays unpaid: the employee pays it with their return.'}`, 'salary');
     if (tds.months_left === 1 && overBy > 100000) add(e, 'TDS_OVER', 'WARNING', `TDS this tax year is ₹${Math.round(overBy / 100).toLocaleString('en-IN')} more than the tax owed. Payroll does not refund it; the employee claims it in their return.`, 'salary');
     if (p.result.flags.includes('OT_OVER_CAP')) add(e, 'OT_OVER_CAP', 'WARNING', `${Math.round((p.result.ot?.excess_min ?? 0) / 60)} hours of overtime above the cap are unpaid.`, 'attendance');
+    if ((p.result.ot?.daily_capped_min ?? 0) > 0) add(e, 'OT_DAILY_CAP', 'WARNING', `${Math.round(p.result.ot.daily_capped_min / 6) / 10} hours of overtime above the daily cap were not counted.`, 'attendance');
     if (p.salary.mode === 'CTC' && e.statutory?.esi_enabled && ctxForBand) {
       const components = await structureComponents(db, p.salary.structure_id);
       const ctx = ctxForBand;

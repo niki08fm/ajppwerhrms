@@ -34,6 +34,42 @@ export function overtimeBaseMonthly(rules, salary) {
   return [...new Set(overtimeComponentKeys(rules))].reduce((sum, key) => sum + (salary[key] ?? 0), 0);
 }
 
+/**
+ * Overtime gross bands: the multiplier by monthly gross, like professional tax slabs. Each band
+ * covers gross up to `upto_gross` (paise, inclusive); the last band has no upper limit (null).
+ * No bands: `multiplier` applies to everyone. The gross is the full monthly gross of the
+ * person's salary, before loss of pay.
+ */
+export function overtimeMultiplier(rules, monthlyGross) {
+  const bands = rules?.gross_bands ?? [];
+  if (!bands.length) return rules.multiplier;
+  const band = bands.find((b) => b.upto_gross === null || monthlyGross <= b.upto_gross) ?? bands.at(-1);
+  return band.multiplier;
+}
+
+const rupees = (paise) => `₹${Math.round(paise / 100).toLocaleString('en-IN')}`;
+
+/** "2×" or "2× up to ₹20,000 gross · 1.5× ₹20,001 – ₹50,000 · 1× above". */
+export function describeOvertimeRate(rules) {
+  const bands = rules?.gross_bands ?? [];
+  if (!bands.length) return `${rules.multiplier}×`;
+  return bands
+    .map((b, i) => {
+      const prev = bands[i - 1];
+      const range = b.upto_gross === null ? (prev ? `above ${rupees(prev.upto_gross)}` : 'everyone') : prev ? `${rupees(prev.upto_gross + 100)} – ${rupees(b.upto_gross)}` : `up to ${rupees(b.upto_gross)}`;
+      return `${b.multiplier}× ${range}${i === 0 ? ' gross' : ''}`;
+    })
+    .join(' · ');
+}
+
+const otBandSchema = z
+  .object({
+    /** Inclusive upper limit of monthly gross in paise; null on the last band. */
+    upto_gross: z.number().int().min(100).nullable(),
+    multiplier: z.number().min(1).max(5),
+  })
+  .strict();
+
 /** Where overtime starts counting. */
 export const OT_COUNTS_FROM = ['STANDARD_DAY', 'SHIFT_END'];
 export const OT_COUNTS_FROM_LABELS = {
@@ -92,6 +128,16 @@ export const overtimeRulesSchema = z
     rounding_min: z.number().int().min(1).max(240),
     /** null = no cap */
     monthly_cap_min: z.number().int().min(0).nullable(),
+    /** Overtime counted in one day at most; null = no daily cap. */
+    daily_cap_min: z
+      .number()
+      .int()
+      .min(0)
+      .max(24 * 60)
+      .nullable()
+      .default(null),
+    /** Multiplier by monthly gross; empty = `multiplier` for everyone. */
+    gross_bands: z.array(otBandSchema).max(10).default([]),
     /**
      * STANDARD_DAY: minutes worked beyond the standard day. SHIFT_END: minutes worked after
      * the shift ends — after a late arrival, once the standard day is done from arrival.
@@ -108,6 +154,21 @@ export const overtimeRulesSchema = z
     }
     if (r.base !== 'COMPONENTS' && r.components !== undefined) {
       ctx.addIssue({ code: 'custom', path: ['components'], message: 'Salary components apply only to a component-based overtime rule' });
+    }
+    const bands = r.gross_bands ?? [];
+    if (bands.length) {
+      if (bands.at(-1).upto_gross !== null) {
+        ctx.addIssue({ code: 'custom', path: ['gross_bands'], message: 'Leave the last gross band without an upper limit, so it covers everyone above' });
+      }
+      bands.slice(0, -1).forEach((b, i) => {
+        if (b.upto_gross === null) ctx.addIssue({ code: 'custom', path: ['gross_bands', i, 'upto_gross'], message: 'Every gross band but the last needs an upper limit' });
+        else if (i > 0 && bands[i - 1].upto_gross !== null && b.upto_gross <= bands[i - 1].upto_gross) {
+          ctx.addIssue({ code: 'custom', path: ['gross_bands', i, 'upto_gross'], message: 'Each gross band must go higher than the one before' });
+        }
+      });
+    }
+    if (r.daily_cap_min !== null && r.daily_cap_min !== undefined && r.monthly_cap_min !== null && r.daily_cap_min > r.monthly_cap_min) {
+      ctx.addIssue({ code: 'custom', path: ['daily_cap_min'], message: 'The daily cap cannot be more than the monthly cap' });
     }
   });
 

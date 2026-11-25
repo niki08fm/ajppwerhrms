@@ -21,7 +21,7 @@ export default function Overtime() {
     { id: 'dept', header: 'Department', cell: (r) => r.employee.department.name },
     { id: 'hours', header: 'Hours', align: 'right', cell: (r) => mins(r.ot_min) },
     { id: 'rate', header: 'Hourly rate', align: 'right', cell: (r) => (r.hourly ? <Money value={r.hourly} paise /> : '—') },
-    { id: 'mult', header: 'Multiplier and base', cell: (r) => (r.multiplier ? `${r.multiplier}× on ${describeOvertimeBase(r)}` : <span className="text-muted-foreground">No overtime policy</span>) },
+    { id: 'mult', header: 'Multiplier and base', cell: (r) => (r.multiplier ? `${r.multiplier}×${r.banded ? ' (by gross)' : ''} on ${describeOvertimeBase(r)}` : <span className="text-muted-foreground">No overtime policy</span>) },
     { id: 'pol', header: 'Policy', cell: (r) => (r.policy ? `${r.policy.name} v${r.policy.version}` : '—') },
     { id: 'amt', header: 'Overtime pay', align: 'right', cell: (r) => <Money value={r.amount} /> },
     {

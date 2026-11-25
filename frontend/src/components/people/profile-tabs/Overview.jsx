@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { CALENDAR_METHOD_INFO, describeOvertimeBase, formatINR, formatMinutes, GRATUITY_PART_YEAR_LABELS, MONTH_NAMES, OT_BASE_LABELS } from '@ajpwer/shared';
+import { CALENDAR_METHOD_INFO, describeOvertimeBase, describeOvertimeRate, formatINR, formatMinutes, GRATUITY_PART_YEAR_LABELS, MONTH_NAMES, OT_BASE_LABELS } from '@ajpwer/shared';
 import { leaveTypeSummary } from '../../setup/LeaveRulesForm';
 import { api, ApiError, errorMessage } from '@/services/api';
 import { useLookups } from '@/hooks/useLookups';
@@ -24,7 +24,7 @@ function describePolicy(kind, r) {
         ? `${formatMinutes(r.standard_min)} day, half day from ${formatMinutes(r.half_day_min)}, ${r.grace_min} min grace`
         : `${formatMinutes(r.standard_min)} day, half day up to ${formatMinutes(r.half_day_upto_min)}, ${r.grace_min} min grace`;
     case 'OVERTIME':
-      return `${r.multiplier}× on ${describeOvertimeBase(r)}, from shift end, after ${r.after_min} min, rounded down to ${r.rounding_min} min${r.monthly_cap_min ? `, cap ${formatMinutes(r.monthly_cap_min)} a month` : ''}`;
+      return `${describeOvertimeRate(r)} on ${describeOvertimeBase(r)}, from shift end, after ${r.after_min} min, rounded down to ${r.rounding_min} min${r.daily_cap_min ? `, cap ${formatMinutes(r.daily_cap_min)} a day` : ''}${r.monthly_cap_min ? `, cap ${formatMinutes(r.monthly_cap_min)} a month` : ''}`;
     case 'WEEKOFF_PAY':
     case 'HOLIDAY_PAY':
       return `${r.paid ? 'Paid' : 'Unpaid'}${r.paid && r.sandwich ? ', sandwich rule on' : ''}`;

@@ -124,7 +124,7 @@ export async function dayRegister(db, date, employeeIds, today, opts = {}) {
         grace_min: att.grace_min,
         standard_min: att.standard_min,
         half_day_upto_min: att.half_day_upto_min ?? null,
-        ot: policies.overtime ? { after_min: policies.overtime.after_min, rounding_min: policies.overtime.rounding_min } : null,
+        ot: policies.overtime ? { after_min: policies.overtime.after_min, rounding_min: policies.overtime.rounding_min, daily_cap_min: policies.overtime.daily_cap_min ?? null } : null,
         off_day_paid: !!(isHoliday ? policies.holiday_pay?.paid : policies.weekoff_pay?.paid),
       },
     });

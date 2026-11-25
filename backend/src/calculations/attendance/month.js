@@ -143,6 +143,7 @@ export function computeMonth(input) {
       late_days: count((d) => d.late_min > 0 && working(d)),
       early_out_days: count((d) => d.early_min > 0 && working(d)),
       ot_min: days.reduce((s, d) => s + (isOffStatus(d.status) ? 0 : d.ot_min), 0),
+      ot_capped_min: days.reduce((s, d) => s + (isOffStatus(d.status) ? 0 : d.ot_capped_min ?? 0), 0),
       worked_min: days.reduce((s, d) => s + d.worked_min, 0),
       day_value_sum,
       paid_days,
