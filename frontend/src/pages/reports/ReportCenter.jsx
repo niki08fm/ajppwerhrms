@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react';
+import * as Pop from '@radix-ui/react-popover';
+import { Command } from 'cmdk';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { CalendarRange, Download, FileSpreadsheet, Search } from 'lucide-react';
+import { CalendarRange, Check, ChevronDown, Download, FileSpreadsheet, LayoutList, Search } from 'lucide-react';
 import { addMonths, COMPANIES, formatYearMonth, istDate, ymOf } from '@ajpwer/shared';
 import { api, download, errorMessage } from '@/services/api';
 import { useSession } from '@/context/SessionContext';
@@ -35,9 +37,62 @@ const PRESETS = [
 const GROUP_HELP = {
   Payroll: 'Pay added up over the months',
   Statutory: 'PF, ESI, PT and TDS for the period',
-  People: 'Who joined, left and worked overtime',
+  People: 'Joiners, exits, overtime and salary revisions',
   Analysis: 'Departments, settlements and one-offs',
 };
+
+/** The report chooser: a dropdown with a search box, reports grouped. */
+function ReportPicker({ groups, value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const current = groups.flatMap(([, items]) => items).find((x) => x.key === value);
+  return (
+    <Pop.Root open={open} onOpenChange={setOpen}>
+      <Pop.Trigger asChild>
+        <button
+          aria-label={`Report: ${current?.label ?? 'choose'}`}
+          className="flex h-10 w-full items-center gap-2 rounded-md border bg-card px-3 text-left shadow-xs hover:border-primary/40 sm:w-80"
+        >
+          <LayoutList className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+          <span className="text-[13px] text-muted-foreground">Report</span>
+          <span className="min-w-0 flex-1 truncate font-medium">{current?.label ?? 'Choose a report'}</span>
+          <ChevronDown className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+        </button>
+      </Pop.Trigger>
+      <Pop.Portal>
+        <Pop.Content align="start" sideOffset={6} className="z-50 w-[min(92vw,22rem)] overflow-hidden rounded-lg border bg-popover text-popover-foreground shadow-lg">
+          <Command label="Reports" loop>
+            <div className="flex items-center gap-2 border-b px-3">
+              <Search className="size-4 text-muted-foreground" aria-hidden />
+              <Command.Input autoFocus placeholder="Search reports…" className="h-10 w-full bg-transparent text-[14px] outline-none placeholder:text-muted-foreground" />
+            </div>
+            <Command.List className="max-h-[60vh] overflow-y-auto p-1">
+              <Command.Empty className="px-3 py-6 text-center text-[13px] text-muted-foreground">No report by that name.</Command.Empty>
+              {groups.map(([group, items]) => (
+                <Command.Group
+                  key={group}
+                  heading={<span className="flex flex-col"><span>{group}</span><span className="font-normal normal-case tracking-normal text-muted-foreground/80">{GROUP_HELP[group]}</span></span>}
+                  className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:tracking-wider [&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-group-heading]]:uppercase"
+                >
+                  {items.map((item) => (
+                    <Command.Item
+                      key={item.key}
+                      value={`${item.label} ${group}`}
+                      onSelect={() => { onChange(item.key); setOpen(false); }}
+                      className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-[14px] data-[selected=true]:bg-accent"
+                    >
+                      <Check className={cn('size-4 text-primary', item.key === value ? 'opacity-100' : 'opacity-0')} aria-hidden />
+                      {item.label}
+                    </Command.Item>
+                  ))}
+                </Command.Group>
+              ))}
+            </Command.List>
+          </Command>
+        </Pop.Content>
+      </Pop.Portal>
+    </Pop.Root>
+  );
+}
 
 export default function ReportCenter() {
   const { can } = useSession();
@@ -94,8 +149,15 @@ export default function ReportCenter() {
         description="Every payroll report for any run of months, added up: pay, statutory, joiners, exits and overtime. Figures come from each month's saved payroll."
       />
 
-      {/* Period */}
+      {/* Report, company and period */}
       <Card className="flex flex-col gap-3 p-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <ReportPicker groups={groups} value={report} onChange={(k) => set({ report: k })} />
+          <Select className="w-full sm:w-44" aria-label="Company" value={company} onChange={(e) => set({ company: e.target.value })}>
+            <option value="">Both companies</option>
+            {COMPANIES.map((c) => <option key={c.key} value={c.key}>{c.name}</option>)}
+          </Select>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <CalendarRange className="size-4 text-muted-foreground" aria-hidden />
           <span className="text-[13px] font-medium text-muted-foreground">Period</span>
@@ -119,43 +181,11 @@ export default function ReportCenter() {
               <Input type="month" aria-label="To month" className="w-44" value={customTo} min={customFrom} onChange={(e) => { setCustomTo(e.target.value); set({ to: e.target.value }); }} />
             </div>
           )}
-          <div className="flex-1" />
-          <Select className="w-44" aria-label="Company" value={company} onChange={(e) => set({ company: e.target.value })}>
-            <option value="">Both companies</option>
-            {COMPANIES.map((c) => <option key={c.key} value={c.key}>{c.name}</option>)}
-          </Select>
         </div>
         <Coverage from={from} to={to} valid={valid} coverage={rep?.coverage} />
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-[230px_minmax(0,1fr)]">
-        {/* Report list */}
-        <nav aria-label="Reports" className="hidden flex-col gap-4 lg:flex">
-          {groups.map(([group, items]) => (
-            <div key={group}>
-              <div className="px-2 text-[12px] font-semibold tracking-wider text-muted-foreground uppercase">{group}</div>
-              <div className="px-2 pb-1 text-[12px] text-muted-foreground/80">{GROUP_HELP[group]}</div>
-              <ul className="flex flex-col gap-0.5">
-                {items.map((item) => (
-                  <li key={item.key}>
-                    <button
-                      onClick={() => set({ report: item.key })}
-                      aria-current={report === item.key ? 'page' : undefined}
-                      className={cn('w-full rounded-md px-2.5 py-1.5 text-left text-[14px] transition-colors', report === item.key ? 'bg-primary/10 font-medium text-primary' : 'hover:bg-accent')}
-                    >
-                      {item.label}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </nav>
-        <Select className="lg:hidden" aria-label="Report" value={report} onChange={(e) => set({ report: e.target.value })}>
-          {groups.map(([group, items]) => <optgroup key={group} label={group}>{items.map((i) => <option key={i.key} value={i.key}>{i.label}</option>)}</optgroup>)}
-        </Select>
-
-        <div className="flex min-w-0 flex-col gap-3">
+      <div className="flex min-w-0 flex-col gap-3">
           <div className="flex flex-wrap items-end justify-between gap-2">
             <div>
               <h2 className="font-display text-xl font-semibold">{current?.label ?? 'Report'}</h2>
@@ -192,7 +222,6 @@ export default function ReportCenter() {
               <ReportTable rep={rep} q={q} />
             ) : null}
           </Card>
-        </div>
       </div>
     </div>
   );
@@ -235,6 +264,7 @@ function ReportTable({ rep, q }) {
           if (c.key === 'name' && row.employee_id) return <PersonLink id={row.employee_id} name={v} />;
           if (c.money) return <Money value={v} />;
           if (c.mono) return <Mono>{String(v ?? '')}</Mono>;
+          if (c.key.endsWith('_pct') && typeof v === 'number') return <span className="num">{v.toLocaleString('en-IN')}%</span>;
           return <span className={c.key === 'reason' ? 'whitespace-normal' : ''}>{typeof v === 'number' ? v.toLocaleString('en-IN') : String(v ?? '')}</span>;
         },
       })),

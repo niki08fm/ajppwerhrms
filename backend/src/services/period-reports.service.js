@@ -23,6 +23,7 @@ export const PERIOD_REPORTS = [
   { key: 'joiners', label: 'Joiners', group: 'People' },
   { key: 'exits', label: 'Exits', group: 'People' },
   { key: 'overtime', label: 'Overtime hours', group: 'People' },
+  { key: 'revisions', label: 'Salary revisions', group: 'People' },
   { key: 'department', label: 'By department', group: 'Analysis' },
   { key: 'settlements', label: 'Settlements', group: 'Analysis' },
   { key: 'adhoc', label: 'One-time adjustments', group: 'Analysis' },
@@ -146,6 +147,7 @@ export async function buildPeriodReport(db, from, to, key, opts = {}) {
 
   // People reports: from employee records, whether or not payroll ran.
   if (key === 'joiners' || key === 'exits') return { ...head, ...(await peopleReport(db, from, to, key, company)), notes: [] };
+  if (key === 'revisions') return { ...head, ...(await revisionsReport(db, from, to, company)), notes: ['Salary changes that take effect in the period. A joining salary is not a revision; restating an agreement with pay unchanged is left out.'] };
 
   if (!periods.length) return { ...head, columns: [], rows: [], notes: [note ?? 'No payroll has been run in this period.'], empty: true };
 
@@ -420,3 +422,73 @@ function byMonth(yms) {
   for (const ym of yms) counts.set(ym, (counts.get(ym) ?? 0) + 1);
   return [...counts].sort().map(([ym, count]) => ({ ym, month: formatYearMonth(ym), count }));
 }
+
+/**
+ * Salary revisions taking effect in the period: each salary record that replaces an earlier
+ * one, with the pay before and after. Restatements (pay unchanged) are left out.
+ */
+async function revisionsReport(db, from, to, company) {
+  const range = { gte: toDbDate(`${from}-01`), lte: toDbDate(lastOfMonth(to)) };
+  const changed = await db.employeeSalary.findMany({
+    where: { deleted_at: null, valid_from: range, employee: { deleted_at: null } },
+    include: { employee: { select: { id: true, code: true, name: true, designation: true, department: { select: { name: true } } } } },
+    orderBy: { valid_from: 'asc' },
+  });
+  const mine = company ? changed.filter((r) => companyOf(r.employee.code) === company.key) : changed;
+  const ids = [...new Set(mine.map((r) => r.employee_id))];
+  const history = ids.length ? await db.employeeSalary.findMany({ where: { employee_id: { in: ids }, deleted_at: null }, orderBy: { valid_from: 'asc' } }) : [];
+  const rows = [];
+  for (const r of mine) {
+    const own = history.filter((h) => h.employee_id === r.employee_id);
+    const prev = own.filter((h) => h.valid_from < r.valid_from).at(-1);
+    if (!prev) continue; // the joining salary
+    const before = n(prev.monthly_gross);
+    const after = n(r.monthly_gross);
+    if (before === after && /^Restated/i.test(r.reason)) continue;
+    const effective = fromDbDate(r.valid_from);
+    const annual = (x) => (x.mode === 'CTC' ? n(x.amount) : null);
+    rows.push({
+      employee_id: r.employee_id,
+      month: formatYearMonth(ymOf(effective)),
+      code: r.employee.code,
+      name: r.employee.name,
+      designation: r.employee.designation,
+      department: r.employee.department.name,
+      effective_from: effective,
+      old_gross: before,
+      new_gross: after,
+      increase: after - before,
+      increase_pct: before ? Math.round(((after - before) / before) * 10000) / 100 : null,
+      old_ctc: annual(prev) ?? 0,
+      new_ctc: annual(r) ?? 0,
+      reason: r.reason,
+    });
+  }
+  const pct = rows.filter((r) => r.increase_pct !== null);
+  return {
+    columns: [
+      { key: 'month', label: 'Month' },
+      { key: 'code', label: 'Code', mono: true },
+      { key: 'name', label: 'Name' },
+      { key: 'department', label: 'Department' },
+      { key: 'effective_from', label: 'Effective from' },
+      { key: 'old_gross', label: 'Gross before (month)', money: true },
+      { key: 'new_gross', label: 'Gross after (month)', money: true },
+      { key: 'increase', label: 'Change a month', money: true },
+      { key: 'increase_pct', label: 'Change %' },
+      { key: 'old_ctc', label: 'Annual CTC before', money: true },
+      { key: 'new_ctc', label: 'Annual CTC after', money: true },
+      { key: 'reason', label: 'Reason' },
+    ],
+    rows: rows.map((r) => ({ ...r, increase_pct: r.increase_pct ?? '' })),
+    totals: {
+      month: count(rows.length, 'revision'),
+      old_gross: rows.reduce((a, r) => a + r.old_gross, 0),
+      new_gross: rows.reduce((a, r) => a + r.new_gross, 0),
+      increase: rows.reduce((a, r) => a + r.increase, 0),
+      increase_pct: pct.length ? Math.round((pct.reduce((a, r) => a + r.increase_pct, 0) / pct.length) * 100) / 100 : '',
+    },
+    extra: { by_month: byMonth(rows.map((r) => ymOf(r.effective_from))), average_pct: pct.length ? Math.round((pct.reduce((a, r) => a + r.increase_pct, 0) / pct.length) * 100) / 100 : null },
+  };
+}
+

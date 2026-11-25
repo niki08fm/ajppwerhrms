@@ -24,7 +24,7 @@ const sum = (rows, k) => rows.reduce((a, r) => a + (r[k] ?? 0), 0);
 describe('Report center: reports over a period of months', () => {
   it('lists every report, grouped', async () => {
     const r = await f.agent.get('/api/v1/reports/period');
-    expect(r.body.data.map((x) => x.key)).toEqual(expect.arrayContaining(['summary', 'trend', 'payslips', 'register', 'bank', 'pf', 'esi', 'pt', 'tds', 'joiners', 'exits', 'overtime', 'department', 'settlements', 'adhoc']));
+    expect(r.body.data.map((x) => x.key)).toEqual(expect.arrayContaining(['summary', 'trend', 'payslips', 'register', 'bank', 'pf', 'esi', 'pt', 'tds', 'joiners', 'exits', 'overtime', 'revisions', 'department', 'settlements', 'adhoc']));
   });
 
   it('pay by employee adds up each person over the months, with how many months they were paid', async () => {
@@ -80,6 +80,19 @@ describe('Report center: reports over a period of months', () => {
     expect(exits.rows.find((r) => r.code === e.code)).toMatchObject({ last_day: '2026-09-30', reason: 'Resignation' });
     const ot = await period('overtime');
     expect(ot.columns.map((c) => c.key)).toEqual(['code', 'name', 'department', 'months', 'paid', 'per_month', 'over_cap', 'amount']);
+  });
+
+  it('salary revisions in the period: pay before and after, not joining salaries', async () => {
+    const before = (await prisma.employeeSalary.findFirstOrThrow({ where: { employee_id: f.employees.A, deleted_at: null }, orderBy: { valid_from: 'desc' } }));
+    const revise = await f.agent.post(`/api/v1/employees/${f.employees.A}/salary`).send({ mode: 'GROSS', amount: Number(before.monthly_gross) + 300000, valid_from: '2026-10-01', structure_id: before.structure_id, reason: 'Annual increment' });
+    expect(revise.status, JSON.stringify(revise.body)).toBe(201);
+    const r = await period('revisions', '2026-08', '2026-10');
+    const row = r.rows.find((x) => x.employee_id === f.employees.A);
+    expect(row).toMatchObject({ effective_from: '2026-10-01', old_gross: Number(before.monthly_gross), new_gross: Number(before.monthly_gross) + 300000, increase: 300000, reason: 'Annual increment', month: 'October 2026' });
+    expect(row.increase_pct).toBeGreaterThan(0);
+    // Joining salaries are not revisions.
+    expect(r.rows.every((x) => x.old_gross > 0)).toBe(true);
+    expect((await period('revisions', '2026-08', '2026-09')).rows.some((x) => x.employee_id === f.employees.A)).toBe(false);
   });
 
   it('refuses a backwards or too-long period, and exports CSV', async () => {
