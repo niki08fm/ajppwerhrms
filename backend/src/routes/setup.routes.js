@@ -17,6 +17,9 @@ setupRouter.delete('/structures/:id',requirePerm('setup.write'),removeRecord('st
 setupRouter.get('/structures/:id', requirePerm('setup.read'), setupController.getStructure);
 setupRouter.post('/structures/validate', requirePerm('setup.read'), setupController.validateStructureDraft);
 setupRouter.post('/structures', requirePerm('setup.write'), setupController.createStructure);
+setupRouter.post('/structures/:id/versions', requirePerm('setup.write'), setupController.publishStructureVersion);
+setupRouter.patch('/structure-versions/:versionId', requirePerm('setup.write'), setupController.editStructureVersion);
+setupRouter.delete('/structure-versions/:versionId', requirePerm('setup.write'), setupController.deleteStructureVersion);
 setupRouter.get('/pay-groups', requirePerm('setup.read'), setupController.listPayGroups);
 setupRouter.get('/pay-groups/:id/deletion',requirePerm('setup.read','setup.write'),previewDeletion('group'));
 setupRouter.delete('/pay-groups/:id',requirePerm('setup.write'),removeRecord('group'));

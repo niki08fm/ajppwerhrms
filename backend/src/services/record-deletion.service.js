@@ -23,8 +23,21 @@ const member = {
   code: true,
   status: true
 };
+/** Every row of a structure's lineage: all its versions, deleted ones included. */
+async function structureLineageIds(db, id) {
+  const lineage = (await db.salaryStructure.findFirst({ where: { id }, select: { lineage_id: true } }))?.lineage_id;
+  if (!lineage) return [id];
+  return (await db.salaryStructure.findMany({ where: { lineage_id: lineage }, select: { id: true } })).map(r => r.id);
+}
 async function target(db, kind, id) {
   z.string().uuid().parse(id);
+  if (kind === 'structure') {
+    // A structure is its lineage: found while any version is live.
+    const ids = await structureLineageIds(db, id);
+    const live = await db.salaryStructure.findFirst({ where: { id: { in: ids }, deleted_at: null }, orderBy: { version: 'desc' } });
+    if (!live) throw notFound('That salary structure');
+    return live;
+  }
   const row = await db[modelOf[kind]].findFirst({
     where: {
       id,
@@ -36,9 +49,10 @@ async function target(db, kind, id) {
 }
 export async function structureAssignments(db, id) {
   const date = toDbDate(istDate(new Date()));
+  const ids = await structureLineageIds(db, id);
   const salaries = await db.employeeSalary.findMany({
     where: {
-      structure_id: id,
+      structure_id: { in: ids },
       deleted_at: null,
       employee: {
         deleted_at: null,
@@ -96,7 +110,7 @@ export async function structureAssignments(db, id) {
     source: 'Current or future salary',
     effective_from: fromDbDate(s.valid_from)
   });
-  for (const o of offers.filter(o => o.structure_id === id)) if (!rows.has(o.employee.id)) rows.set(o.employee.id, {
+  for (const o of offers.filter(o => ids.includes(o.structure_id))) if (!rows.has(o.employee.id)) rows.set(o.employee.id, {
     ...o.employee,
     source: 'Latest open offer'
   });
@@ -227,7 +241,10 @@ export async function deleteNamedRecord(tx, kind, id, body, actor) {
     assigned_count: preview.assigned_count
   });
   const at = new Date();
-  await tx[modelOf[kind]].update({
+  if (kind === 'structure') {
+    // Deleting a structure removes every version of it.
+    await tx.salaryStructure.updateMany({ where: { id: { in: await structureLineageIds(tx, id) }, deleted_at: null }, data: { deleted_at: at } });
+  } else await tx[modelOf[kind]].update({
     where: {
       id
     },

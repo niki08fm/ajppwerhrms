@@ -103,9 +103,19 @@ export default function StructureBuilder() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const [sp] = useSearchParams();
-  const from = sp.get('from');
+  // Modes: a new structure; a copy of one (?from); a new version of one (?version_of);
+  // or a correction to one version (?edit=<version id>&of=<structure>).
+  const copyOf = sp.get('from');
+  const versionOf = sp.get('version_of');
+  const editId = sp.get('edit');
+  const mode = editId ? 'EDIT' : versionOf ? 'VERSION' : copyOf ? 'COPY' : 'NEW';
+  const from = copyOf || versionOf || sp.get('of');
   const src = useQuery({ queryKey: ['structure', from], queryFn: () => api.get(`/structures/${from}`).then((r) => r.data), enabled: !!from });
+  const editing = mode === 'EDIT' ? src.data?.versions.find((v) => v.id === editId) : null;
+  const editingIndex = editing ? src.data.versions.indexOf(editing) : -1;
   const [name, setName] = useState('');
+  // A version's first month, as YYYY-MM.
+  const [month, setMonth] = useState('');
   const [rows, setRows] = useState(DEFAULT_ROWS);
   const [special, setSpecial] = useState(DEFAULT_SPECIAL);
   // The sample the preview is worked out at: entered as a monthly gross or an annual CTC, with PF and ESI on or off.
@@ -119,9 +129,12 @@ export default function StructureBuilder() {
   useEffect(() => {
     const s = src.data;
     if (!s) return;
-    setName(`${s.name} (copy)`);
+    const version = mode === 'EDIT' ? s.versions.find((v) => v.id === editId) : mode === 'VERSION' ? s.versions.at(-1) : null;
+    const source = version?.components ?? s.components;
+    setName(mode === 'COPY' ? `${s.name} (copy)` : version?.name ?? s.name);
+    if (mode === 'EDIT' && version?.valid_from) setMonth(version.valid_from.slice(0, 7));
     setRows(
-      s.components
+      source
         .filter((c) => c.calc_type !== 'BALANCE')
         .map((c, i) => ({
           name: c.name,
@@ -137,9 +150,9 @@ export default function StructureBuilder() {
           colour: c.colour || colourFor(i),
         })),
     );
-    const bal = s.components.find((c) => c.calc_type === 'BALANCE' && c.frequency === 'MONTHLY');
+    const bal = source.find((c) => c.calc_type === 'BALANCE' && c.frequency === 'MONTHLY');
     setSpecial(bal ? { is_taxable: bal.is_taxable, counts_as_wages: bal.counts_as_wages, counts_as_esi_wages: bal.counts_as_esi_wages !== false } : DEFAULT_SPECIAL);
-  }, [src.data]);
+  }, [src.data, mode, editId]);
 
   const comps = [...rows.map(toComponent), specialComponent(special, rows.length + 1)];
   const previewArgs = { comps, sample: { mode: sampleMode, amount: toPaise(sample), pf_enabled: pfOn, ...(ptState ? { pt_state: ptState } : {}), ...(sampleChosen !== undefined ? { chosen_gross: sampleChosen } : {}) } };
@@ -154,9 +167,14 @@ export default function StructureBuilder() {
     retry: false,
   });
   const save = useMutation({
-    mutationFn: () => api.post('/structures', { name, components: comps, ...(from ? { duplicated_from: from } : {}) }),
+    mutationFn: () => {
+      if (mode === 'VERSION') return api.post(`/structures/${versionOf}/versions`, { name, valid_from: `${month}-01`, components: comps });
+      if (mode === 'EDIT') return api.patch(`/structure-versions/${editId}`, { name, components: comps, ...(editingIndex > 0 && month ? { valid_from: `${month}-01` } : {}) });
+      return api.post('/structures', { name, components: comps, ...(copyOf ? { duplicated_from: copyOf } : {}) });
+    },
     onSuccess: () => {
-      toast.success('Structure created');
+      toast.success(mode === 'VERSION' ? `Version published from ${month}-01. Earlier months keep the version they used.` : mode === 'EDIT' ? 'Version saved' : 'Structure created');
+      qc.invalidateQueries({ queryKey: ['structure', from] });
       qc.invalidateQueries({ queryKey: ['structures'] });
       qc.invalidateQueries({ queryKey: ['lookups'] });
       nav('/setup/structures');
@@ -184,14 +202,24 @@ export default function StructureBuilder() {
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
-        crumbs={[{ label: 'Salary structures', to: '/setup/structures' }, { label: from ? 'Duplicate and edit' : 'New structure' }]}
-        title={from ? 'Duplicate and edit' : 'New salary structure'}
+        crumbs={[{ label: 'Salary structures', to: '/setup/structures' }, { label: { COPY: 'Duplicate and edit', VERSION: 'New version', EDIT: 'Edit version', NEW: 'New structure' }[mode] }]}
+        title={
+          mode === 'VERSION' ? `New version of ${src.data?.name ?? 'structure'}`
+            : mode === 'EDIT' ? `Edit ${src.data?.name ?? 'structure'} v${editing?.version ?? ''}`
+              : mode === 'COPY' ? 'Duplicate and edit' : 'New salary structure'
+        }
         description={
-          from
-            ? 'A new structure built from a copy. The original is untouched, and so is everyone paid on it.'
-            : "Build it here, then choose it in the employee's Salary section when adding or revising their salary."
+          mode === 'VERSION'
+            ? `Applies to everyone on this structure from the month you choose. The current version ends the month before; earlier months keep the version they used.`
+            : mode === 'EDIT'
+              ? `Corrects version ${editing?.version ?? ''} for its dates (${editing?.valid_from ?? 'the start'} to ${editing?.valid_to ?? 'ongoing'}). Months already locked or paid on it cannot change.`
+              : mode === 'COPY'
+                ? 'A new structure built from a copy. The original is untouched, and so is everyone paid on it.'
+                : "Build it here, then choose it in the employee's Salary section when adding or revising their salary."
         }
       />
+      {mode === 'EDIT' && editing && !editing.can_edit && <Notice tone="warning">{editing.edit_reason}</Notice>}
+      {mode === 'EDIT' && src.data && !editing && <Notice tone="warning">That version no longer exists.</Notice>}
       <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_380px]">
         <div className="flex min-w-0 flex-col gap-4">
           <Card className="min-w-0">
@@ -200,9 +228,17 @@ export default function StructureBuilder() {
               description="For each one: its name, then percentage or fixed, then what the percentage is of. Basic is worked out first; whatever is left of gross is the Special Allowance."
             />
             <CardBody className="flex flex-col gap-3">
-              <Field label="Structure name" required hint="The effective date is chosen on the employee's salary revision. Each employee can have their own salary structure." className="max-w-xl">
-                {(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Site staff 2027" />}
-              </Field>
+              <div className="flex flex-wrap items-start gap-3">
+                <Field label="Structure name" required hint={mode === 'NEW' || mode === 'COPY' ? 'Later changes are published as new versions, each from a month you choose.' : undefined} className="w-full max-w-xl">
+                  {(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Site staff 2027" />}
+                </Field>
+                {(mode === 'VERSION' || (mode === 'EDIT' && editingIndex > 0)) && (
+                  <Field label="Effective from" required hint={mode === 'VERSION' ? `From the 1st of this month.${src.data?.versions.at(-1)?.valid_from ? ` After ${src.data.versions.at(-1).valid_from}.` : ''}` : 'From the 1st of this month, between the versions around it.'} className="w-56">
+                    {(id) => <Input id={id} type="month" value={month} onChange={(e) => setMonth(e.target.value)} />}
+                  </Field>
+                )}
+                {mode === 'EDIT' && editingIndex === 0 && <p className="mt-7 text-[13px] text-muted-foreground">The first version applies from the start.</p>}
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[960px] text-[14px]">
                   <thead className="text-left text-[13px] text-muted-foreground">
@@ -417,8 +453,8 @@ export default function StructureBuilder() {
                 <p className="text-[12px] text-muted-foreground">Income tax on the new regime with no declarations. PF restricted to the {formatINR(p.rates.pf.ceiling)} ceiling.</p>
               </div>
             )}
-            <Button size="lg" disabled={!name.trim() || blankNames || reservedName || !!p?.errors.length || preview.isError} loading={save.isPending} onClick={() => save.mutate()}>
-              Create structure
+            <Button size="lg" disabled={!name.trim() || blankNames || reservedName || !!p?.errors.length || preview.isError || (mode === 'VERSION' && !month) || (mode === 'EDIT' && editing && !editing.can_edit)} loading={save.isPending} onClick={() => save.mutate()}>
+              {{ VERSION: 'Publish version', EDIT: 'Save version', COPY: 'Create structure', NEW: 'Create structure' }[mode]}
             </Button>
           </CardBody>
         </Card>

@@ -4,6 +4,7 @@ import { fromDbDate, n, toDbDate } from '../utils/dbDates.js';
 import { scopedRead } from '../utils/read-scope.js';
 import { lockPolicyRulesRead } from './policy-history.service.js';
 import { clipToLink } from './assignment-dates.service.js';
+import { lineageIdOf, lineageVersions, versionOn } from './structure-versions.service.js';
 
 /** The statutory rates row valid on a date: latest valid_from ≤ date. */
 export function ratesOn(db, date) {
@@ -108,12 +109,25 @@ export function toComponentDefs(rows) {
     .sort((a, b) => a.seq - b.seq);
 }
 
-export function structureComponents(db, structureId) {
-  return scopedRead(db, `components:${structureId}`, () => readStructureComponents(db, structureId));
+/**
+ * The components of a salary structure on a date: the structure's version in force then
+ * (see structure-versions.service). Without a date, today's.
+ */
+export function structureComponents(db, structureId, date = undefined) {
+  const on = date ?? istDate(new Date());
+  return scopedRead(db, `components:${structureId}:${on}`, () => readStructureComponents(db, structureId, on));
 }
 
-async function readStructureComponents(db, structureId) {
-  const rows = await db.salaryComponent.findMany({ where: { structure_id: structureId, deleted_at: null }, orderBy: { seq: 'asc' } });
+/** The version row of a structure in force on a date. */
+export async function structureVersionOn(db, structureId, date) {
+  const lineage = await lineageIdOf(db, structureId);
+  if (!lineage) return null;
+  return versionOn(await lineageVersions(db, lineage), date);
+}
+
+async function readStructureComponents(db, structureId, date) {
+  const version = db.salaryStructure ? await structureVersionOn(db, structureId, date) : null;
+  const rows = await db.salaryComponent.findMany({ where: { structure_id: version?.id ?? structureId, deleted_at: null }, orderBy: { seq: 'asc' } });
   return toComponentDefs(rows);
 }
 

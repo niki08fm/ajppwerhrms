@@ -20,7 +20,7 @@ export async function computeSettlementFor(db, employeeId, opts = {}) {
   const ym = ymOf(lastDay);
   const salary = await salaryOn(db, e.id, lastDay);
   if (!salary) throw new AppError('VALIDATION', `${e.name} has no salary on their last day.`, 409);
-  const components = await structureComponents(db, salary.structure_id);
+  const components = await structureComponents(db, salary.structure_id, lastDay);
   const ctx = await payContext(db, ym);
   if (!e.statutory) throw new AppError('VALIDATION', `${e.name} (${e.code}) has no statutory setup.`, 409);
   const full = expandStructure(components, salary.monthly_gross, ctcBasisOf(salary, components, e.statutory, ctx.rates));

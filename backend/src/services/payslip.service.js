@@ -148,7 +148,8 @@ export async function loadRecoveries(db, employeeIds, ym) {
  */
 export async function computePayslip(db, e, ym, month, ctx, recoveries, inputs) {
   const salaryAt = inputs ? inputs.salaryOn : (id, date) => salaryOn(db, id, date);
-  const componentsFor = inputs ? inputs.components : id => structureComponents(db, id);
+  // The structure's version in force on the date the salary is read for.
+  const componentsFor = inputs ? inputs.components : (id, date) => structureComponents(db, id, date);
   if (!e.statutory) throw new AppError('VALIDATION', `${e.name} (${e.code}) has no statutory setup.`, 409);
   const monthEnd = lastOfMonth(ym);
   const lastDay = fromDbDate(e.last_day);
@@ -157,7 +158,7 @@ export async function computePayslip(db, e, ym, month, ctx, recoveries, inputs) 
   const salaryDate = lastDay && lastDay < monthEnd ? lastDay : monthEnd;
   const salary = await salaryAt(e.id, salaryDate < joined ? joined : salaryDate);
   if (!salary) throw new AppError('VALIDATION', `${e.name} (${e.code}) has no salary record for ${ym}.`, 409);
-  const components = await componentsFor(salary.structure_id);
+  const components = await componentsFor(salary.structure_id, salaryDate < joined ? joined : salaryDate);
 
   const rules = month.rules;
   const working = workingDaysInMonth(ym, rules.weekly_off, [...month.holidays.keys()]);
@@ -172,8 +173,7 @@ export async function computePayslip(db, e, ym, month, ctx, recoveries, inputs) 
   const eligibilityDate = maxDate(block.start, joined);
   const blockSalary = await salaryAt(e.id, eligibilityDate);
   const eligibilitySalary = blockSalary ?? salary;
-  const eligibilityComponents = eligibilitySalary.structure_id === salary.structure_id
-    ? components : await componentsFor(eligibilitySalary.structure_id);
+  const eligibilityComponents = await componentsFor(eligibilitySalary.structure_id, eligibilityDate);
   // A gross agreement with % of CTC earnings needs the rates at entry to
   // reconstruct those earnings. Later statutory rate changes must not move
   // its contribution-period eligibility; CTC agreements keep their saved basis.

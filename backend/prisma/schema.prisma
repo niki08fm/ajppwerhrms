@@ -488,8 +488,17 @@ model Policy {
 }
 
 /// Never edited in place. A structure referenced by a payslip is immutable.
+/// A salary structure is a lineage of versions. Each version is one row: it applies from
+/// `valid_from` (null on the first version: from the start) until the day before the next
+/// version starts, so versions never overlap. Employees point at the lineage (its first
+/// version's id); payroll uses the version in force on the date it calculates.
 model SalaryStructure {
   id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// The first version's id; shared by every version of this structure. Filled by a trigger when omitted (never null)
+  lineage_id      String?           @db.Uuid
+  version         Int               @default(1)
+  /// First day this version applies (the 1st of a month); null on the first version
+  valid_from      DateTime?         @db.Date
   name            String
   duplicated_from String?           @db.Uuid
   created_by      String?
@@ -500,6 +509,7 @@ model SalaryStructure {
   salaries        EmployeeSalary[]
   offers          Offer[]
 
+  @@index([lineage_id, version])
   @@map("salary_structure")
 }
 

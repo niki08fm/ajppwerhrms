@@ -8,7 +8,7 @@ import { ptSlabs, ratesOn, regimesOn, structureComponents } from './rules.servic
 
 export async function previewSalary(db, r) {
   await requireSalaryStructure(db, r.structure_id);
-  const [components, rates, slabs, regimes] = await Promise.all([structureComponents(db, r.structure_id), ratesOn(db, r.date), ptSlabs(db, r.date), regimesOn(db, r.date)]);
+  const [components, rates, slabs, regimes] = await Promise.all([structureComponents(db, r.structure_id, r.date), ratesOn(db, r.date), ptSlabs(db, r.date), regimesOn(db, r.date)]);
   if (components.length === 0) throw new AppError('VALIDATION', 'That salary structure has no components.', 422);
   return salaryPreview({
     mode: r.mode,
@@ -72,7 +72,8 @@ export async function resolveMonthlyGross(db, r) {
 
 async function requireSalaryStructure(db, id) {
   if (!id) throw new AppError('VALIDATION', 'Choose a salary structure for this employee.', 422, 'structure_id');
-  const structure = await db.salaryStructure.findFirst({ where: { id, deleted_at: null }, select: { id: true } });
+  const lineage = (await db.salaryStructure.findFirst({ where: { id }, select: { lineage_id: true } }))?.lineage_id;
+  const structure = lineage ? await db.salaryStructure.findFirst({ where: { lineage_id: lineage, deleted_at: null }, select: { id: true } }) : null;
   if (!structure) throw new AppError('NOT_FOUND', 'That salary structure was not found.', 404, 'structure_id');
 }
 

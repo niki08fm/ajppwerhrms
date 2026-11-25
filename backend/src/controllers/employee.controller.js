@@ -703,7 +703,7 @@ export const getTax = asyncHandler(async (req, res) => {
   const date = asOfDate(e, today());
   const cur = await salaryOn(prisma, e.id, date);
   if (!cur) return res.json({ data: null });
-  const [components, rates, regimes] = await Promise.all([structureComponents(prisma, cur.structure_id), ratesOn(prisma, date), regimesOn(prisma, date)]);
+  const [components, rates, regimes] = await Promise.all([structureComponents(prisma, cur.structure_id, date), ratesOn(prisma, date), regimesOn(prisma, date)]);
   const st = e.statutory;
   const s = expandStructure(components, cur.monthly_gross, ctcBasisOf(cur, components, st, rates));
   const taxable = s.monthly.filter((c) => c.is_taxable).reduce((a, c) => a + c.amount, 0) * 12 + s.yearly.filter((c) => c.is_taxable).reduce((a, c) => a + c.amount, 0);

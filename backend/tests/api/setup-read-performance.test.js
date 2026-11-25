@@ -35,7 +35,12 @@ describe('Batched setup list reads', () => {
     observed = null;
     expect(list.status, JSON.stringify(list.body)).toBe(200);
     expect(list.body.data).toHaveLength(3);
-    for (const row of list.body.data) expect(row).toEqual(expected.get(row.id));
+    // The detail also carries each version's components and edit/delete rules; the list keeps their dates.
+    const brief = ({ id, version, name, valid_from, valid_to, current }) => ({ id, version, name, valid_from, valid_to, current });
+    for (const row of list.body.data) {
+      const detail = expected.get(row.id);
+      expect(row).toEqual({ ...detail, versions: detail.versions.map(brief) });
+    }
     expect(list.body.data.find((row) => row.id === future.id)).toMatchObject({ immutable: true, people: 0 });
     expect(list.body.data.find((row) => row.id === unused.id)).toMatchObject({ immutable: false, people: 0 });
     const count = (model, action) => reads.filter((r) => r.model === model && r.action === action).length;

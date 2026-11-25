@@ -1,4 +1,5 @@
 import { salaryRecord, toComponentDefs } from './rules.service.js';
+import { versionOn, withWindows } from './structure-versions.service.js';
 
 /** Two reads for the whole roster instead of salary/component queries for every payslip. */
 export async function payrollSalaryInputs(db, employeeIds) {
@@ -24,10 +25,17 @@ export async function payrollSalaryInputs(db, employeeIds) {
     }
   }) : [];
   const structureIds = [...new Set(salaries.map(s => s.structure_id))];
-  const components = structureIds.length ? await db.salaryComponent.findMany({
+  // Each structure's versions: a salary uses the version in force on the date it is read for.
+  const pointed = structureIds.length ? await db.salaryStructure.findMany({ where: { id: { in: structureIds } }, select: { id: true, lineage_id: true } }) : [];
+  const lineageOf = new Map(pointed.map(r => [r.id, r.lineage_id]));
+  const lineages = [...new Set(pointed.map(r => r.lineage_id))];
+  const versionRows = lineages.length ? await db.salaryStructure.findMany({ where: { lineage_id: { in: lineages }, deleted_at: null } }) : [];
+  const versionsByLineage = new Map(lineages.map(id => [id, withWindows(versionRows.filter(r => r.lineage_id === id))]));
+  const versionIds = versionRows.map(r => r.id);
+  const components = versionIds.length ? await db.salaryComponent.findMany({
     where: {
       structure_id: {
-        in: structureIds
+        in: versionIds
       },
       deleted_at: null
     },
@@ -37,11 +45,14 @@ export async function payrollSalaryInputs(db, employeeIds) {
   }) : [];
   const byEmployee = new Map(employeeIds.map(id => [id, []]));
   for (const row of salaries) byEmployee.get(row.employee_id).push(salaryRecord(row));
-  const byStructure = new Map(structureIds.map(id => [id, []]));
-  for (const row of components) byStructure.get(row.structure_id).push(row);
-  const definitions = new Map([...byStructure].map(([id, rows]) => [id, toComponentDefs(rows)]));
+  const byVersion = new Map(versionIds.map(id => [id, []]));
+  for (const row of components) byVersion.get(row.structure_id).push(row);
+  const definitions = new Map([...byVersion].map(([id, rows]) => [id, toComponentDefs(rows)]));
   return {
     salaryOn: (id, date) => byEmployee.get(id)?.find(s => s.valid_from <= date && (!s.valid_to || s.valid_to >= date)) ?? null,
-    components: id => definitions.get(id) ?? []
+    components: (id, date) => {
+      const version = versionOn(versionsByLineage.get(lineageOf.get(id)) ?? [], date);
+      return definitions.get(version?.id ?? id) ?? [];
+    }
   };
 }

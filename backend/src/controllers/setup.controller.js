@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import {
   addDays,
   CALENDAR_METHODS,
+  formatYearMonth,
   holidaySchema,
   isoDate,
   istDate,
@@ -35,6 +36,7 @@ import { prisma } from '../config/db.js';
 import { holidaysBetween, ptSlabs, ratesOn, regimesOn, toAttachedPolicy, toComponentDefs } from '../services/rules.service.js';
 import { clipToLink, effectiveFrom, movePayGroup } from '../services/assignment-dates.service.js';
 import { flagRerun } from '../services/payroll-staleness.service.js';
+import { assertMonthStart, assertNoFrozenUse, frozenUseBetween, lineageIdOf, lineageVersions, versionOn, withWindows } from '../services/structure-versions.service.js';
 import { randomUUID } from 'node:crypto';
 import { addDepartment, changeDepartment, listDepartmentSettings, removeDepartment } from '../services/department.service.js';
 import { editPolicyVersion, lockPolicyRulesRead, policyHistoryProtection, publishPolicyVersion, removePolicyVersion } from '../services/policy-history.service.js';
@@ -173,26 +175,77 @@ async function sampleAt(components, sample, inputs = null) {
 
 const AT_SAMPLE_GROSS = { mode: 'GROSS', amount: SAMPLE_GROSS, pf_enabled: true, esi_enabled: true };
 
+const componentInclude = { components: { where: { deleted_at: null }, orderBy: { seq: 'asc' } } };
+
+/** Whether a version can be edited or deleted, and why not. */
+async function versionProtection(db, lineageId, versions, v) {
+  const i = versions.findIndex((x) => x.id === v.id);
+  const prev = versions[i - 1];
+  const next = versions[i + 1];
+  // Editing changes this version's whole window. Deleting hands it to the version before
+  // (or, for the first, to the next one, which then applies from the start).
+  const editFrozen = await frozenUseBetween(db, lineageId, v.valid_from, v.valid_to);
+  const deleteFrozen = versions.length === 1 ? null : editFrozen;
+  const frozenText = (ym) => `Payroll for ${formatYearMonth(ym)} is locked or paid on this version. Publish a new version from a later month instead.`;
+  return {
+    can_edit: !editFrozen,
+    edit_reason: editFrozen ? frozenText(editFrozen) : null,
+    can_delete: versions.length > 1 && !deleteFrozen,
+    delete_reason: versions.length === 1 ? 'The only version: delete the structure instead.' : deleteFrozen ? frozenText(deleteFrozen) : null,
+    /** Who takes over this version's dates when it is deleted. */
+    heir: versions.length === 1 ? null : prev ? { version: prev.version, extends_to: v.valid_to } : { version: next.version, from_start: true },
+  };
+}
+
+/**
+ * A structure as its lineage: the version in force today (shown, and used for the sample),
+ * every version with its dates, and who is on it.
+ */
 async function structureView(id, options = {}) {
-  const s = options.row ?? await prisma.salaryStructure.findFirst({
-    where: { id, deleted_at:null },
-    include: { components: { where: { deleted_at: null }, orderBy: { seq: 'asc' } } },
-  });
-  if(!s)throw notFound('That salary structure');
-  const components = toComponentDefs(s.components);
-  const d = toDbDate(today());
+  const lineage = options.lineage ?? (await lineageIdOf(prisma, id));
+  if (!lineage) throw notFound('That salary structure');
+  const versions = options.versions ?? (await lineageVersions(prisma, lineage, componentInclude));
+  if (!versions.length) throw notFound('That salary structure');
+  const date = today();
+  const current = versionOn(versions, date);
+  const latest = versions.at(-1);
+  const components = toComponentDefs(current.components);
+  const d = toDbDate(date);
+  const ids = options.ids ?? (await prisma.salaryStructure.findMany({ where: { lineage_id: lineage }, select: { id: true } })).map((r) => r.id);
   // Any payslip reference through a salary row already implies used=true.
   const [used, people, at] = await Promise.all([
-    options.used !== undefined ? options.used : prisma.employeeSalary.count({ where: { structure_id: id } }).then((n) => n > 0),
-    options.people !== undefined ? options.people : prisma.employeeSalary.count({ where: { structure_id: id, deleted_at: null, employee:{deleted_at:null,status:{not:'EXITED'}}, valid_from: { lte: d }, OR: [{ valid_to: null }, { valid_to: { gte: d } }] } }),
+    options.used !== undefined ? options.used : prisma.employeeSalary.count({ where: { structure_id: { in: ids } } }).then((c) => c > 0),
+    options.people !== undefined ? options.people : prisma.employeeSalary.count({ where: { structure_id: { in: ids }, deleted_at: null, employee:{deleted_at:null,status:{not:'EXITED'}}, valid_from: { lte: d }, OR: [{ valid_to: null }, { valid_to: { gte: d } }] } }),
     sampleAt(components, AT_SAMPLE_GROSS, options.inputs),
   ]);
   const sample = at.breakup.structure;
+  const withRules = options.withVersions
+    ? await Promise.all(versions.map(async (v) => ({
+      id: v.id,
+      version: v.version,
+      name: v.name,
+      valid_from: v.valid_from,
+      valid_to: v.valid_to,
+      current: v.id === current.id,
+      components: toComponentDefs(v.components),
+      created_at: v.created_at,
+      ...(await versionProtection(prisma, lineage, versions, v)),
+    })))
+    : versions.map((v) => ({ id: v.id, version: v.version, name: v.name, valid_from: v.valid_from, valid_to: v.valid_to, current: v.id === current.id }));
   return {
-    id: s.id,
-    name: s.name,
-    created_at: s.created_at,
-    duplicated_from: s.duplicated_from,
+    /** The structure's id: what salaries and offers point at. */
+    id: lineage,
+    name: latest.name,
+    created_at: versions[0].created_at,
+    duplicated_from: versions[0].duplicated_from,
+    /** The version in force today. */
+    version: current.version,
+    version_id: current.id,
+    valid_from: current.valid_from,
+    valid_to: current.valid_to,
+    /** A version starting after today, if one is published. */
+    upcoming: latest.id !== current.id ? { version: latest.version, valid_from: latest.valid_from } : null,
+    versions: withRules,
     components,
     /** People paid on this structure today */
     people,
@@ -209,22 +262,36 @@ async function structureView(id, options = {}) {
 }
 
 export const listStructures = asyncHandler(async (_req, res) => {
-  const rows = await prisma.salaryStructure.findMany({ where: { deleted_at: null }, orderBy: [{ name: 'asc' }, { created_at: 'desc' }], include: { components: { where: { deleted_at: null }, orderBy: { seq: 'asc' } } } });
+  const rows = await prisma.salaryStructure.findMany({ where: { deleted_at: null }, include: componentInclude });
   if (!rows.length) return res.json({ data: [] });
-  const ids = rows.map((row) => row.id);
+  const lineages = [...new Set(rows.map((r) => r.lineage_id))];
+  const all = await prisma.salaryStructure.findMany({ where: { lineage_id: { in: lineages } }, select: { id: true, lineage_id: true } });
+  const idsOf = new Map(lineages.map((l) => [l, all.filter((r) => r.lineage_id === l).map((r) => r.id)]));
+  const allIds = all.map((r) => r.id);
   const d = toDbDate(today());
   const [usedRows, peopleRows, inputs] = await Promise.all([
-    prisma.employeeSalary.groupBy({ by: ['structure_id'], where: { structure_id: { in: ids } }, _count: { _all: true } }),
-    prisma.employeeSalary.groupBy({ by: ['structure_id'], where: { structure_id: { in: ids }, deleted_at: null, employee:{deleted_at:null,status:{not:'EXITED'}}, valid_from: { lte: d }, OR: [{ valid_to: null }, { valid_to: { gte: d } }] }, _count: { _all: true } }),
+    prisma.employeeSalary.groupBy({ by: ['structure_id'], where: { structure_id: { in: allIds } }, _count: { _all: true } }),
+    prisma.employeeSalary.groupBy({ by: ['structure_id'], where: { structure_id: { in: allIds }, deleted_at: null, employee:{deleted_at:null,status:{not:'EXITED'}}, valid_from: { lte: d }, OR: [{ valid_to: null }, { valid_to: { gte: d } }] }, _count: { _all: true } }),
     sampleInputs(AT_SAMPLE_GROSS),
   ]);
   const used = new Set(usedRows.map((row) => row.structure_id));
   const people = new Map(peopleRows.map((row) => [row.structure_id, row._count._all]));
-  res.json({ data: await Promise.all(rows.map((row) => structureView(row.id, { row, used: used.has(row.id), people: people.get(row.id) ?? 0, inputs }))) });
+  const views = await Promise.all(lineages.map((lineage) => {
+    const ids = idsOf.get(lineage);
+    return structureView(lineage, {
+      lineage,
+      ids,
+      versions: withWindows(rows.filter((r) => r.lineage_id === lineage)),
+      used: ids.some((id) => used.has(id)),
+      people: ids.reduce((a, id) => a + (people.get(id) ?? 0), 0),
+      inputs,
+    });
+  }));
+  res.json({ data: views.sort((a, b) => a.name.localeCompare(b.name)) });
 });
 
 export const getStructure = asyncHandler(async (req, res) => {
-  res.json({ data: await structureView(req.params.id) });
+  res.json({ data: await structureView(req.params.id, { withVersions: true }) });
 });
 
 /** Live validation and preview for the builder — shown inline, not on submit. */
@@ -250,11 +317,17 @@ export const validateStructureDraft = asyncHandler(async (req, res) => {
   res.json({ data: { ...validateStructure(components, at.breakup.gross, at.ctc_basis), breakup: at.breakup, rates: at.rates, pt_state: at.pt_state } });
 });
 
-/** Structures are never edited in place: "duplicate and edit" creates a new one with a new effective date. */
+async function validComponents(components) {
+  const v = validateStructure(components, SAMPLE_GROSS, (await sampleAt(components, AT_SAMPLE_GROSS)).ctc_basis);
+  if (v.errors.length) throw new AppError('VALIDATION', v.errors[0], 422, 'components', v.errors);
+}
+
+const componentRows = (components) => components.map((c) => ({ ...c, calc_value: c.calc_value }));
+
+/** A new structure: its first version, which applies from the start. */
 export const createStructure = asyncHandler(async (req, res) => {
   const b = structureCreateSchema.parse(req.body);
-  const v = validateStructure(b.components, SAMPLE_GROSS, (await sampleAt(b.components, AT_SAMPLE_GROSS)).ctc_basis);
-  if (v.errors.length) throw new AppError('VALIDATION', v.errors[0], 422, 'components', v.errors);
+  await validComponents(b.components);
   const { actor, ip } = who(req);
   const s = await prisma.$transaction(async (tx) => {
     const created = await tx.salaryStructure.create({
@@ -262,7 +335,7 @@ export const createStructure = asyncHandler(async (req, res) => {
         name: b.name,
         duplicated_from: b.duplicated_from ?? null,
         created_by: actor,
-        components: { create: b.components.map((c) => ({ ...c, calc_value: c.calc_value })) },
+        components: { create: componentRows(b.components) },
       },
     });
     await audit(tx, {
@@ -275,7 +348,116 @@ export const createStructure = asyncHandler(async (req, res) => {
     });
     return created;
   });
-  res.status(201).json({ data: await structureView(s.id) });
+  res.status(201).json({ data: await structureView(s.id, { withVersions: true }) });
+});
+
+const versionPublishSchema = z.object({ name: z.string().min(1).max(100).optional(), valid_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), components: structureCreateSchema.shape.components }).strict();
+const versionEditSchema = z.object({ name: z.string().min(1).max(100).optional(), valid_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(), components: structureCreateSchema.shape.components.optional() }).strict();
+
+/**
+ * Publish a new version of a structure from the 1st of a month. It applies to everyone on the
+ * structure from that date; earlier months keep the version they used. It must start after the
+ * latest version and after any locked or paid payroll.
+ */
+export const publishStructureVersion = asyncHandler(async (req, res) => {
+  const b = versionPublishSchema.parse(req.body);
+  assertMonthStart(b.valid_from);
+  await validComponents(b.components);
+  const { actor, ip } = who(req);
+  const created = await prisma.$transaction(async (tx) => {
+    await lockAssignments(tx);
+    const lineage = await lineageIdOf(tx, req.params.id);
+    const versions = lineage ? await lineageVersions(tx, lineage) : [];
+    if (!versions.length) throw notFound('That salary structure');
+    const latest = versions.at(-1);
+    if (latest.valid_from && b.valid_from <= latest.valid_from) {
+      throw new AppError('VALIDATION', `Version ${latest.version} starts on ${latest.valid_from}. A new version must start after it.`, 422, 'valid_from');
+    }
+    await effectiveFrom(tx, b.valid_from, { monthStart: true, field: 'valid_from' });
+    const row = await tx.salaryStructure.create({
+      data: {
+        lineage_id: lineage,
+        version: Math.max(...versions.map((v) => v.version)) + 1,
+        valid_from: toDbDate(b.valid_from),
+        name: b.name ?? latest.name,
+        duplicated_from: latest.id,
+        created_by: actor,
+        components: { create: componentRows(b.components) },
+      },
+    });
+    await flagRerun(tx, { from: b.valid_from, reason: `salary structure ${row.name} v${row.version} published` });
+    await audit(tx, { actor, ip, action: 'structure.version_publish', entity_type: 'salary_structure', entity_id: row.id, detail: { lineage_id: lineage, version: row.version, valid_from: b.valid_from, components: b.components } });
+    return row;
+  });
+  res.status(201).json({ data: await structureView(created.lineage_id, { withVersions: true }) });
+});
+
+/**
+ * Correct a version: its name, components, or (not the first) its start month, which stays
+ * between the versions around it. Refused when it would change a locked or paid month.
+ */
+export const editStructureVersion = asyncHandler(async (req, res) => {
+  const b = versionEditSchema.parse(req.body);
+  if (b.components) await validComponents(b.components);
+  const { actor, ip } = who(req);
+  const lineage = await prisma.$transaction(async (tx) => {
+    await lockAssignments(tx);
+    const row = await tx.salaryStructure.findFirst({ where: { id: req.params.versionId, deleted_at: null } });
+    if (!row) throw notFound('That structure version');
+    const versions = await lineageVersions(tx, row.lineage_id);
+    const i = versions.findIndex((v) => v.id === row.id);
+    const v = versions[i];
+    const prev = versions[i - 1];
+    const next = versions[i + 1];
+    let from = v.valid_from;
+    if (b.valid_from !== undefined && b.valid_from !== v.valid_from) {
+      if (!prev) throw new AppError('VALIDATION', 'The first version applies from the start; its start cannot change.', 422, 'valid_from');
+      assertMonthStart(b.valid_from);
+      if (prev.valid_from && b.valid_from <= prev.valid_from) throw new AppError('VALIDATION', `It must start after version ${prev.version} (${prev.valid_from}).`, 422, 'valid_from');
+      if (next && b.valid_from >= next.valid_from) throw new AppError('VALIDATION', `It must start before version ${next.version} (${next.valid_from}).`, 422, 'valid_from');
+      from = b.valid_from;
+    }
+    const changesPay = !!b.components || from !== v.valid_from;
+    // The months whose components change: this version's window, widened to where it now starts.
+    const rangeFrom = from && v.valid_from ? (from < v.valid_from ? from : v.valid_from) : null;
+    if (changesPay) await assertNoFrozenUse(tx, row.lineage_id, rangeFrom, v.valid_to, 'This edit');
+    await tx.salaryStructure.update({ where: { id: row.id }, data: { ...(b.name ? { name: b.name } : {}), ...(from !== v.valid_from ? { valid_from: toDbDate(from) } : {}) } });
+    if (b.components) {
+      await tx.salaryComponent.updateMany({ where: { structure_id: row.id, deleted_at: null }, data: { deleted_at: new Date() } });
+      await tx.salaryComponent.createMany({ data: componentRows(b.components).map((c) => ({ ...c, structure_id: row.id })) });
+    }
+    if (changesPay) await flagRerun(tx, { from: rangeFrom, to: v.valid_to, reason: `salary structure ${b.name ?? row.name} v${row.version} edited` });
+    await audit(tx, { actor, ip, action: 'structure.version_edit', entity_type: 'salary_structure', entity_id: row.id, detail: { version: row.version, ...b } });
+    return row.lineage_id;
+  });
+  res.json({ data: await structureView(lineage, { withVersions: true }) });
+});
+
+/**
+ * Delete a version. The version before it then runs on over its dates; deleting the first,
+ * the next one applies from the start. Refused for the only version, or when the change would
+ * reach a locked or paid month.
+ */
+export const deleteStructureVersion = asyncHandler(async (req, res) => {
+  const { actor, ip } = who(req);
+  const lineage = await prisma.$transaction(async (tx) => {
+    await lockAssignments(tx);
+    const row = await tx.salaryStructure.findFirst({ where: { id: req.params.versionId, deleted_at: null } });
+    if (!row) throw notFound('That structure version');
+    const versions = await lineageVersions(tx, row.lineage_id);
+    if (versions.length === 1) throw new AppError('VALIDATION', 'This is the only version. Delete the structure instead.', 409);
+    const i = versions.findIndex((v) => v.id === row.id);
+    const v = versions[i];
+    const next = versions[i + 1];
+    await assertNoFrozenUse(tx, row.lineage_id, v.valid_from, v.valid_to, 'Deleting this version');
+    await tx.salaryStructure.update({ where: { id: row.id }, data: { deleted_at: new Date() } });
+    // The first version gone: the next applies from the start.
+    if (i === 0 && next) await tx.salaryStructure.update({ where: { id: next.id }, data: { valid_from: null } });
+    await flagRerun(tx, { from: v.valid_from, to: v.valid_to, reason: `salary structure ${row.name} v${row.version} deleted` });
+    await audit(tx, { actor, ip, action: 'structure.version_delete', entity_type: 'salary_structure', entity_id: row.id, detail: { version: row.version, valid_from: v.valid_from, valid_to: v.valid_to } });
+    return row.lineage_id;
+  });
+  res.json({ data: await structureView(lineage, { withVersions: true }) });
 });
 
 // ─── Pay groups ──────────────────────────────────────────────────────────────

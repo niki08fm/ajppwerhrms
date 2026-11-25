@@ -260,7 +260,7 @@ export async function computeIssues(db, ym) {
     if (p.result.flags.includes('OT_OVER_CAP')) add(e, 'OT_OVER_CAP', 'WARNING', `${Math.round((p.result.ot?.excess_min ?? 0) / 60)} hours of overtime above the cap are unpaid.`, 'attendance');
     if ((p.result.ot?.daily_capped_min ?? 0) > 0) add(e, 'OT_DAILY_CAP', 'WARNING', `${Math.round(p.result.ot.daily_capped_min / 6) / 10} hours of overtime above the daily cap were not counted.`, 'attendance');
     if (p.salary.mode === 'CTC' && ctxForBand) {
-      const components = await structureComponents(db, p.salary.structure_id);
+      const components = await structureComponents(db, p.salary.structure_id, lastOfMonth(ym));
       const ctx = ctxForBand;
       const sol = solveGrossFromCtc(p.salary.amount, {
         components,
