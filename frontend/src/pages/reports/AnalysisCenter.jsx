@@ -112,6 +112,9 @@ export default function AnalysisCenter() {
   // Months with no payroll are gaps in the charts, not zeros.
   const chart = useMemo(() => (d ? d.months.map((m) => (m.state ? { ...m, pf: m.pf_ee + m.er_pf, esi: m.esi_ee + m.er_esi } : { ym: m.ym, label: m.label, short: m.short, state: null })) : []), [d]);
   const [picked, setPicked] = useState(null);
+  // Lines hidden from the cost chart (tap a legend name); hiding the big ones zooms in on OT.
+  const [hidden, setHidden] = useState(() => new Set());
+  const toggle = (key) => setHidden((h) => { const n = new Set(h); n.has(key) ? n.delete(key) : n.add(key); return n.size === 4 ? h : n; });
   const selected = d?.months.find((m) => m.ym === picked) ?? run.at(-1) ?? null;
   const reportLink = (report) => {
     const qs = new URLSearchParams({ period: 'custom', from: `${d.fy}-04`, to: `${d.fy + 1}-03`, report, ...(params.company ? { company: params.company } : {}), ...(params.department_id ? { department: params.department_id } : {}), ...(params.site_id ? { site: params.site_id } : {}) });
@@ -164,7 +167,10 @@ export default function AnalysisCenter() {
 
           {/* Hero: the year's cost, with the selected month's numbers beside it */}
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-            <ChartCard title="Cost to company, month by month" description="Cost to company, normal wages and net pay. Tap a month to see its numbers.">
+            <ChartCard
+              title="Cost to company, month by month"
+              description="Cost to company, normal wages, net pay and OT wages. Tap a month to see its numbers."
+            >
               <div className="h-[320px]">
                 <ResponsiveContainer>
                   <ComposedChart data={chart} margin={{ top: 10, right: 12, left: 0, bottom: 0 }} onClick={(e) => e?.activePayload?.[0] && setPicked(e.activePayload[0].payload.ym)}>
@@ -173,27 +179,21 @@ export default function AnalysisCenter() {
                     <YAxis {...yAxis} />
                     <Tooltip content={<Tip extra={(r) => r.state && (
                       <div className="mt-1.5 border-t pt-1.5 text-muted-foreground">
-                        OT wages <span className="float-right font-medium text-foreground num">{inr(r.ot)}</span><br />
                         OT hours <span className="float-right font-medium text-foreground num">{r.ot_hours} h</span><br />
                         People <span className="float-right font-medium text-foreground num">{r.people}</span>
                       </div>
                     )} />} cursor={{ stroke: 'var(--viz-axis)', strokeWidth: 1 }} />
-                    <Legend iconType="plainline" wrapperStyle={{ fontSize: 13 }} formatter={legendText} />
-                    <Area dataKey="ctc" name={LABEL.ctc} stroke={COLOR.ctc} fill={COLOR.ctc} fillOpacity={0.12} strokeWidth={2} activeDot={{ r: 5, strokeWidth: 2, stroke: 'var(--card)' }} connectNulls={false} isAnimationActive={false} />
-                    <Line dataKey="normal" name={LABEL.normal} stroke={COLOR.normal} strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5, strokeWidth: 2, stroke: 'var(--card)' }} isAnimationActive={false} />
-                    <Line dataKey="net" name={LABEL.net} stroke={COLOR.net} strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5, strokeWidth: 2, stroke: 'var(--card)' }} isAnimationActive={false} />
+                    <Legend
+                      iconType="plainline"
+                      wrapperStyle={{ fontSize: 13, cursor: 'pointer' }}
+                      onClick={(e) => toggle(e.dataKey)}
+                      formatter={(value, entry) => <span style={{ color: entry.inactive ? 'var(--muted-foreground)' : 'var(--foreground)', textDecoration: entry.inactive ? 'line-through' : 'none' }}>{value}</span>}
+                    />
+                    <Area hide={hidden.has('ctc')} dataKey="ctc" name={LABEL.ctc} stroke={COLOR.ctc} fill={COLOR.ctc} fillOpacity={0.12} strokeWidth={2} activeDot={{ r: 5, strokeWidth: 2, stroke: 'var(--card)' }} connectNulls={false} isAnimationActive={false} />
+                    <Line hide={hidden.has('normal')} dataKey="normal" name={LABEL.normal} stroke={COLOR.normal} strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5, strokeWidth: 2, stroke: 'var(--card)' }} isAnimationActive={false} />
+                    <Line hide={hidden.has('net')} dataKey="net" name={LABEL.net} stroke={COLOR.net} strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5, strokeWidth: 2, stroke: 'var(--card)' }} isAnimationActive={false} />
+                    <Line hide={hidden.has('ot')} dataKey="ot" name={LABEL.ot} stroke={COLOR.ot} strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5, strokeWidth: 2, stroke: 'var(--card)' }} isAnimationActive={false} />
                   </ComposedChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="mt-2 text-[12px] font-medium text-muted-foreground">OT wages each month</div>
-              <div className="h-[90px]">
-                <ResponsiveContainer>
-                  <BarChart data={chart} margin={{ top: 4, right: 12, left: 0, bottom: 0 }} onClick={(e) => e?.activePayload?.[0] && setPicked(e.activePayload[0].payload.ym)}>
-                    <XAxis dataKey="short" {...axis} hide />
-                    <YAxis {...yAxis} tickCount={3} />
-                    <Tooltip content={<Tip />} cursor={{ fill: 'var(--accent)' }} />
-                    <Bar dataKey="ot" name={LABEL.ot} fill={COLOR.ot} radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive={false} />
-                  </BarChart>
                 </ResponsiveContainer>
               </div>
             </ChartCard>
