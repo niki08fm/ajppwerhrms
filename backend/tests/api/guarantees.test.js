@@ -361,14 +361,13 @@ describe('Structure preview reads as a salary breakup: earnings → gross, compa
     expect(on.take_home).toBe(R(33334 - 2000 - 200));
   });
 
-  it('ESI applies only at ₹21,000 gross or less, and switching it off removes both shares', async () => {
+  it('ESI applies only at ₹21,000 gross or less, by gross alone: an old "off" switch changes nothing', async () => {
     const esi = (await at({ mode: 'GROSS', amount: R(18000), pf_enabled: true, esi_enabled: true })).body.data.breakup;
     expect(esi.esi).toMatchObject({ applicable: true, employee: R(135), employer: R(585) });
     expect(esi.ctc.monthly_cost).toBe(R(18000 + 1080 + 585));
     expect(esi.take_home).toBe(R(18000 - 1080 - 135 - 150));
-    const none = (await at({ mode: 'GROSS', amount: R(18000), pf_enabled: true, esi_enabled: false })).body.data.breakup;
-    expect(none.esi.employee).toBe(0);
-    expect(none.take_home).toBe(R(18000 - 1080 - 150));
+    const off = (await at({ mode: 'GROSS', amount: R(18000), pf_enabled: true, esi_enabled: false })).body.data.breakup;
+    expect(off.esi).toMatchObject({ applicable: true, employee: R(135), employer: R(585) });
     const above = (await at({ mode: 'CTC', amount: R(400000), pf_enabled: true, esi_enabled: true })).body.data.breakup;
     expect(above.esi.applicable).toBe(false);
   });

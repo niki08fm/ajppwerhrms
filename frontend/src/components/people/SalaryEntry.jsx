@@ -43,19 +43,15 @@ export function SalaryAmountFields({ mode, annual, onMode, onAnnual, error, labe
 }
 
 /**
- * Whether the salary includes PF and ESI. A CTC can have an eligible ESI wage even
- * when the preview with ESI switched off is above the ceiling.
+ * Whether the salary includes PF; ESI follows the gross. ESI has no switch: it applies when
+ * the monthly gross is within the ESI ceiling.
  */
-export function StatutoryChoice({ pf, esi, onPf, onEsi, preview }) {
-  const eligible = preview ? preview.esi_within_ceiling !== false : true;
-  const candidate = preview?.esi_eligible_gross;
-  const candidateWage = preview?.esi_eligible_wage;
-  const esiWage = preview?.esi_wage ?? preview?.structure?.esi_base ?? preview?.gross;
-  const canEnable = eligible || (typeof candidate === 'number' && candidate > 0);
-  let esiSummary = 'Not eligible: ESI wage above the ceiling';
-  if (esiWage === 0) esiSummary = 'No monthly earnings selected as ESI wage';
-  else if (eligible) esiSummary = `Eligible: ESI wage${typeof esiWage === 'number' ? ` ${inr(esiWage)}` : ''} within the ceiling`;
-  else if (canEnable) esiSummary = `Switch on ESI to use ${typeof candidateWage === 'number' ? `ESI wage ${inr(candidateWage)}` : `eligible components at gross ${inr(candidate)}`} a month`;
+export function StatutoryChoice({ pf, onPf, preview }) {
+  const eligible = preview ? preview.esi_within_ceiling !== false : null;
+  const esiWage = preview?.esi_wage ?? preview?.gross;
+  let esiSummary = 'Applies when the monthly gross is within the ESI ceiling';
+  if (eligible === true) esiSummary = `Applies: gross${typeof esiWage === 'number' ? ` ${inr(esiWage)}` : ''} is within the ceiling`;
+  else if (eligible === false) esiSummary = 'Does not apply: gross is above the ceiling';
   return (
     <div className="flex flex-col gap-2 rounded-md border bg-card px-3 py-2.5">
       <div className="flex items-center justify-between gap-3">
@@ -70,7 +66,7 @@ export function StatutoryChoice({ pf, esi, onPf, onEsi, preview }) {
           <span className="block text-sm font-medium">ESI</span>
           <span className="block text-[12px] text-muted-foreground">{esiSummary}</span>
         </span>
-        <Switch checked={esi && eligible} disabled={!canEnable} onCheckedChange={onEsi} label="ESI" />
+        <span className="text-[13px] text-muted-foreground">{eligible === null ? 'By gross' : eligible ? 'Applies' : 'No'}</span>
       </div>
     </div>
   );

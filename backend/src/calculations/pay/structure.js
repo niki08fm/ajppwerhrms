@@ -99,9 +99,9 @@ export function expandStructure(components, gross, annualCtc) {
   const hra = monthly.filter(isHra).reduce((s, m) => s + m.amount, 0);
   const da = monthly.filter(isDa).reduce((s, m) => s + m.amount, 0);
   const pf_base = monthly.filter((m) => m.counts_as_wages).reduce((s, m) => s + m.amount, 0);
-  // Older structures counted every monthly earning. An absent flag retains
-  // that behavior; yearly payouts remain outside the recurring ESI wage.
-  const esi_base = monthly.filter((m) => m.counts_as_esi_wages !== false).reduce((s, m) => s + m.amount, 0);
+  // ESI wages are the full monthly gross: every monthly earning counts, whatever a structure
+  // once ticked. Yearly payouts stay outside the recurring ESI wage.
+  const esi_base = monthlyGross;
 
   return {
     monthly,
@@ -123,7 +123,6 @@ export function validateStructure(components, sampleGross, sampleCtc) {
   const errors = [];
   const warnings = [];
   const monthly = components.filter((c) => c.frequency === 'MONTHLY');
-  if (monthly.length && monthly.every((c) => c.counts_as_esi_wages === false)) warnings.push('No monthly components are included in ESI wages.');
   if (!monthly.some(isBasic)) errors.push('A monthly component must be named Basic. PF, HRA and overtime need one.');
   const balances = monthly.filter((c) => c.calc_type === 'BALANCE');
   if (balances.length > 1) errors.push('More than one Special Allowance. Only one can take what is left of gross.');

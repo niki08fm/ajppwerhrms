@@ -175,14 +175,6 @@ describe('§20.1 Round trip gross → CTC → gross', () => {
     expect(ambiguous).toBe(5);
   });
 
-  it('with ESI disabled, one bisection over the whole range is correct', () => {
-    const noEsi = { ...ctx, esi_enabled: false };
-    for (let g = 15000; g <= 30000; g += 250) {
-      const sol = solveGrossFromCtc(ctcForGross(R(g), noEsi).annual_ctc, noEsi);
-      expect(sol.gross).toBe(R(g));
-      expect(sol.ambiguous).toBe(false);
-    }
-  });
 });
 
 describe('§20.2 ESI cliff', () => {

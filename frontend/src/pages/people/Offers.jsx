@@ -441,7 +441,7 @@ function IssueOfferDialog({ onClose }) {
           </Field>
           <SalaryAmountFields label="Offered as" mode={f.mode} annual={f.amount} onMode={(v) => set('mode', v)} onAnnual={(v) => set('amount', v)} error={errors.amount} />
           <div className="col-span-2">
-            <StatutoryChoice pf={f.pf_enabled} esi={f.esi_enabled} onPf={(v) => set('pf_enabled', v)} onEsi={(v) => set('esi_enabled', v)} preview={pv.data} />
+            <StatutoryChoice pf={f.pf_enabled} onPf={(v) => set('pf_enabled', v)} preview={pv.data} />
           </div>
           <Field label="Joining date" hint="Optional. Give it now, or when onboarding starts.">{(id) => <Input id={id} type="date" value={f.join_by} onChange={(e) => set('join_by', e.target.value)} />}</Field>
           <Field label="Offer valid till">{(id) => <Input id={id} type="date" value={f.valid_till} onChange={(e) => set('valid_till', e.target.value)} />}</Field>

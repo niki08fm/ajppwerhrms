@@ -112,10 +112,9 @@ export default function StructureBuilder() {
   const [sampleMode, setSampleMode] = useState('GROSS');
   const [sample, setSample] = useState('24000');
   const [pfOn, setPfOn] = useState(true);
-  const [esiOn, setEsiOn] = useState(true);
   const [ptState, setPtState] = useState(null);
   const [sampleChosen, setSampleChosen] = useState(undefined);
-  useEffect(() => { setSampleChosen(undefined); }, [rows, special, sampleMode, sample, pfOn, esiOn, ptState]);
+  useEffect(() => { setSampleChosen(undefined); }, [rows, special, sampleMode, sample, pfOn, ptState]);
   const { data: lk } = useLookups();
   useEffect(() => {
     const s = src.data;
@@ -143,7 +142,7 @@ export default function StructureBuilder() {
   }, [src.data]);
 
   const comps = [...rows.map(toComponent), specialComponent(special, rows.length + 1)];
-  const previewArgs = { comps, sample: { mode: sampleMode, amount: toPaise(sample), pf_enabled: pfOn, esi_enabled: esiOn, ...(ptState ? { pt_state: ptState } : {}), ...(sampleChosen !== undefined ? { chosen_gross: sampleChosen } : {}) } };
+  const previewArgs = { comps, sample: { mode: sampleMode, amount: toPaise(sample), pf_enabled: pfOn, ...(ptState ? { pt_state: ptState } : {}), ...(sampleChosen !== undefined ? { chosen_gross: sampleChosen } : {}) } };
   const debounced = useDebounced(previewArgs, 200);
   const isInputPending = JSON.stringify(previewArgs) !== JSON.stringify(debounced);
   // Live preview at a sample gross, updating as the user types.
@@ -216,7 +215,6 @@ export default function StructureBuilder() {
                       <th>Paid</th>
                       <th>Taxable</th>
                       <th title="Tick on Basic, and on a dearness allowance if you use one. It decides which components form the PF base, and nothing else.">PF wage*</th>
-                      <th title="Include this monthly earning in the ESI wage used for eligibility and contributions.">ESI wage</th>
                       <th />
                     </tr>
                   </thead>
@@ -299,9 +297,6 @@ export default function StructureBuilder() {
                           <td className="py-2.5">
                             <Switch checked={r.counts_as_wages} disabled={r.frequency === 'YEARLY'} onCheckedChange={(v) => set(i, { counts_as_wages: v })} label="Counts as PF wage" />
                           </td>
-                          <td className="py-2.5">
-                            <Switch checked={r.frequency === 'MONTHLY' && r.counts_as_esi_wages !== false} disabled={r.frequency === 'YEARLY'} onCheckedChange={(v) => set(i, { counts_as_esi_wages: v })} label={`${r.name || 'Component'} counts as ESI wage`} />
-                          </td>
                           <td className="py-1.5">
                             <Button size="icon" variant="ghost" onClick={() => setRows(rows.filter((_, j) => j !== i))} aria-label={`Remove ${r.name || 'component'}`}>
                               <Trash2 />
@@ -325,9 +320,6 @@ export default function StructureBuilder() {
                       <td className="py-2.5">
                         <Switch checked={special.counts_as_wages} onCheckedChange={(v) => setSpecial({ ...special, counts_as_wages: v })} label="Special Allowance counts as PF wage" />
                       </td>
-                      <td className="py-2.5">
-                        <Switch checked={special.counts_as_esi_wages !== false} onCheckedChange={(v) => setSpecial({ ...special, counts_as_esi_wages: v })} label="Special Allowance counts as ESI wage" />
-                      </td>
                       <td />
                     </tr>
                   </tbody>
@@ -338,7 +330,7 @@ export default function StructureBuilder() {
                   <Plus /> Add component
                 </Button>
                 <p className="max-w-xl text-right text-[13px] text-muted-foreground">
-                  * PF wage: normally Basic and DA. ESI wage: selected monthly earnings determine eligibility and contributions; yearly components are excluded.
+                  * PF wage: normally Basic and DA. ESI needs no ticking: it works on the whole monthly gross and applies when that is within the ESI ceiling.
                 </p>
               </div>
             </CardBody>
@@ -376,10 +368,10 @@ export default function StructureBuilder() {
                   PF
                   <Switch checked={pfOn} onCheckedChange={setPfOn} label="PF on for the sample" />
                 </label>
-                <label className="flex items-center justify-between gap-2 rounded-md border px-2 py-1.5">
+                <div className="flex items-center justify-between gap-2 rounded-md border px-2 py-1.5" title="ESI follows the gross: it applies when the gross is within the ESI ceiling.">
                   ESI
-                  <Switch checked={esiOn && (p?.breakup.esi.applicable ?? true)} disabled={p?.breakup.esi_within_ceiling === false && !(p.breakup.esi_eligible_gross > 0)} onCheckedChange={(enabled) => { setSampleChosen(undefined); setEsiOn(enabled); }} label="ESI on for the sample" />
-                </label>
+                  <span className="text-[13px] text-muted-foreground">{p ? (p.breakup.esi_within_ceiling ? 'Applies' : 'Above ceiling') : 'By gross'}</span>
+                </div>
               </div>
               <Field label="Professional tax state">
                 {(id) => (
@@ -437,7 +429,7 @@ export default function StructureBuilder() {
 
 /**
  * PF and ESI are not components anyone types in: they are worked out from the
- * statutory rates and the components switched on as PF or ESI wage. This says
+ * statutory rates and the components switched on as PF wage (ESI: the whole gross). This says
  * how, and where each part is set; the amounts are in the salary breakup.
  */
 function StatutoryCard({ rates }) {
@@ -452,8 +444,8 @@ function StatutoryCard({ rates }) {
         : '—',
       'Company contribution',
     ],
-    ['ESI — employee', esi ? `${esi.employee_pct}% of the selected ESI wage, while that wage is ${formatINR(esi.ceiling)} or less` : '—', 'Deduction'],
-    ['ESI — company', esi ? `${esi.employer_pct}% of the selected ESI wage, only when the person is eligible (ESI wage ${formatINR(esi.ceiling)} or less)` : '—', 'Company contribution'],
+    ['ESI — employee', esi ? `${esi.employee_pct}% of the monthly gross, when gross is ${formatINR(esi.ceiling)} or less` : '—', 'Deduction'],
+    ['ESI — company', esi ? `${esi.employer_pct}% of the monthly gross, when gross is ${formatINR(esi.ceiling)} or less` : '—', 'Company contribution'],
     ['Professional tax', "From the slabs for the person's work state", 'Deduction'],
     ['Income tax (TDS)', "From the person's tax regime and declarations", 'Deduction'],
   ];
@@ -497,12 +489,12 @@ function StatutoryCard({ rates }) {
           </div>
           <div>
             <div className="font-semibold text-foreground">Which earnings count</div>
-            <p className="text-muted-foreground">Use each component's PF wage and ESI wage switches above. ESI includes monthly earnings by default.</p>
+            <p className="text-muted-foreground">Use each component's PF wage switch above. ESI counts every monthly earning: the whole gross.</p>
           </div>
           <div>
             <div className="font-semibold text-foreground">For one person</div>
             <p className="text-muted-foreground">
-              PF on or off, restrict to the ceiling, voluntary PF, ESI on or off, PT state and tax regime: their profile → Salary and statutory → Statutory. These settings can differ for each employee.
+              PF on or off, restrict to the ceiling, voluntary PF, PT state and tax regime (ESI follows the gross): their profile → Salary and statutory → Statutory. These settings can differ for each employee.
             </p>
           </div>
         </div>

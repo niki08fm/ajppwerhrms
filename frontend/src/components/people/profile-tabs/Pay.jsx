@@ -182,13 +182,10 @@ export function PayTab({ e }) {
                 description={st.esi_locked_until ? `Covered for the contribution period ending ${st.esi_locked_until}` : 'Decided at the start of each April–September and October–March period.'}
               />
               <CardBody className="flex flex-col gap-2 text-[14px]">
-                <label className="flex items-center justify-between">
-                  ESI on
-                  <Switch checked={st.esi_enabled} disabled={ro || (!p.esi_within_ceiling && !st.esi_enabled)} onCheckedChange={(v) => patch.mutate({ esi_enabled: v })} label="ESI on" />
-                </label>
+                <p className="text-[13px] text-muted-foreground">ESI follows the gross: it applies when the monthly gross is {formatINR(rates.esi.ceiling)} or less. Nothing to switch on.</p>
                 {!p.esi_within_ceiling && (
                   <p className="text-[13px] text-muted-foreground">
-                    Not offered: ESI wage {formatINR(p.esi_wage ?? p.structure?.esi_base ?? p.gross)} is above the {formatINR(rates.esi.ceiling)} ceiling.{' '}
+                    Not applicable: gross {formatINR(p.esi_wage ?? p.gross)} is above the {formatINR(rates.esi.ceiling)} ceiling.{' '}
                     {st.esi_locked_until ? 'Contributions continue until the current period ends.' : ''}
                   </p>
                 )}

@@ -15,25 +15,13 @@ export function computeEsi(applicable, earnedWage, rates) {
 }
 
 /**
- * The contribution-period rule. Blocks run April–September and October–March.
- * Eligibility is decided once, at the start of each block, by fixed ESI wages
- * against the ceiling, and holds for the whole block. Once ESI has been paid in a
- * block it continues to the block's end even if HR switches it off; at the next
- * block it stops by itself if the person is no longer eligible.
+ * The contribution-period rule. Blocks run April–September and October–March. ESI is decided
+ * by gross alone, with no switch to tick: it applies when the ESI wage (the full monthly gross)
+ * at the start of a block is within the ceiling, and holds for the whole block even if pay
+ * rises above it. At the next block it stops by itself if the gross is above the ceiling.
  */
 export function esiEligibility(input, rates) {
   const block = esiContributionPeriod(input.date);
-  if (!input.esi_enabled && input.esi_locked_until && input.esi_locked_until >= input.date) {
-    return {
-      applicable: true,
-      esi_locked_until: input.esi_locked_until,
-      block,
-      reason: `Switched off, but ESI was paid in this contribution period, so it continues until ${input.esi_locked_until}`,
-    };
-  }
-  if (!input.esi_enabled) {
-    return { applicable: false, esi_locked_until: input.esi_locked_until, block, reason: 'ESI is switched off for this person' };
-  }
   if (input.esi_locked_until && input.esi_locked_until >= input.date) {
     return {
       applicable: true,

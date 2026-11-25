@@ -7,7 +7,8 @@ import { expandStructure, usesCtc } from './structure.js';
 
 /** Everything the offer, profile and revision screens show about a salary, at full pay. */
 export function salaryPreview(input) {
-  const ctx = { components: input.components, pf: input.pf, esi_enabled: input.esi_enabled, rates: input.rates };
+  // ESI follows the gross: it applies whenever the ESI wage (the monthly gross) is within the ceiling.
+  const ctx = { components: input.components, pf: input.pf, esi_enabled: true, rates: input.rates };
   let gross;
   let solution = null;
   if (input.mode === 'CTC') {
@@ -29,7 +30,7 @@ export function salaryPreview(input) {
   if (input.mode === 'CTC') {
     // The editor can offer ESI even when the current without-ESI preview is
     // above the ceiling. This candidate is informational, not a flag change.
-    const eligibleSolution = input.esi_enabled ? solution : solveGrossFromCtc(input.amount, { ...ctx, esi_enabled: true });
+    const eligibleSolution = solution;
     const candidates = [eligibleSolution, eligibleSolution.alternative].filter(Boolean);
     const candidate = eligibleSolution.approximate ? null : candidates.find((candidate) => candidate.breakdown.esi_applies && candidate.breakdown.esi_wage <= input.rates.esi.ceiling);
     esi_eligible_gross = candidate?.gross ?? null;
@@ -58,7 +59,7 @@ export function salaryPreview(input) {
     esi_eligible_gross = esi_within_ceiling ? gross : null;
     esi_eligible_wage = esi_within_ceiling ? esi_wage : null;
   }
-  const esi = computeEsi(input.esi_enabled && esi_within_ceiling, esi_wage, input.rates.esi);
+  const esi = computeEsi(esi_within_ceiling, esi_wage, input.rates.esi);
   const month = input.month ?? 4;
   const pt = computePt({ ...input.pt, gross, month: month === 2 ? 3 : month }, input.pt_slabs);
   const pt_february = computePt({ ...input.pt, gross, month: 2 }, input.pt_slabs);

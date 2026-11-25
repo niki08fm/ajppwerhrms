@@ -61,10 +61,9 @@ export function assemblePayslip(input) {
       pfBaseEarned += earned;
       pfBaseFixed += c.amount;
     }
-    if (c.counts_as_esi_wages !== false) {
-      esiBaseEarned += earned;
-      esiBaseFixed += c.amount;
-    }
+    // ESI wages: every monthly earning (the gross).
+    esiBaseEarned += earned;
+    esiBaseFixed += c.amount;
     if (c.is_taxable) {
       taxableRegular += c.amount;
       taxableEarned += earned;

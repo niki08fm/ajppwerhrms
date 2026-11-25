@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { describeComponentRule, formatINR } from '@ajpwer/shared';
 import { api, errorMessage } from '@/services/api';
 import { useLookups } from '@/hooks/useLookups';
-import { ErrorState, Notice, SkeletonBlock } from '@/components/states';
+import { Chip, ErrorState, Notice, SkeletonBlock } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
 import { Input, Select, Segmented } from '@/components/ui/form';
@@ -200,24 +200,18 @@ export function SalaryTab({ e }) {
                       <div className="text-[12px] text-muted-foreground">
                         {!p
                           ? 'Salary required to check the ESI ceiling'
-                          : (p.esi_wage ?? p.structure?.esi_base) === 0
-                            ? 'No monthly earnings selected as ESI wage'
-                            : p.esi_within_ceiling
-                              ? `ESI wage ${formatINR(p.esi_wage ?? p.structure?.esi_base ?? p.gross)} within the ceiling${p.esi.applicable ? ` · employee ${formatINR(p.esi.employee)} a month` : ''}`
-                              : 'ESI wage is above the ceiling'}
+                          : p.esi_within_ceiling
+                            ? `Gross ${formatINR(p.esi_wage ?? p.gross)} is within the ceiling · employee ${formatINR(p.esi.employee)} a month`
+                            : 'Gross is above the ceiling'}
                         {st.esi_locked_until ? ` · covered till ${st.esi_locked_until}` : ''}
                       </div>
                     </div>
-                    <Switch
-                      checked={st.esi_enabled}
-                      disabled={ro || patch.isPending || (p && !p.esi_within_ceiling && !st.esi_enabled)}
-                      onCheckedChange={(v) => patch.mutate({ esi_enabled: v })}
-                      label="ESI"
-                    />
+                    {/* ESI follows the gross: nothing to switch. */}
+                    {(() => {
+                      const covered = p?.esi.applicable || (st.esi_locked_until && st.esi_locked_until >= new Date().toISOString().slice(0, 10));
+                      return <Chip tone={covered ? 'success' : 'muted'}>{covered ? 'Applies' : 'Not applicable'}</Chip>;
+                    })()}
                   </div>
-                  {!st.esi_enabled && st.esi_locked_until && (
-                    <Notice tone="info">ESI continues till the end of this contribution period ({st.esi_locked_until}), then stops.</Notice>
-                  )}
                   <div className={line}>
                     <div>
                       <div>Professional tax</div>

@@ -6,7 +6,8 @@ function costAt(gross, ctx, esiApplies, ctcBasis) {
   const s = expandStructure(ctx.components, gross, ctcBasis);
   const pf = computePf(s.pf_base, ctx.pf, ctx.rates.pf);
   const eligible = s.esi_base <= ctx.rates.esi.ceiling;
-  const applicable = esiApplies ?? (ctx.esi_enabled && eligible);
+  // ESI is decided by the wage alone: within the ceiling, it applies.
+  const applicable = esiApplies ?? eligible;
   const esi = computeEsi(applicable, s.esi_base, ctx.rates.esi);
   const employer_pf = pfEmployerCost(pf);
   const monthly_cost = s.gross + employer_pf + esi.employer;
@@ -145,10 +146,6 @@ export function solveGrossFromCtc(annualCtc, ctx) {
     (g) => ctcForGross(g, ctx, esi, undefined, { round_annual_up: true }),
     (g) => ctcForGross(g, ctx, esi, annualCtc), ctx.components.length, usesCtc(ctx.components), eligible);
 
-  if (!ctx.esi_enabled) {
-    const s = side(0, maxGross, false);
-    return { gross: s.gross, breakdown: s.breakdown, rounding_limit: s.rounding_limit, ambiguous: false, alternative: null, approximate: !ok(s) };
-  }
 
   // A selected ESI wage can be a percentage of gross, capped, based on CTC,
   // or the remainder. The discontinuity is where that wage crosses the
@@ -157,7 +154,8 @@ export function solveGrossFromCtc(annualCtc, ctx) {
   // Keep the existing endpoint checks when every monthly component counts,
   // including legacy structures: those endpoint checks prevent rounding from
   // granting coverage to a target beyond the eligible branch's raw cost.
-  const allMonthlySelected = ctx.components.filter((c) => c.frequency === 'MONTHLY').every((c) => c.counts_as_esi_wages !== false);
+  // ESI wages are the whole monthly gross, so every monthly component counts.
+  const allMonthlySelected = true;
   if (!allMonthlySelected) {
     const wageEligible = (s, applies) => {
       const within = s.breakdown.esi_wage <= ctx.rates.esi.ceiling;

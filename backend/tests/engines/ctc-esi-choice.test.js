@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { AJPWER_RATES } from '@ajpwer/shared';
+
+// ESI follows gross. To test CTC rounding with no ESI at all, nobody is within the ceiling.
+const NO_ESI = { ...AJPWER_RATES.esi, ceiling: 0 };
 import { assemblePayslip, ctcForGross, salaryPreview, solveGrossFromCtc } from '../../src/calculations/index.js';
 import { NEW_REGIME, NO_DECL, payslipInput, PF_ON, PT_SLABS, R, RATES, STANDARD_STRUCTURE } from './fixtures.js';
 
@@ -41,7 +44,7 @@ describe('Eligible ESI is the first CTC preview option', () => {
   });
 
   it('rounds upward to the nearest whole rupee even without employer PF or ESI', () => {
-    const preview = salaryPreview(input({ amount: R(275325), pf: { ...PF_ON, pf_enabled: false }, esi_enabled: false }));
+    const preview = salaryPreview(input({ amount: R(275325), pf: { ...PF_ON, pf_enabled: false }, rates: { pf: RATES.pf, esi: { ...RATES.esi, ceiling: 0 } } }));
     expect(preview).toMatchObject({ gross: R(22944), ctc: { employer_pf: 0, employer_esi: 0, annual_ctc: R(275328) }, solution: { approximate: false } });
   });
 
@@ -79,11 +82,11 @@ describe('Eligible ESI is the first CTC preview option', () => {
 
   it('selects a canonical upward CTC instead of a lower normalized percentage-of-CTC result', () => {
     const components = [{ ...STANDARD_STRUCTURE[0], calc_type: 'PCT_CTC', calc_value: 40 }, { ...STANDARD_STRUCTURE[3], seq: 2 }];
-    const preview = salaryPreview(input({ components, amount: R(37873.65), esi_enabled: false,
-      rates: { pf: AJPWER_RATES.pf, esi: AJPWER_RATES.esi } }));
+    const preview = salaryPreview(input({ components, amount: R(37873.65),
+      rates: { pf: AJPWER_RATES.pf, esi: NO_ESI } }));
     expect(preview).toMatchObject({ gross: R(3006), ctc: { ctc_basis: R(37896), annual_ctc: R(37896) }, solution: { approximate: false } });
-    const saved = salaryPreview(input({ components, amount: preview.ctc.annual_ctc, saved_gross: preview.gross, esi_enabled: false,
-      rates: { pf: AJPWER_RATES.pf, esi: AJPWER_RATES.esi } }));
+    const saved = salaryPreview(input({ components, amount: preview.ctc.annual_ctc, saved_gross: preview.gross,
+      rates: { pf: AJPWER_RATES.pf, esi: NO_ESI } }));
     expect(saved.structure).toEqual(preview.structure);
     expect(saved.ctc).toEqual(preview.ctc);
   });
@@ -92,7 +95,7 @@ describe('Eligible ESI is the first CTC preview option', () => {
     const components = [{ ...STANDARD_STRUCTURE[0], calc_type: 'FIXED', calc_value: R(22000) },
       { ...STANDARD_STRUCTURE[3], seq: 2 },
       { ...STANDARD_STRUCTURE[2], seq: 3, name: 'Bonus', calc_value: 25, frequency: 'YEARLY', pay_month: 4 }];
-    const overrides = { components, esi_enabled: false, rates: { pf: AJPWER_RATES.pf, esi: AJPWER_RATES.esi } };
+    const overrides = { components, rates: { pf: AJPWER_RATES.pf, esi: NO_ESI } };
     const preview = salaryPreview(input({ ...overrides, amount: R(295680.25) }));
     expect(preview).toMatchObject({ gross: R(22000), ctc: { raw_annual_ctc: R(295680.25), annual_ctc: R(295681) }, solution: { approximate: false } });
     const saved = salaryPreview(input({ ...overrides, amount: preview.ctc.annual_ctc, saved_gross: preview.gross }));
@@ -103,10 +106,10 @@ describe('Eligible ESI is the first CTC preview option', () => {
     const components = [{ ...STANDARD_STRUCTURE[0], calc_type: 'PCT_CTC', calc_value: 40 },
       { ...STANDARD_STRUCTURE[3], seq: 2 },
       { ...STANDARD_STRUCTURE[2], seq: 3, name: 'Bonus', calc_value: 374, frequency: 'YEARLY', pay_month: 4 }];
-    const rates = { pf: AJPWER_RATES.pf, esi: AJPWER_RATES.esi };
-    const overrides = { components, mode: 'GROSS', amount: R(1081), esi_enabled: false, rates };
+    const rates = { pf: AJPWER_RATES.pf, esi: NO_ESI };
+    const overrides = { components, mode: 'GROSS', amount: R(1081), rates };
     const preview = salaryPreview(input(overrides));
-    const basis = ctcForGross(preview.gross, { ...ctx, components, esi_enabled: false, rates });
+    const basis = ctcForGross(preview.gross, { ...ctx, components, rates });
     expect(preview.ctc).toMatchObject({ ctc_basis: R(13623.74), raw_annual_ctc: R(13623.74), annual_ctc: R(13624), employer_pf: R(54) });
     expect(preview.ctc.ctc_basis).toBe(basis.annual_ctc);
     expect(salaryPreview(input({ ...overrides, saved_gross: preview.gross })).structure).toEqual(preview.structure);
@@ -145,8 +148,8 @@ describe('Eligible ESI is the first CTC preview option', () => {
   it('chooses the lowest stable upward salary when the lower salary cycles between component bases', () => {
     const components = [STANDARD_STRUCTURE[0], { ...STANDARD_STRUCTURE[1], calc_type: 'PCT_CTC', calc_value: 30 },
       { ...STANDARD_STRUCTURE[3], seq: 3, counts_as_wages: true }];
-    const preview = salaryPreview(input({ components, amount: R(246792), esi_enabled: false, rates: { pf: AJPWER_RATES.pf, esi: AJPWER_RATES.esi } }));
-    const cycled = ctcForGross(R(19024), { ...ctx, components, esi_enabled: false, rates: { pf: AJPWER_RATES.pf, esi: AJPWER_RATES.esi } });
+    const preview = salaryPreview(input({ components, amount: R(246792), rates: { pf: AJPWER_RATES.pf, esi: NO_ESI } }));
+    const cycled = ctcForGross(R(19024), { ...ctx, components, rates: { pf: AJPWER_RATES.pf, esi: NO_ESI } });
     expect(cycled.ctc_basis).not.toBe(cycled.annual_ctc);
     expect(preview.gross).toBe(R(19025));
     expect(preview.ctc).toMatchObject({ ctc_basis: R(246816), annual_ctc: R(246816) });
@@ -170,11 +173,11 @@ describe('Eligible ESI is the first CTC preview option', () => {
   it('a stable normalized agreement produces the same saved preview, component basis and payroll contributions', () => {
     const components = [STANDARD_STRUCTURE[0], { ...STANDARD_STRUCTURE[1], calc_type: 'PCT_CTC', calc_value: 30 },
       { ...STANDARD_STRUCTURE[3], seq: 3, counts_as_wages: true }];
-    const rates = { pf: AJPWER_RATES.pf, esi: AJPWER_RATES.esi };
-    const preview = salaryPreview(input({ components, amount: R(246804), esi_enabled: false, rates }));
+    const rates = { pf: AJPWER_RATES.pf, esi: NO_ESI };
+    const preview = salaryPreview(input({ components, amount: R(246804), rates }));
     expect(preview.solution.approximate).toBe(false);
     expect(preview.ctc.ctc_basis).toBe(preview.ctc.annual_ctc);
-    const saved = salaryPreview(input({ components, amount: preview.ctc.annual_ctc, saved_gross: preview.gross, esi_enabled: false, rates }));
+    const saved = salaryPreview(input({ components, amount: preview.ctc.annual_ctc, saved_gross: preview.gross, rates }));
     expect(saved.structure).toEqual(preview.structure);
     expect(saved.ctc).toEqual(preview.ctc);
     const payroll = assemblePayslip(payslipInput({ components, monthly_gross: preview.gross, annual_ctc: preview.ctc.annual_ctc, rates: { ...rates, recovery_cap_pct: 40 } }));
@@ -200,13 +203,6 @@ describe('Eligible ESI is the first CTC preview option', () => {
     const preview = salaryPreview(input({ chosen_gross: R(21644) }));
     expect(preview).toMatchObject({ gross: R(21644), esi_within_ceiling: false, esi_eligible_gross: R(21000),
       ctc: { employer_esi: 0, annual_ctc: R(275316) }, esi: { employee: 0, employer: 0 },
-    });
-  });
-
-  it('does not enable ESI when disabled, but still reports the valid ESI-included CTC candidate', () => {
-    const preview = salaryPreview(input({ esi_enabled: false }));
-    expect(preview).toMatchObject({ gross: R(21644), esi_within_ceiling: false, esi_eligible_gross: R(21000),
-      solution: { ambiguous: false, alternative: null }, ctc: { employer_esi: 0 }, esi: { employee: 0, employer: 0 },
     });
   });
 
@@ -240,16 +236,4 @@ describe('Eligible ESI is the first CTC preview option', () => {
     expect(above).toMatchObject({ esi_within_ceiling: false, esi_eligible_gross: null, esi: { employee: 0 } });
   });
 
-  it('reports gross-mode eligibility without turning on a disabled ESI flag', () => {
-    expect(salaryPreview(input({ mode: 'GROSS', amount: R(21000), esi_enabled: false }))).toMatchObject({
-      gross: R(21000), esi_within_ceiling: true, esi_eligible_gross: R(21000), esi: { employee: 0, employer: 0 },
-    });
-  });
-
-  it('preserves trusted saved gross after a statutory flag changes, without accepting an invalid editable choice', () => {
-    const actual = salaryPreview(input({ esi_enabled: false, saved_gross: R(21000) }));
-    expect(actual).toMatchObject({ gross: R(21000), esi_within_ceiling: true, ctc: { employer_esi: 0 } });
-    expect(salaryPreview(input({ esi_enabled: false, chosen_gross: R(21000) })).gross).toBe(R(21644));
-    expect(salaryPreview(input({ chosen_gross: R(19000) })).gross).toBe(R(21000));
-  });
 });

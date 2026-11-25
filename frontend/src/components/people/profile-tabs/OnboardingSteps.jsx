@@ -225,8 +225,8 @@ export function StatutoryStep({ e, onSaved, onSkip, disabled }) {
         <Field label="Pension (EPS)" hint="Off for someone not eligible, e.g. over 58">
           {(id) => <div className="flex h-9 items-center"><Switch id={id} checked={f.eps_enabled} disabled={disabled || !f.pf_enabled} onCheckedChange={(v) => set('eps_enabled', v)} label="EPS" /></div>}
         </Field>
-        <Field label="ESI" hint="Applies only within the ESI wage ceiling">
-          {(id) => <div className="flex h-9 items-center"><Switch id={id} checked={f.esi_enabled} disabled={disabled} onCheckedChange={(v) => set('esi_enabled', v)} label="ESI" /></div>}
+        <Field label="ESI" hint="Follows the gross: applies when it is within the ESI ceiling">
+          {(id) => <div id={id} className="flex h-9 items-center text-[14px] text-muted-foreground">Automatic</div>}
         </Field>
         <Field label="Professional tax state">
           {(id) => (

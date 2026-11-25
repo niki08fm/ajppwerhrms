@@ -7,13 +7,13 @@ import { NEW_REGIME, OLD_REGIME, PF_ON, PT_SLABS, R, RATES, fullMonthTotals } fr
 vi.mock('../../src/utils/crypto.js', () => ({ decryptPII: (value) => value }));
 
 const date = (value) => new Date(`${value}T00:00:00Z`);
-const component = (seq, name, calc_type, calc_value, counts_as_esi_wages) => ({
-  seq, name, calc_type, calc_value, counts_as_esi_wages, max_amount: null,
+const component = (seq, name, calc_type, calc_value) => ({
+  seq, name, calc_type, calc_value, max_amount: null,
   frequency: 'MONTHLY', pay_month: null, is_taxable: true, counts_as_wages: name === 'Basic',
 });
 const components = (basicPercent = 50) => [
-  component(1, 'Basic', 'PCT_GROSS', basicPercent, true),
-  component(2, 'Special Allowance', 'BALANCE', 0, false),
+  component(1, 'Basic', 'PCT_GROSS', basicPercent),
+  component(2, 'Special Allowance', 'BALANCE', 0),
 ];
 const salary = (id, structure_id, valid_from, valid_to = null, extra = {}) => ({
   id, structure_id, valid_from: date(valid_from), valid_to: valid_to ? date(valid_to) : null,
@@ -44,55 +44,36 @@ async function payslip(db, ym = '2026-08', statutory = {}, rates = RATES) {
   return computePayslip(db, employee, ym, month, ctx);
 }
 
-describe('Selected ESI wages are resolved with the salary effective at contribution-period start', () => {
-  it('uses the earlier structure and agreed CTC basis, while contributions use current earned wages', async () => {
-    const original = [component(1, 'Basic', 'PCT_CTC', 40, true), component(2, 'Special Allowance', 'BALANCE', 0, false)];
+describe('ESI follows the gross in force at the contribution-period start', () => {
+  const pay = (gross) => ({ amount: BigInt(R(gross)), monthly_gross: BigInt(R(gross)) });
+
+  it('a raise mid-period keeps ESI to the period end, on the whole gross; the next period follows the new gross', async () => {
     const db = database([
-      salary('earlier', 'original', '2025-01-01', '2026-07-31', { mode: 'CTC', amount: BigInt(R(600000)) }),
-      salary('latest', 'revised', '2026-08-01'),
-    ], { original, revised: components(80) });
+      salary('earlier', 'structure', '2025-01-01', '2026-07-31', pay(20000)),
+      salary('latest', 'structure', '2026-08-01', null, pay(30000)),
+    ], { structure: components(50) });
     const august = await payslip(db);
     expect(august.esi).toMatchObject({ applicable: true, locked_until: '2026-09-30' });
-    expect(august.result).toMatchObject({ gross: R(30000), statutory_gross: R(30000), esi_wage: R(24000) });
-    expect(august.result.lines.find((line) => line.code === 'ESI').amount).toBe(R(180));
-    expect(db.salaryComponent.findMany.mock.calls.map(([query]) => query.where.structure_id)).toEqual(['revised', 'original']);
+    // ESI wages are the whole gross: Basic and Special Allowance alike.
+    expect(august.result).toMatchObject({ gross: R(30000), esi_wage: R(30000) });
+    expect(august.result.lines.find((line) => line.code === 'ESI').amount).toBe(R(225));
 
     const october = await payslip(db, '2026-10');
     expect(october.esi.applicable).toBe(false);
     expect(october.result.lines.some((line) => line.code === 'ESI')).toBe(false);
   });
 
-  it('does not enroll mid-period merely because a later structure excludes more earnings', async () => {
-    const db = database([
-      salary('earlier', 'original', '2025-01-01', '2026-07-31'),
-      salary('latest', 'revised', '2026-08-01'),
-    ], { original: components(80), revised: components(50) });
-    expect((await payslip(db)).esi.applicable).toBe(false);
-    const october = await payslip(db, '2026-10');
-    expect(october.esi.applicable).toBe(true);
-    expect(october.result.esi_wage).toBe(R(15000));
-  });
-
-  it('reconstructs gross-agreement % of CTC wages with the rates at contribution-period entry', async () => {
-    const structure = [component(1, 'Basic', 'PCT_CTC', 50, true), component(2, 'Special Allowance', 'BALANCE', 0, false)];
-    const db = database([salary('original', 'structure', '2025-01-01')], { structure });
-    db.statutoryRates = { findFirst: vi.fn(async () => ({ id: 'entry-rates', valid_from: date('2025-04-01'),
-      pf: RATES.pf, esi: RATES.esi, recovery_cap_pct: 40 })) };
-    const currentRates = { ...RATES, pf: { ...RATES.pf, employer_pct: 90 } };
-    const august = await payslip(db, '2026-08', {}, currentRates);
-    expect(db.statutoryRates.findFirst).toHaveBeenCalledWith(expect.objectContaining({
-      where: { valid_from: { lte: date('2026-04-01') }, deleted_at: null },
-    }));
+  it('needs no switch: a gross within the ceiling has ESI even with the old switch off', async () => {
+    const db = database([salary('only', 'structure', '2025-01-01', null, pay(20000))], { structure: components(50) });
+    const august = await payslip(db, '2026-08', { esi_enabled: false });
     expect(august.esi.applicable).toBe(true);
-    expect(august.result.esi_wage).toBeGreaterThan(R(21000));
+    expect(august.result.esi_wage).toBe(R(20000));
+    expect(august.result.lines.find((line) => line.code === 'ESI').amount).toBe(R(150));
   });
 
-  it('preserves a paid contribution-period lock when the employee setting is switched off', async () => {
-    const db = database([salary('original', 'structure', '2025-01-01')], { structure: components(80) });
-    const august = await payslip(db, '2026-08', { esi_enabled: false, esi_locked_until: date('2026-09-30') });
-    expect(august.esi).toMatchObject({ applicable: true, locked_until: '2026-09-30' });
-    expect(august.result.lines.find((line) => line.code === 'ESI').amount).toBe(R(180));
-    expect((await payslip(db, '2026-10', { esi_enabled: false, esi_locked_until: date('2026-09-30') })).esi.applicable).toBe(false);
+  it('a gross above the ceiling at the period start has no ESI', async () => {
+    const db = database([salary('only', 'structure', '2025-01-01', null, pay(21500))], { structure: components(50) });
+    expect((await payslip(db)).esi.applicable).toBe(false);
   });
 });
 

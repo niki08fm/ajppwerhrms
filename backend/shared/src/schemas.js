@@ -191,7 +191,8 @@ export const salaryComponentSchema = z
   .strict()
   .refine((c) => c.max_amount === null || isPercentCalc(c.calc_type), { message: 'A maximum only applies to a percentage component.', path: ['max_amount'] })
   .refine((c) => !isPercentCalc(c.calc_type) || c.calc_value <= 100, { message: 'A percentage cannot be more than 100.', path: ['calc_value'] })
-  .transform((c) => ({ ...c, counts_as_esi_wages: c.frequency === 'MONTHLY' && c.counts_as_esi_wages }));
+  // ESI wages are the whole monthly gross: every monthly component counts.
+  .transform((c) => ({ ...c, counts_as_esi_wages: c.frequency === 'MONTHLY' }));
 
 /**
  * Whatever is left of gross is the Special Allowance. A structure sent without

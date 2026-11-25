@@ -183,12 +183,19 @@ describe('TDS', () => {
   });
 });
 
-describe('ESI switched off mid-period', () => {
-  it('continues to the end of the contribution period once paid in it, then stops', () => {
-    const april = esiEligibility({ esi_enabled: true, date: '2026-04-30', fixed_gross_at_block_start: R(20000), esi_locked_until: null }, RATES.esi);
-    const june = esiEligibility({ esi_enabled: false, date: '2026-06-30', fixed_gross_at_block_start: R(20000), esi_locked_until: april.esi_locked_until }, RATES.esi);
+describe('ESI follows gross, by contribution period', () => {
+  it('applies when gross at the period start is within the ceiling, with no switch to tick', () => {
+    const april = esiEligibility({ esi_enabled: false, date: '2026-04-30', fixed_gross_at_block_start: R(20000), esi_locked_until: null }, RATES.esi);
+    expect(april).toMatchObject({ applicable: true, esi_locked_until: '2026-09-30' });
+    expect(esiEligibility({ date: '2026-04-30', fixed_gross_at_block_start: R(21000), esi_locked_until: null }, RATES.esi).applicable).toBe(true);
+    expect(esiEligibility({ date: '2026-04-30', fixed_gross_at_block_start: R(21000) + 100, esi_locked_until: null }, RATES.esi).applicable).toBe(false);
+  });
+
+  it('a raise mid-period keeps ESI to the period end; the next period follows the new gross', () => {
+    const april = esiEligibility({ date: '2026-04-30', fixed_gross_at_block_start: R(20000), esi_locked_until: null }, RATES.esi);
+    const june = esiEligibility({ date: '2026-06-30', fixed_gross_at_block_start: R(20000), esi_locked_until: april.esi_locked_until }, RATES.esi);
     expect(june.applicable).toBe(true);
-    const october = esiEligibility({ esi_enabled: false, date: '2026-10-31', fixed_gross_at_block_start: R(20000), esi_locked_until: april.esi_locked_until }, RATES.esi);
+    const october = esiEligibility({ date: '2026-10-31', fixed_gross_at_block_start: R(25000), esi_locked_until: april.esi_locked_until }, RATES.esi);
     expect(october.applicable).toBe(false);
   });
 });
