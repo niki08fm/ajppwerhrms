@@ -115,7 +115,7 @@ function ReportPicker({ groups, value, onChange }) {
       <Pop.Trigger asChild>
         <button
           aria-label={`Report: ${current?.label ?? 'choose'}`}
-          className="flex h-10 w-full items-center gap-2 rounded-md border bg-card px-3 text-left shadow-xs hover:border-primary/40 sm:w-80"
+          className="flex h-10 w-full items-center gap-2 rounded-md border bg-card px-3 text-left shadow-xs hover:border-primary/40 sm:w-72"
         >
           <LayoutList className="size-4 shrink-0 text-muted-foreground" aria-hidden />
           <span className="text-[13px] text-muted-foreground">Report</span>
@@ -232,15 +232,15 @@ export default function ReportCenter() {
             } else set({ period: next.preset, from: '', to: '' });
           }}
         />
-        <Select className="w-full sm:w-44" aria-label="Company" value={company} onChange={(e) => set({ company: e.target.value })}>
+        <Select className="w-full sm:w-40" aria-label="Company" value={company} onChange={(e) => set({ company: e.target.value })}>
           <option value="">Both companies</option>
           {COMPANIES.map((c) => <option key={c.key} value={c.key}>{c.name}</option>)}
         </Select>
-        <Select className="w-full sm:w-48" aria-label="Department" value={department} onChange={(e) => set({ department: e.target.value })}>
+        <Select className="w-full sm:w-44" aria-label="Department" value={department} onChange={(e) => set({ department: e.target.value })}>
           <option value="">All departments</option>
           {(lk.data?.departments ?? []).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
         </Select>
-        <Select className="w-full sm:w-48" aria-label="Site" value={site} onChange={(e) => set({ site: e.target.value })}>
+        <Select className="w-full sm:w-44" aria-label="Site" value={site} onChange={(e) => set({ site: e.target.value })}>
           <option value="">All sites</option>
           {(lk.data?.sites ?? []).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
         </Select>
