@@ -33,8 +33,8 @@ export const esiRatesSchema = z
     ceiling: paise,
     employee_pct: percent,
     employer_pct: percent,
-    /** Standard ESI contribution wages include OT; exclusion must be explicitly configured. */
-    include_overtime: z.boolean().default(true),
+    /** No longer used: overtime is never part of ESI wages. Kept so older rates rows still read. */
+    include_overtime: z.boolean().default(false),
   })
   .strict();
 

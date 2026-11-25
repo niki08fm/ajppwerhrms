@@ -172,7 +172,8 @@ export function assemblePayslip(input) {
   // monthly earnings after LOP. OT inclusion is an explicit effective-dated
   // ESI setting; legacy rates retain the standard inclusion. Off-day pay stays included.
   const statutory_gross = componentsEarned + otAmount + offdayTotal;
-  const esi_wage = esiBaseEarned + (input.rates.esi.include_overtime !== false ? otAmount : 0) + offdayTotal;
+  // ESI wages: the earned monthly gross and off-day pay. Overtime is never part of them.
+  const esi_wage = esiBaseEarned + offdayTotal;
 
   // 7. Statutory deductions.
   const pf = computePf(pfBaseEarned, input.statutory, input.rates.pf);
