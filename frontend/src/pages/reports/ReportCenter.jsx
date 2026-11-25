@@ -4,14 +4,14 @@ import { Command } from 'cmdk';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { CalendarRange, Check, ChevronDown, Download, FileSpreadsheet, LayoutList, Search } from 'lucide-react';
-import { addMonths, COMPANIES, formatYearMonth, istDate, ymOf } from '@ajpwer/shared';
+import { addMonths, COMPANIES, istDate, ymOf } from '@ajpwer/shared';
 import { api, download, errorMessage } from '@/services/api';
 import { useSession } from '@/context/SessionContext';
 import { useDebounced } from '@/hooks';
 import { cn } from '@/utils';
 import { Money, Mono, PageHeader, PersonLink, Stat } from '@/components/bits';
 import { DataTable } from '@/components/data-table';
-import { Chip, EmptyState, ErrorState, Notice, SkeletonRows } from '@/components/states';
+import { EmptyState, ErrorState, SkeletonRows } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input, Select } from '@/components/ui/form';
@@ -237,8 +237,6 @@ export default function ReportCenter() {
           <div className="flex flex-wrap items-end justify-between gap-2">
             <div>
               <h2 className="font-display text-xl font-semibold">{current?.label ?? 'Report'}</h2>
-              <p className="text-[13px] text-muted-foreground">{valid ? (from === to ? formatYearMonth(from) : `${formatYearMonth(from)} – ${formatYearMonth(to)}`) : 'Choose a valid period'} · {company ? COMPANIES.find((c) => c.key === company)?.name : 'Both companies'}</p>
-              <div className="mt-1.5"><Coverage from={from} to={to} valid={valid} coverage={rep?.coverage} /></div>
             </div>
           </div>
           <Card>
@@ -276,29 +274,6 @@ export default function ReportCenter() {
   );
 }
 
-/** Which months the period covers, which have payroll and which are missing or still provisional. */
-function Coverage({ from, to, valid, coverage }) {
-  if (!valid || !coverage) return null;
-  const run = coverage.included.length;
-  return (
-    <div className="flex flex-wrap items-center gap-2 text-[13px]">
-      <span className="text-muted-foreground">
-        {coverage.months} month{coverage.months === 1 ? '' : 's'} · payroll run for <strong className="text-foreground">{run}</strong>
-      </span>
-      {coverage.included.map((m) => (
-        <Chip key={m.ym} tone={m.state === 'RUN' ? 'warning' : 'success'} title={m.state === 'RUN' ? 'Generated, not locked yet' : m.state === 'PAID' ? 'Paid' : 'Locked'}>
-          {shortYm(m.ym)}
-        </Chip>
-      ))}
-      {coverage.missing.length > 0 && (
-        <span className="text-muted-foreground">
-          · not run: {coverage.missing.map((m) => formatYearMonth(m)).join(', ')}
-        </span>
-      )}
-    </div>
-  );
-}
-
 function ReportTable({ rep, q }) {
   const cols = useMemo(
     () =>
@@ -321,11 +296,6 @@ function ReportTable({ rep, q }) {
   );
   return (
     <>
-      {rep.notes?.map((n) => (
-        <div key={n} className="px-3 pt-2">
-          <Notice>{n}</Notice>
-        </div>
-      ))}
       {Array.isArray(rep.extra?.by_month) && rep.extra.by_month.length > 0 && (
         <div className="flex flex-wrap gap-2 px-3 pt-3">
           {rep.extra.by_month.map((m) => (
@@ -379,7 +349,6 @@ function PeriodSummary({ rep }) {
   const trendMax = Math.max(1, ...x.trend.map((m) => m.ctc));
   return (
     <div className="flex flex-col gap-5 p-4">
-      {rep.notes?.map((n) => <Notice key={n}>{n}</Notice>)}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Stat label="People paid" value={x.headcount} sub={`${x.payslips} payslips over ${x.months_run} month${x.months_run === 1 ? '' : 's'}`} />
         <Stat label="Gross" value={<Money value={x.gross} />} />
