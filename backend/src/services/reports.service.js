@@ -20,14 +20,18 @@ export const REPORTS = [
   { key: 'adhoc', label: 'Adhoc' },
 ];
 
-/** A month's payslips, optionally only one company's (told apart by the employee code). */
-async function loadSlips(db, periodId, company) {
+/**
+ * A month's payslips, optionally only one company's (told apart by the employee code), and
+ * optionally only the employees in `only` (a Set of ids, from a department or site filter).
+ */
+async function loadSlips(db, periodId, company, only) {
   const slips = await db.payslip.findMany({
     where: { period_id: periodId },
     include: { lines: { orderBy: { seq: 'asc' } }, employee: { select: { id: true, code: true, name: true } } },
     orderBy: { employee: { code: 'asc' } },
   });
-  return company ? slips.filter((s) => companyOf(s.employee.code) === company) : slips;
+  const mine = company ? slips.filter((s) => companyOf(s.employee.code) === company) : slips;
+  return only ? mine.filter((s) => only.has(s.employee_id)) : mine;
 }
 
 const meta = (s) => s.meta;
@@ -38,7 +42,7 @@ const base = (s) => ({ code: meta(s).employee.code, name: meta(s).employee.name,
 export async function buildReport(db, ym, key, opts) {
   const period = await db.payrollPeriod.findUnique({ where: { period_ym: ym } });
   if (!period || period.state === 'DRAFT') throw new AppError('STEP_NOT_SUBMITTED', `${formatYearMonth(ym)} has not been run yet. Reports are available once it is.`, 409);
-  const slips = await loadSlips(db, period.id, opts?.company);
+  const slips = await loadSlips(db, period.id, opts?.company, opts?.only);
   const company = COMPANIES.find((c) => c.key === opts?.company);
   const title = `${REPORTS.find((r) => r.key === key).label} — ${formatYearMonth(ym)}${company ? ` — ${company.name}` : ''}`;
 

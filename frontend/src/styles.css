@@ -48,6 +48,10 @@
   --chart-3: oklch(0.75 0.12 205);
   --chart-4: oklch(0.82 0.18 100);
   --chart-5: oklch(0.45 0.08 220);
+  /* Analysis center: validated categorical palette (fixed order; colour follows the entity). */
+  --viz-1: #257de0; --viz-2: #f47230; --viz-3: #00b894; --viz-4: #f2a600;
+  --viz-5: #ee7fac; --viz-6: #008a17; --viz-7: #6a4ce2; --viz-8: #ec4647;
+  --viz-other: #9a9a9a; --viz-grid: #e7e7e7; --viz-axis: #c2c2c2;
 
   --sidebar: oklch(0.22 0.04 240);
   --sidebar-foreground: oklch(0.95 0.01 240);
@@ -107,6 +111,9 @@
   --chart-3: oklch(0.6 0.12 210);
   --chart-4: oklch(0.85 0.15 110);
   --chart-5: oklch(0.5 0.1 230);
+  --viz-1: #338ced; --viz-2: #e76624; --viz-3: #00a888; --viz-4: #d28e05;
+  --viz-5: #e24d8b; --viz-6: #0aac23; --viz-7: #9887ef; --viz-8: #eb6263;
+  --viz-other: #6f6f6f; --viz-grid: #22303b; --viz-axis: #3a4a57;
 
   --sidebar: oklch(0.12 0.03 240);
   --sidebar-foreground: oklch(0.9 0.01 240);

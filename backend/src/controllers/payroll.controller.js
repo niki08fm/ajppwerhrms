@@ -12,6 +12,7 @@ import { onboardingView } from '../services/employee.service.js';
 import { claimRun, releaseRun, computeIssues, getPeriod, heldBackList, ISSUE_LABELS, reopenStep, runPopulation, submitStep, transition } from '../services/payroll.service.js';
 import { buildReport, REPORTS, reportCSV, reportXLSX } from '../services/reports.service.js';
 import { buildPeriodReport, PERIOD_REPORTS } from '../services/period-reports.service.js';
+import { buildAnalysis } from '../services/analysis.service.js';
 import { computeSettlementFor, upsertSettlement } from '../services/settlement.service.js';
 import { mapConcurrent } from '../utils/parallel.js';
 import { randomUUID } from 'node:crypto';
@@ -558,7 +559,9 @@ export const getPeriodReport = asyncHandler(async (req, res) => {
   const format = req.query.format || 'json';
   const wantsPii = format !== 'json' && can(req, 'pii.read');
   const company = companyParam(req.query.company);
-  const report = await buildPeriodReport(prisma, from, to, key, { pii: wantsPii, company });
+  const filters = z.object({ department_id: z.string().uuid().optional(), site_id: z.union([z.string().uuid(), z.literal('none')]).optional() })
+    .parse({ department_id: req.query.department_id || undefined, site_id: req.query.site_id || undefined });
+  const report = await buildPeriodReport(prisma, from, to, key, { pii: wantsPii, company, ...filters });
   const q = req.query.q?.toLowerCase();
   const filtered = q
     ? { ...report, rows: report.rows.filter((r) => String(r.name ?? '').toLowerCase().includes(q) || String(r.code ?? '').toLowerCase().includes(q)) }
@@ -567,7 +570,7 @@ export const getPeriodReport = asyncHandler(async (req, res) => {
   if (!can(req, 'reports.export')) throw new AppError('FORBIDDEN', 'Exporting reports needs the export permission.', 403);
   if (report.pii && wantsPii) await auditReq(req, { action: 'pii.read', entity_type: 'report', entity_id: null, detail: { report: key, from, to, rows: filtered.rows.length } });
   await auditReq(req, { action: 'export.report', entity_type: 'report', detail: { report: key, from, to, format, rows: filtered.rows.length } });
-  const fileName = `report-${key}-${from}${to !== from ? `-to-${to}` : ''}${company ? `-${company.toLowerCase()}` : ''}${q ? `-${q.replace(/[^a-z0-9]+/g, '-')}` : ''}`;
+  const fileName = `report-${key}-${from}${to !== from ? `-to-${to}` : ''}${company ? `-${company.toLowerCase()}` : ''}${filters.site_id ? '-site' : ''}${filters.department_id ? '-dept' : ''}${q ? `-${q.replace(/[^a-z0-9]+/g, '-')}` : ''}`;
   if (format === 'xlsx') {
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}.xlsx"`);
@@ -576,6 +579,17 @@ export const getPeriodReport = asyncHandler(async (req, res) => {
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${fileName}.csv"`);
   res.send(reportCSV(filtered));
+});
+
+/** The analysis center: a financial year by month, department, site and workforce. */
+export const getAnalysis = asyncHandler(async (req, res) => {
+  const q = z.object({
+    fy: z.coerce.number().int().min(2000).max(2100).optional(),
+    company: z.enum(COMPANIES.map((c) => c.key)).optional(),
+    department_id: z.string().uuid().optional(),
+    site_id: z.union([z.string().uuid(), z.literal('none')]).optional(),
+  }).parse(Object.fromEntries(Object.entries(req.query).filter(([, v]) => v !== '' && v !== undefined)));
+  res.json({ data: await buildAnalysis(prisma, q) });
 });
 
 export const getPayslip = asyncHandler(async (req, res) => {

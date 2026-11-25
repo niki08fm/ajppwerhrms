@@ -29,6 +29,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   PauseCircle,
+  PieChart as PieChartIcon,
   Plus,
   Scale,
   ScrollText,
@@ -79,6 +80,7 @@ const NAV = [
     items: [
       { to: '/payroll', label: 'Monthly payroll', icon: <Banknote /> },
       { to: '/reports', label: 'Report center', icon: <FileBarChart /> },
+      { to: '/analysis', label: 'Analysis center', icon: <PieChartIcon /> },
       { to: '/held-salaries', label: 'Held salaries', icon: <PauseCircle /> },
       { to: '/money', label: 'Loans and advances', icon: <HandCoins /> },
       { to: '/exits', label: 'Exits and settlement', icon: <UserMinus /> },

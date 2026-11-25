@@ -8,6 +8,7 @@ import { addMonths, COMPANIES, istDate, ymOf } from '@ajpwer/shared';
 import { api, download, errorMessage } from '@/services/api';
 import { useSession } from '@/context/SessionContext';
 import { useDebounced } from '@/hooks';
+import { useLookups } from '@/hooks/useLookups';
 import { cn } from '@/utils';
 import { Money, Mono, PageHeader, PersonLink, Stat } from '@/components/bits';
 import { DataTable } from '@/components/data-table';
@@ -38,6 +39,7 @@ const GROUP_HELP = {
   Payroll: 'Pay added up over the months',
   Statutory: 'PF, ESI, PT and TDS for the period',
   People: 'Joiners, exits, overtime and salary revisions',
+  Cost: 'Full cost to company and OT for customer approval',
   Analysis: 'Departments, settlements and one-offs',
 };
 
@@ -164,6 +166,9 @@ export default function ReportCenter() {
   const preset = sp.get('period') ?? '6m';
   const report = sp.get('report') ?? 'summary';
   const company = sp.get('company') ?? '';
+  const department = sp.get('department') ?? '';
+  const site = sp.get('site') ?? '';
+  const lk = useLookups();
   const [customFrom, setCustomFrom] = useState(sp.get('from') ?? addMonths(now, -3));
   const [customTo, setCustomTo] = useState(sp.get('to') ?? addMonths(now, -1));
   const [from, to] = preset === 'custom' ? [customFrom, customTo] : PRESETS.find((p) => p.key === preset).range(now);
@@ -178,8 +183,8 @@ export default function ReportCenter() {
   const list = useQuery({ queryKey: ['period-reports'], queryFn: () => api.get('/reports/period').then((r) => r.data), staleTime: Infinity });
   const valid = /^\d{4}-\d{2}$/.test(from) && /^\d{4}-\d{2}$/.test(to) && from <= to;
   const r = useQuery({
-    queryKey: ['period-report', report, from, to, company, q],
-    queryFn: () => api.get(`/reports/period/${report}`, { from, to, company: company || undefined, q: q || undefined }).then((x) => x.data),
+    queryKey: ['period-report', report, from, to, company, department, site, q],
+    queryFn: () => api.get(`/reports/period/${report}`, { from, to, company: company || undefined, department_id: department || undefined, site_id: site || undefined, q: q || undefined }).then((x) => x.data),
     enabled: valid,
     placeholderData: (prev) => (prev?.key === report ? prev : undefined),
   });
@@ -189,7 +194,7 @@ export default function ReportCenter() {
     setExportError(null);
     setExporting(format);
     try {
-      const qs = new URLSearchParams({ from, to, format, ...(company ? { company } : {}), ...(q ? { q } : {}) });
+      const qs = new URLSearchParams({ from, to, format, ...(company ? { company } : {}), ...(department ? { department_id: department } : {}), ...(site ? { site_id: site } : {}), ...(q ? { q } : {}) });
       await download(`/reports/period/${report}?${qs}`, `report-${report}-${from}${to !== from ? `-to-${to}` : ''}.${format}`);
     } catch (e) {
       setExportError(errorMessage(e));
@@ -230,6 +235,14 @@ export default function ReportCenter() {
         <Select className="w-full sm:w-44" aria-label="Company" value={company} onChange={(e) => set({ company: e.target.value })}>
           <option value="">Both companies</option>
           {COMPANIES.map((c) => <option key={c.key} value={c.key}>{c.name}</option>)}
+        </Select>
+        <Select className="w-full sm:w-48" aria-label="Department" value={department} onChange={(e) => set({ department: e.target.value })}>
+          <option value="">All departments</option>
+          {(lk.data?.departments ?? []).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+        </Select>
+        <Select className="w-full sm:w-48" aria-label="Site" value={site} onChange={(e) => set({ site: e.target.value })}>
+          <option value="">All sites</option>
+          {(lk.data?.sites ?? []).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
         </Select>
       </div>
 

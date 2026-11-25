@@ -38,6 +38,7 @@ const Projects = lazy(() => import('./pages/setup/Projects'));
 const Departments = lazy(() => import('./pages/setup/Departments'));
 const Audit = lazy(() => import('./pages/setup/Audit'));
 const ReportCenter = lazy(() => import('./pages/reports/ReportCenter'));
+const AnalysisCenter = lazy(() => import('./pages/reports/AnalysisCenter'));
 
 function Loading() {
   return (
@@ -119,6 +120,7 @@ export function App() {
                   <Route path="payroll/:ym" element={<RunPayroll />} />
                   <Route path="money" element={<Money />} />
                   <Route path="reports" element={<ReportCenter />} />
+                  <Route path="analysis" element={<AnalysisCenter />} />
                   <Route path="held-salaries" element={<HeldSalaries />} />
                   <Route path="people" element={<People />} />
                   <Route path="people/:id" element={<Profile />} />

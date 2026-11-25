@@ -2,6 +2,7 @@ import { addMonths, COMPANIES, companyOf, formatYearMonth, lastOfMonth, ymOf } f
 import { n, toDbDate, fromDbDate } from '../utils/dbDates.js';
 import { AppError } from '../utils/errors.js';
 import { buildReport } from './reports.service.js';
+import { NO_SITE, sharesOf, siteDays } from './analysis.service.js';
 
 /*
  * Reports over a period of months: every monthly payroll report added up across the months
@@ -24,6 +25,8 @@ export const PERIOD_REPORTS = [
   { key: 'exits', label: 'Exits', group: 'People' },
   { key: 'overtime', label: 'Overtime hours', group: 'People' },
   { key: 'revisions', label: 'Salary revisions', group: 'People' },
+  { key: 'cost', label: 'Full cost to company', group: 'Cost' },
+  { key: 'ot_approval', label: 'OT hours for customer approval', group: 'Cost' },
   { key: 'department', label: 'By department', group: 'Analysis' },
   { key: 'settlements', label: 'Settlements', group: 'Analysis' },
   { key: 'adhoc', label: 'One-time adjustments', group: 'Analysis' },
@@ -112,15 +115,48 @@ async function runMonths(db, from, to) {
   };
 }
 
-async function periodSlips(db, periods, company) {
+async function periodSlips(db, periods, company, scope = null) {
   if (!periods.length) return [];
   const slips = await db.payslip.findMany({
     where: { period_id: { in: periods.map((p) => p.id) } },
     include: { lines: true, period: { select: { period_ym: true } } },
     orderBy: { employee_id: 'asc' },
   });
-  return company ? slips.filter((s) => companyOf(s.meta.employee.code) === company) : slips;
+  const mine = company ? slips.filter((s) => companyOf(s.meta.employee.code) === company) : slips;
+  return scope ? mine.filter((s) => scope.months.get(s.period.period_ym)?.has(s.employee_id)) : mine;
 }
+
+/**
+ * Department and site filters: who counts in each month. A department filter keeps the
+ * payslips of that department (as it was that month); a site filter keeps the people who
+ * worked at that site that month (from their punches). Null without filters.
+ */
+async function scopeOf(db, periods, from, to, opts) {
+  if (!opts.department_id && !opts.site_id) return null;
+  const slips = periods.length
+    ? await db.payslip.findMany({ where: { period_id: { in: periods.map((p) => p.id) } }, select: { employee_id: true, meta: true, period: { select: { period_ym: true } } } })
+    : [];
+  const days = opts.site_id ? await siteDays(db, `${from}-01`, lastOfMonth(to)) : null;
+  const atSite = (id, ym) => sharesOf(days, { employee_id: id, ym }).some(([site]) => site === opts.site_id);
+  const months = new Map();
+  const ids = new Set();
+  const codes = new Set();
+  for (const s of slips) {
+    const ym = s.period.period_ym;
+    if (opts.department_id && s.meta.department?.id !== opts.department_id) continue;
+    if (opts.site_id && !atSite(s.employee_id, ym)) continue;
+    if (!months.has(ym)) months.set(ym, new Set());
+    months.get(ym).add(s.employee_id);
+    ids.add(s.employee_id);
+    codes.add(s.meta.employee.code);
+  }
+  // People reports (joiners, exits, revisions): anyone at the site during the period.
+  const sitePeople = days ? new Set([...days].filter(([, m]) => m.has(opts.site_id)).map(([k]) => k.split(':')[0])) : null;
+  return { months, ids, codes, sitePeople, department_id: opts.department_id ?? null, site_id: opts.site_id ?? null };
+}
+
+/** People reports under the filters: department now, and worked at the site in the period. */
+const inPeopleScope = (scope, e) => !scope || ((!scope.department_id || e.department_id === scope.department_id) && (!scope.site_id || scope.sitePeople.has(e.id)));
 
 const sumKind = (s, k) => s.lines.filter((l) => l.kind === k).reduce((a, l) => a + n(l.amount), 0);
 const hours = (min) => Math.round((min / 60) * 100) / 100;
@@ -138,6 +174,8 @@ export async function buildPeriodReport(db, from, to, key, opts = {}) {
   const label = PERIOD_REPORTS.find((r) => r.key === key).label;
   const title = `${label} — ${periodLabel(from, to)}${company ? ` — ${company.name}` : ''}`;
   const { periods, coverage } = await runMonths(db, from, to);
+  const scope = await scopeOf(db, periods, from, to, opts);
+  const monthOpts = (ym) => (scope ? { ...opts, only: scope.months.get(ym) ?? new Set() } : opts);
   const head = { key, title, period: { from, to, label: periodLabel(from, to) }, coverage };
   const note = coverage.missing.length
     ? `${coverage.missing.length} month${coverage.missing.length === 1 ? '' : 's'} in this period ${coverage.missing.length === 1 ? 'has' : 'have'} no payroll run and ${coverage.missing.length === 1 ? 'is' : 'are'} not included: ${coverage.missing.map(formatYearMonth).join(', ')}.`
@@ -146,16 +184,16 @@ export async function buildPeriodReport(db, from, to, key, opts = {}) {
   const baseNotes = [note, provisional].filter(Boolean);
 
   // People reports: from employee records, whether or not payroll ran.
-  if (key === 'joiners' || key === 'exits') return { ...head, ...(await peopleReport(db, from, to, key, company)), notes: [] };
-  if (key === 'revisions') return { ...head, ...(await revisionsReport(db, from, to, company)), notes: ['Salary changes that take effect in the period. A joining salary is not a revision; restating an agreement with pay unchanged is left out.'] };
+  if (key === 'joiners' || key === 'exits') return { ...head, ...(await peopleReport(db, from, to, key, company, scope)), notes: [] };
+  if (key === 'revisions') return { ...head, ...(await revisionsReport(db, from, to, company, scope)), notes: ['Salary changes that take effect in the period. A joining salary is not a revision; restating an agreement with pay unchanged is left out.'] };
 
   if (!periods.length) return { ...head, columns: [], rows: [], notes: [note ?? 'No payroll has been run in this period.'], empty: true };
 
   switch (key) {
     case 'summary': {
-      const monthly = await Promise.all(periods.map((p) => buildReport(db, p.period_ym, 'summary', opts)));
+      const monthly = await Promise.all(periods.map((p) => buildReport(db, p.period_ym, 'summary', monthOpts(p.period_ym))));
       const rows = monthly[0].rows.map((step, i) => ({ ...step, amount: monthly.reduce((a, r) => a + (r.rows[i]?.amount ?? 0), 0) }));
-      const slips = await periodSlips(db, periods, opts.company);
+      const slips = await periodSlips(db, periods, opts.company, scope);
       const people = new Set(slips.map((s) => s.employee_id));
       const sum = (k) => monthly.reduce((a, r) => a + (r.extra[k] ?? 0), 0);
       const otMin = slips.reduce((a, s) => a + (s.meta.ot?.paid_min ?? 0), 0);
@@ -174,14 +212,14 @@ export async function buildPeriodReport(db, from, to, key, opts = {}) {
           ctc: sum('ctc'),
           ot_hours: hours(otMin),
           ot_amount: slips.reduce((a, s) => a + sumKind(s, 'OT'), 0),
-          joiners: (await peopleRows(db, from, to, 'joiners', company)).length,
-          exits: (await peopleRows(db, from, to, 'exits', company)).length,
-          trend: (await trendRows(db, periods, opts.company)),
+          joiners: (await peopleRows(db, from, to, 'joiners', company, scope)).length,
+          exits: (await peopleRows(db, from, to, 'exits', company, scope)).length,
+          trend: (await trendRows(db, periods, opts.company, scope)),
         },
       };
     }
     case 'trend': {
-      const rows = await trendRows(db, periods, opts.company);
+      const rows = await trendRows(db, periods, opts.company, scope);
       const total = (k) => rows.reduce((a, r) => a + r[k], 0);
       return {
         ...head,
@@ -189,20 +227,22 @@ export async function buildPeriodReport(db, from, to, key, opts = {}) {
           { key: 'month', label: 'Month' },
           { key: 'state', label: 'Payroll' },
           { key: 'people', label: 'People' },
+          { key: 'normal', label: 'Normal wages', money: true },
+          { key: 'ot', label: 'OT wages', money: true },
+          { key: 'ot_hours', label: 'OT hours' },
           { key: 'gross', label: 'Gross', money: true },
-          { key: 'ot', label: 'Overtime', money: true },
           { key: 'deductions', label: 'Deductions', money: true },
           { key: 'net', label: 'Net pay', money: true },
           { key: 'employer', label: 'Employer contributions', money: true },
           { key: 'ctc', label: 'Cost to company', money: true },
         ],
         rows,
-        totals: { month: 'TOTAL', state: '', people: '', gross: total('gross'), ot: total('ot'), deductions: total('deductions'), net: total('net'), employer: total('employer'), ctc: total('ctc') },
+        totals: { month: 'TOTAL', state: '', people: '', normal: total('normal'), ot_hours: Math.round(total('ot_hours') * 10) / 10, gross: total('gross'), ot: total('ot'), deductions: total('deductions'), net: total('net'), employer: total('employer'), ctc: total('ctc') },
         notes: baseNotes,
       };
     }
     case 'department': {
-      const slips = await periodSlips(db, periods, opts.company);
+      const slips = await periodSlips(db, periods, opts.company, scope);
       const depts = new Map();
       for (const s of slips) {
         const d = s.meta.department.name;
@@ -232,10 +272,16 @@ export async function buildPeriodReport(db, from, to, key, opts = {}) {
       };
     }
     case 'overtime':
-      return { ...head, ...(await overtimeReport(db, periods, opts.company)), notes: baseNotes };
+      return { ...head, ...(await overtimeReport(db, periods, opts.company, scope)), notes: baseNotes };
+    case 'cost':
+      return { ...head, ...(await costReport(db, periods, opts.company, scope)), notes: baseNotes };
+    case 'ot_approval':
+      return { ...head, ...(await otApprovalReport(db, periods, from, to, opts.company, scope)), notes: baseNotes };
     default: {
-      const monthly = await Promise.all(periods.map((p) => buildReport(db, p.period_ym, key, opts)));
+      const monthly = await Promise.all(periods.map((p) => buildReport(db, p.period_ym, key, monthOpts(p.period_ym))));
       const combined = combineReports(monthly);
+      // Settlement rows (bank, settlements) are not from payslips: keep only people in the filter.
+      if (scope) combined.rows = combined.rows.filter((r) => (r.employee_id && scope.ids.has(r.employee_id)) || (!r.employee_id && r.code && scope.codes.has(r.code)));
       const latest = monthly.at(-1);
       if (key === 'register') {
         for (const c of combined.columns) {
@@ -272,8 +318,8 @@ export async function buildPeriodReport(db, from, to, key, opts = {}) {
 }
 
 /** One row a month: people paid, gross, overtime, deductions, net, employer contributions and CTC. */
-async function trendRows(db, periods, company) {
-  const slips = await periodSlips(db, periods, company);
+async function trendRows(db, periods, company, scope) {
+  const slips = await periodSlips(db, periods, company, scope);
   return periods.map((p) => {
     const mine = slips.filter((s) => s.period.period_ym === p.period_ym);
     const sum = (f) => mine.reduce((a, s) => a + f(s), 0);
@@ -284,6 +330,8 @@ async function trendRows(db, periods, company) {
       ym: p.period_ym,
       state: p.state === 'RUN' ? 'Generated' : p.state === 'LOCKED' ? 'Locked' : p.state === 'PAID' ? 'Paid' : p.state,
       people: mine.length,
+      normal: sum((s) => sumKind(s, 'COMPONENT') + sumKind(s, 'YEARLY')),
+      ot_hours: Math.round((sum((s) => s.meta.ot?.paid_min ?? 0) / 60) * 10) / 10,
       gross,
       ot: sum((s) => sumKind(s, 'OT')),
       deductions: sum((s) => n(s.total_deductions)),
@@ -295,8 +343,8 @@ async function trendRows(db, periods, company) {
 }
 
 /** Overtime by person over the period: hours worked, hours paid, hours over the caps, and the pay. */
-async function overtimeReport(db, periods, company) {
-  const slips = await periodSlips(db, periods, company);
+async function overtimeReport(db, periods, company, scope) {
+  const slips = await periodSlips(db, periods, company, scope);
   const people = new Map();
   for (const s of slips) {
     const ot = s.meta.ot;
@@ -337,14 +385,14 @@ async function overtimeReport(db, periods, company) {
   };
 }
 
-async function peopleRows(db, from, to, key, company) {
+async function peopleRows(db, from, to, key, company, scope = null) {
   const range = { gte: toDbDate(`${from}-01`), lte: toDbDate(lastOfMonth(to)) };
   const rows = await db.employee.findMany({
     where: { deleted_at: null, ...(key === 'joiners' ? { joined_on: range } : { last_day: range }) },
     include: { department: { select: { name: true } }, pay_group: { select: { name: true } } },
     orderBy: key === 'joiners' ? { joined_on: 'asc' } : { last_day: 'asc' },
   });
-  return company ? rows.filter((e) => companyOf(e.code) === company.key) : rows;
+  return rows.filter((e) => (!company || companyOf(e.code) === company.key) && inPeopleScope(scope, e));
 }
 
 const EXIT_LABELS = { RESIGNATION: 'Resignation', TERMINATION: 'Termination', CONTRACT_END: 'Contract end', RETIREMENT: 'Retirement', ABSCONDING: 'Absconding', DEATH: 'Death', OTHER: 'Other' };
@@ -362,8 +410,8 @@ function serviceText(fromDate, toDate) {
 }
 
 /** Joiners or exits in the period, with the month of each. */
-async function peopleReport(db, from, to, key, company) {
-  const rows = await peopleRows(db, from, to, key, company);
+async function peopleReport(db, from, to, key, company, scope) {
+  const rows = await peopleRows(db, from, to, key, company, scope);
   const month = (d) => formatYearMonth(ymOf(d));
   if (key === 'joiners') {
     return {
@@ -427,14 +475,14 @@ function byMonth(yms) {
  * Salary revisions taking effect in the period: each salary record that replaces an earlier
  * one, with the pay before and after. Restatements (pay unchanged) are left out.
  */
-async function revisionsReport(db, from, to, company) {
+async function revisionsReport(db, from, to, company, scope = null) {
   const range = { gte: toDbDate(`${from}-01`), lte: toDbDate(lastOfMonth(to)) };
   const changed = await db.employeeSalary.findMany({
     where: { deleted_at: null, valid_from: range, employee: { deleted_at: null } },
-    include: { employee: { select: { id: true, code: true, name: true, designation: true, department: { select: { name: true } } } } },
+    include: { employee: { select: { id: true, code: true, name: true, designation: true, department_id: true, department: { select: { name: true } } } } },
     orderBy: { valid_from: 'asc' },
   });
-  const mine = company ? changed.filter((r) => companyOf(r.employee.code) === company.key) : changed;
+  const mine = changed.filter((r) => (!company || companyOf(r.employee.code) === company.key) && inPeopleScope(scope, r.employee));
   const ids = [...new Set(mine.map((r) => r.employee_id))];
   const history = ids.length ? await db.employeeSalary.findMany({ where: { employee_id: { in: ids }, deleted_at: null }, orderBy: { valid_from: 'asc' } }) : [];
   const rows = [];
@@ -489,6 +537,107 @@ async function revisionsReport(db, from, to, company) {
       increase_pct: pct.length ? Math.round((pct.reduce((a, r) => a + r.increase_pct, 0) / pct.length) * 100) / 100 : '',
     },
     extra: { by_month: byMonth(rows.map((r) => ymOf(r.effective_from))), average_pct: pct.length ? Math.round((pct.reduce((a, r) => a + r.increase_pct, 0) / pct.length) * 100) / 100 : null },
+  };
+}
+
+/**
+ * Full cost to company by person: normal wages, other earnings, employer PF and ESI, cost to
+ * company, OT hours, and the total OT cost last.
+ */
+async function costReport(db, periods, company, scope) {
+  const slips = await periodSlips(db, periods, company, scope);
+  const people = new Map();
+  for (const s of slips) {
+    const m = s.meta;
+    const erEsi = s.lines.filter((l) => l.code === 'ER_ESI').reduce((a, l) => a + n(l.amount), 0);
+    const row = people.get(s.employee_id) ?? { employee_id: s.employee_id, code: m.employee.code, name: m.employee.name, department: m.department.name, months: 0, normal: 0, other: 0, er_pf: 0, er_esi: 0, ctc: 0, ot_min: 0, ot: 0 };
+    row.code = m.employee.code;
+    row.name = m.employee.name;
+    row.department = m.department.name;
+    row.months += 1;
+    row.normal += sumKind(s, 'COMPONENT') + sumKind(s, 'YEARLY');
+    row.other += sumKind(s, 'OFFDAY') + sumKind(s, 'LEAVE') + sumKind(s, 'ADHOC');
+    row.er_esi += erEsi;
+    row.er_pf += n(s.employer_total) - erEsi;
+    row.ctc += n(s.gross) + n(s.employer_total);
+    row.ot_min += m.ot?.paid_min ?? 0;
+    row.ot += sumKind(s, 'OT');
+    people.set(s.employee_id, row);
+  }
+  const rows = [...people.values()].map(({ ot_min, ...r }) => ({ ...r, ot_hours: hours(ot_min) })).sort((a, b) => a.code.localeCompare(b.code));
+  const total = (k) => rows.reduce((a, r) => a + r[k], 0);
+  return {
+    columns: [
+      { key: 'code', label: 'Code', mono: true },
+      { key: 'name', label: 'Name' },
+      { key: 'department', label: 'Department' },
+      { key: 'months', label: 'Months' },
+      { key: 'normal', label: 'Normal wages', money: true },
+      { key: 'other', label: 'Other earnings', money: true },
+      { key: 'er_pf', label: 'Employer PF', money: true },
+      { key: 'er_esi', label: 'Employer ESI', money: true },
+      { key: 'ctc', label: 'Cost to company (incl. OT)', money: true },
+      { key: 'ot_hours', label: 'OT hours' },
+      { key: 'ot', label: 'Total OT cost', money: true },
+    ],
+    rows,
+    totals: { code: '', name: count(rows.length, 'person', 'people'), department: '', months: '', normal: total('normal'), other: total('other'), er_pf: total('er_pf'), er_esi: total('er_esi'), ctc: total('ctc'), ot_hours: Math.round(total('ot_hours') * 100) / 100, ot: total('ot') },
+  };
+}
+
+/**
+ * OT hours for customer approval: by site and person, a column of hours for each month and the
+ * total. A person's month is split across sites by the days worked at each.
+ */
+async function otApprovalReport(db, periods, from, to, company, scope) {
+  const slips = (await periodSlips(db, periods, company, scope)).filter((s) => (s.meta.ot?.paid_min ?? 0) > 0);
+  const days = await siteDays(db, `${from}-01`, lastOfMonth(to));
+  const sites = new Map((await db.site.findMany({ select: { id: true, name: true } })).map((s) => [s.id, s.name]));
+  sites.set(NO_SITE.id, NO_SITE.name);
+  const months = periods.map((p) => p.period_ym);
+  const rows = new Map();
+  for (const s of slips) {
+    const ym = s.period.period_ym;
+    const paid = s.meta.ot.paid_min;
+    const pay = sumKind(s, 'OT');
+    for (const [site, share] of sharesOf(days, { employee_id: s.employee_id, ym })) {
+      if (scope?.site_id && site !== scope.site_id) continue;
+      const key = `${site}:${s.employee_id}`;
+      const row = rows.get(key) ?? { site: sites.get(site) ?? 'Unknown site', employee_id: s.employee_id, code: s.meta.employee.code, name: s.meta.employee.name, designation: s.meta.employee.designation ?? '', department: s.meta.department.name, minutes: {}, amount: 0 };
+      row.minutes[ym] = (row.minutes[ym] ?? 0) + paid * share;
+      row.amount += Math.round(pay * share);
+      rows.set(key, row);
+    }
+  }
+  const short = (ym) => formatYearMonth(ym).replace(/^(\w{3})\w* (\d{4})$/, (_, m, y) => `${m} ${y}`);
+  const out = [...rows.values()]
+    .map(({ minutes, ...r }) => {
+      const row = { ...r };
+      let total = 0;
+      for (const ym of months) {
+        row[`m:${ym}`] = hours(minutes[ym] ?? 0);
+        total += minutes[ym] ?? 0;
+      }
+      row.total = hours(total);
+      return row;
+    })
+    .sort((a, b) => a.site.localeCompare(b.site) || a.name.localeCompare(b.name));
+  const totals = { site: 'TOTAL', code: '', name: count(out.length, 'row'), designation: '', department: '', amount: out.reduce((a, r) => a + r.amount, 0), total: Math.round(out.reduce((a, r) => a + r.total, 0) * 100) / 100 };
+  for (const ym of months) totals[`m:${ym}`] = Math.round(out.reduce((a, r) => a + r[`m:${ym}`], 0) * 100) / 100;
+  return {
+    columns: [
+      { key: 'site', label: 'Site' },
+      { key: 'code', label: 'Code', mono: true },
+      { key: 'name', label: 'Name' },
+      { key: 'designation', label: 'Designation' },
+      { key: 'department', label: 'Department' },
+      ...months.map((ym) => ({ key: `m:${ym}`, label: short(ym) })),
+      { key: 'total', label: 'Total OT hours' },
+      { key: 'amount', label: 'OT pay', money: true },
+    ],
+    rows: out,
+    totals,
+    extra: { signature: true },
   };
 }
 
