@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Pencil, Plus, Trash2 } from 'lucide-react';
+import { History, Pencil, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatINR, pfMaxContribution } from '@ajpwer/shared';
 import { api, errorMessage } from '@/services/api';
@@ -20,6 +20,8 @@ export default function Statutory() {
   const [editing, setEditing] = useState(false);
   const [editPt, setEditPt] = useState(null);
   const [publishRegime, setPublishRegime] = useState(null);
+  // Version history: { kind: 'rates' } | { kind: 'pt', state } | { kind: 'tax', code }
+  const [history, setHistory] = useState(null);
   const c = rates.data?.current;
   return (
     <div className="flex flex-col gap-4">
@@ -27,9 +29,14 @@ export default function Statutory() {
         title="Statutory rules"
         description="Rates are company-wide data with an effective date, editable without code. A payroll run records which rates row it used, so reopening an old month never applies today's rates to it."
         actions={
-          <Button onClick={() => setEditing(true)} disabled={!c}>
-            <Pencil /> Publish new rates
-          </Button>
+          <>
+            <Button variant="outline" onClick={() => setHistory({ kind: 'rates' })} disabled={!rates.data?.versions.length}>
+              <History /> Rates history ({rates.data?.versions.length ?? 0})
+            </Button>
+            <Button onClick={() => setEditing(true)} disabled={!c}>
+              <Pencil /> Publish new rates
+            </Button>
+          </>
         }
       />
 
@@ -114,15 +121,6 @@ export default function Statutory() {
           </Card>
         </div>
       )}
-      {rates.data && rates.data.versions.length > 1 && (
-        <p className="text-[13px] text-muted-foreground">
-          Earlier versions:{' '}
-          {rates.data.versions
-            .filter((v) => v.id !== c?.id)
-            .map((v) => v.valid_from)
-            .join(', ')}
-        </p>
-      )}
       <Card>
         <CardHeader
           title="Professional tax"
@@ -143,6 +141,11 @@ export default function Statutory() {
                   </span>
                   <span className="flex items-center gap-2">
                     <Chip>{s.headcount} people</Chip>
+                    {s.versions?.length > 0 && (
+                      <Button size="sm" variant="ghost" onClick={() => setHistory({ kind: 'pt', state: s.state })} aria-label={`${s.state} version history`} title="Version history">
+                        <History /> {s.versions.length}
+                      </Button>
+                    )}
                     <Button size="sm" variant="ghost" onClick={() => setEditPt(s)} aria-label={`Edit ${s.state}`}>
                       <Pencil />
                     </Button>
@@ -208,10 +211,13 @@ export default function Statutory() {
                 <div className="mb-2 flex items-center justify-between">
                   <span className="font-display font-semibold">
                     {r.name}
-                    <span className="ml-1.5 text-[12px] font-normal text-muted-foreground">from {r.valid_from}</span>
+                    <span className="ml-1.5 text-[12px] font-normal text-muted-foreground">{r.from_start ? `from ${r.valid_from} (and earlier)` : `from ${r.valid_from}`}{r.valid_to ? ` to ${r.valid_to}` : ''}</span>
                   </span>
                   <span className="flex items-center gap-2">
                     <Chip>{r.headcount} people</Chip>
+                    <Button size="sm" variant="ghost" onClick={() => setHistory({ kind: 'tax', code: r.code })} aria-label={`${r.code} regime version history`} title="Version history">
+                      <History />
+                    </Button>
                     <Button size="sm" variant="ghost" onClick={() => setPublishRegime(r)} aria-label={`Publish a tax year from ${r.name}`}>
                       <Pencil />
                     </Button>
@@ -241,7 +247,110 @@ export default function Statutory() {
       {editing && c && <RatesDialog current={c} onClose={() => setEditing(false)} />}
       {editPt && <PtDialog state={editPt} onClose={() => setEditPt(null)} />}
       {publishRegime && <RegimeDialog from={publishRegime} onClose={() => setPublishRegime(null)} />}
+      {history?.kind === 'rates' && rates.data && (
+        <VersionHistory
+          title="Statutory rates history"
+          rows={rates.data.versions.map((v) => ({ key: v.id, from: v.valid_from, to: v.valid_to, fromStart: v.from_start, current: v.id === c?.id,
+            summary: `PF ${v.pf.employee_pct}% up to ${formatINR(v.pf.ceiling)} · ESI ${v.esi.employee_pct}% + ${v.esi.employer_pct}% within ${formatINR(v.esi.ceiling)} · recovery cap ${Number(v.recovery_cap_pct)}%` }))}
+          remove={(row) => api.delete(`/statutory-rates/${row.key}`)}
+          queryKey={['statutory-rates']}
+          onClose={() => setHistory(null)}
+        />
+      )}
+      {history?.kind === 'pt' && pt.data && (() => {
+        const st = pt.data.find((x) => x.state === history.state);
+        if (!st) return null;
+        return (
+          <VersionHistory
+            title={`${st.state}: professional tax history`}
+            rows={st.versions.map((v) => ({ key: v.valid_from, from: v.valid_from, to: v.valid_to, fromStart: v.from_start, current: v.valid_from === st.valid_from,
+              summary: v.slabs.length ? v.slabs.map((x) => `${x.upto_amount === null ? 'above' : `≤ ${formatINR(x.upto_amount)}`}: ${x.amount ? formatINR(x.amount) : 'nil'}`).join(' · ') : 'No professional tax' }))}
+            remove={(row) => api.delete(`/pt-slabs/${encodeURIComponent(st.state)}/versions/${row.key}`)}
+            queryKey={['pt-slabs']}
+            onClose={() => setHistory(null)}
+          />
+        );
+      })()}
+      {history?.kind === 'tax' && regimes.data && (
+        <VersionHistory
+          title={`${history.code === 'NEW' ? 'New' : 'Old'} regime: tax years`}
+          rows={regimes.data.filter((r) => r.code === history.code).map((r) => ({ key: r.id, from: r.valid_from, to: r.valid_to, fromStart: r.from_start, current: false,
+            summary: `${r.name} · standard deduction ${formatINR(r.std_deduction)} · ${r.slabs.length} slabs` }))}
+          remove={(row) => api.delete(`/tax-regimes/${row.key}`)}
+          queryKey={['tax-regimes']}
+          onClose={() => setHistory(null)}
+        />
+      )}
     </div>
+  );
+}
+
+/**
+ * The versions of a dated setting, newest first. Each runs until the day before the next;
+ * the earliest also covers the time before it. Deleting one hands its dates to the one before
+ * (or, for the earliest, to the next). Locked or paid payroll refuses a delete that reaches it.
+ */
+function VersionHistory({ title, rows, remove, queryKey, onClose }) {
+  const qc = useQueryClient();
+  const [confirm, setConfirm] = useState(null);
+  const del = useMutation({
+    mutationFn: (row) => remove(row),
+    onSuccess: () => {
+      toast.success('Version deleted. Generated months it touched are flagged to be regenerated.');
+      setConfirm(null);
+      qc.invalidateQueries({ queryKey });
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+  const heir = (row) => {
+    const i = rows.indexOf(row);
+    if (rows.length === 1) return null;
+    // Rows are newest first: the one before in time is the next row in the list.
+    return i === rows.length - 1 ? `${rows[i - 1].from} will then apply from the start.` : `${rows[i + 1].from} will run on${row.to ? ` until ${row.to}` : ''}.`;
+  };
+  return (
+    <Dialog
+      open
+      wide
+      onOpenChange={(o) => !o && onClose()}
+      title={title}
+      description="Each version applies from its date until the day before the next one; the earliest also covers the time before it. Versions never overlap. Locked or paid payroll keeps the version it used."
+    >
+      <table className="w-full text-[14px]">
+        <thead className="text-left text-[13px] text-muted-foreground">
+          <tr><th className="pb-2 font-medium">Dates</th><th className="pb-2 font-medium">Rates</th><th /></tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.key} className="border-t align-top">
+              <td className="py-2.5 pr-3 whitespace-nowrap">
+                {row.fromStart ? `From the start` : row.from}
+                <div className="text-muted-foreground">to {row.to ?? 'ongoing'}</div>
+                {row.fromStart && <div className="text-[12px] text-muted-foreground">(dated {row.from})</div>}
+                {row.current && <Chip tone="success">In force</Chip>}
+              </td>
+              <td className="py-2.5 pr-3 text-[13px]">{row.summary}</td>
+              <td className="py-2.5 text-right">
+                <Button size="sm" variant="ghost" className="text-destructive" disabled={rows.length === 1} title={rows.length === 1 ? 'The only version: publish a correction on the same date instead.' : undefined} aria-label={`Delete the version from ${row.from}`} onClick={() => setConfirm(row)}>
+                  <Trash2 /> Delete
+                </Button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {confirm && (
+        <Dialog
+          open
+          onOpenChange={(o) => !o && setConfirm(null)}
+          title={`Delete the version from ${confirm.from}?`}
+          description={heir(confirm) ?? ''}
+          footer={<><Button variant="outline" onClick={() => setConfirm(null)}>Cancel</Button><Button variant="destructive" loading={del.isPending} onClick={() => del.mutate(confirm)}>Delete version</Button></>}
+        >
+          <p className="text-[14px]">Refused if it would change a month whose payroll is locked or paid.</p>
+        </Dialog>
+      )}
+    </Dialog>
   );
 }
 

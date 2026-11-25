@@ -34,6 +34,27 @@ export async function effectiveFrom(db, requested, { monthStart = false, field =
   return requested;
 }
 
+/**
+ * The first locked or paid payroll month between two dates (null = open-ended), or null.
+ * For company-wide dated settings (statutory rates, PT slabs, tax rates): changing what
+ * applies on those dates would change finalised pay.
+ */
+export async function frozenMonthBetween(db, from, to) {
+  const rows = await db.payrollPeriod.findMany({
+    where: { deleted_at: null, state: { in: ['LOCKED', 'PAID'] }, period_ym: { gte: from ? ymOf(from) : '0000-01', lte: to ? ymOf(to) : '9999-12' } },
+    orderBy: { period_ym: 'asc' },
+    select: { period_ym: true },
+    take: 1,
+  });
+  return rows[0]?.period_ym ?? null;
+}
+
+/** Refuse a change to dated settings that would reach locked or paid payroll. */
+export async function assertNoFrozenMonth(db, from, to, what) {
+  const ym = await frozenMonthBetween(db, from, to);
+  if (ym) throw new AppError('PAYROLL_FROZEN', `${what} would change ${formatYearMonth(ym)}, whose payroll is locked or paid. Unlock that payroll first, or publish a new version from a later date.`, 409);
+}
+
 /** Each employee's pay group history, oldest first. */
 export async function loadPayGroupHistory(db, employeeIds) {
   const out = new Map(employeeIds.map((id) => [id, []]));

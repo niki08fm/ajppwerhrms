@@ -6,16 +6,19 @@ import { lockPolicyRulesRead } from './policy-history.service.js';
 import { clipToLink } from './assignment-dates.service.js';
 import { lineageIdOf, lineageVersions, versionOn } from './structure-versions.service.js';
 
-/** The statutory rates row valid on a date: latest valid_from ≤ date. */
+/**
+ * The statutory rates row valid on a date: latest valid_from ≤ date. Like every dated setting,
+ * the earliest version also covers the time before it (it applies "from the start").
+ */
 export function ratesOn(db, date) {
   return scopedRead(db, `rates:${date}`, () => readRatesOn(db, date));
 }
 
 async function readRatesOn(db, date) {
-  const row = await db.statutoryRates.findFirst({
+  const row = (await db.statutoryRates.findFirst({
     where: { valid_from: { lte: toDbDate(date) }, deleted_at: null },
     orderBy: { valid_from: 'desc' },
-  });
+  })) ?? (await db.statutoryRates.findFirst({ where: { deleted_at: null }, orderBy: { valid_from: 'asc' } }));
   if (!row) throw new AppError('NOT_FOUND', `No statutory rates are set up for ${date}. Add them under Setup → Statutory rules.`, 409);
   return {
     id: row.id,
@@ -37,17 +40,25 @@ export async function ratesById(db, id) {
   };
 }
 
-/** Each state's PT slabs in force on a date: its set with the latest valid_from on or before it. */
+/**
+ * Each state's PT slabs in force on a date: its set with the latest valid_from on or before it,
+ * else (before its first set) the state's earliest set, which applies from the start.
+ */
 export function ptSlabs(db, date = istDate(new Date())) {
   return scopedRead(db, `pt-slabs:${date}`, () => readPtSlabs(db, date));
 }
 
 async function readPtSlabs(db, date) {
-  const all = await db.ptSlab.findMany({ where: { deleted_at: null, valid_from: { lte: toDbDate(date) } } });
+  const all = await db.ptSlab.findMany({ where: { deleted_at: null } });
   const latest = new Map();
   for (const r of all) {
     const from = fromDbDate(r.valid_from) ?? '2000-01-01';
-    if (!latest.has(r.state) || from > latest.get(r.state)) latest.set(r.state, from);
+    const cur = latest.get(r.state);
+    // The latest set started by the date; failing that, the earliest set.
+    const better = cur === undefined
+      || (from <= date && (cur > date || from > cur))
+      || (from > date && cur > date && from < cur);
+    if (better) latest.set(r.state, from);
   }
   const rows = all.filter((r) => (fromDbDate(r.valid_from) ?? '2000-01-01') === latest.get(r.state));
   return rows.map((r) => ({
@@ -66,12 +77,14 @@ export function regimesOn(db, date) {
 
 async function readRegimesOn(db, date) {
   const rows = await db.taxRegime.findMany({
-    where: { valid_from: { lte: toDbDate(date) }, deleted_at: null },
+    where: { deleted_at: null },
     include: { slabs: { where: { deleted_at: null } } },
     orderBy: { valid_from: 'desc' },
   });
   const pick = (code) => {
-    const r = rows.find((x) => x.code === code) ?? null;
+    // The latest tax year started by the date; before the first, the earliest applies.
+    const mine = rows.filter((x) => x.code === code);
+    const r = mine.find((x) => fromDbDate(x.valid_from) <= date) ?? mine.at(-1) ?? null;
     if (!r) throw new AppError('NOT_FOUND', `The ${code.toLowerCase()} tax regime is not set up for ${date}.`, 409);
     return {
       code,
