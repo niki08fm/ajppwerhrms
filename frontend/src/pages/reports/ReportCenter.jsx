@@ -41,6 +41,69 @@ const GROUP_HELP = {
   Analysis: 'Departments, settlements and one-offs',
 };
 
+const rangeText = (from, to) => (from === to ? shortYm(from) : `${shortYm(from)} – ${shortYm(to)}`);
+
+/** The period filter: a small button that opens the presets and a custom month range. */
+function PeriodFilter({ preset, from, to, onApply }) {
+  const [open, setOpen] = useState(false);
+  const now = thisMonth();
+  const [draft, setDraft] = useState({ preset, from, to });
+  const pick = PRESETS.find((p) => p.key === draft.preset);
+  const [dFrom, dTo] = draft.preset === 'custom' ? [draft.from, draft.to] : pick.range(now);
+  const ok = /^\d{4}-\d{2}$/.test(dFrom) && /^\d{4}-\d{2}$/.test(dTo) && dFrom <= dTo;
+  const label = PRESETS.find((p) => p.key === preset)?.label ?? 'Period';
+  return (
+    <Pop.Root open={open} onOpenChange={(o) => { setOpen(o); if (o) setDraft({ preset, from, to }); }}>
+      <Pop.Trigger asChild>
+        <button aria-label={`Period: ${label}`} className="flex h-10 items-center gap-2 rounded-md border bg-card px-3 text-left shadow-xs hover:border-primary/40">
+          <CalendarRange className="size-4 text-muted-foreground" aria-hidden />
+          <span className="font-medium">{preset === 'custom' ? 'Custom' : label}</span>
+          <span className="text-[13px] text-muted-foreground">{rangeText(from, to)}</span>
+          <ChevronDown className="size-4 text-muted-foreground" aria-hidden />
+        </button>
+      </Pop.Trigger>
+      <Pop.Portal>
+        <Pop.Content align="start" sideOffset={6} className="z-50 w-[min(92vw,20rem)] rounded-lg border bg-popover p-2 text-popover-foreground shadow-lg">
+          <div className="px-2 pt-1 pb-2 text-[12px] font-semibold tracking-wider text-muted-foreground uppercase">Period</div>
+          <div role="radiogroup" aria-label="Period" className="flex flex-col gap-0.5">
+            {PRESETS.map((p) => {
+              const [a, z] = p.range ? p.range(now) : [draft.from, draft.to];
+              return (
+                <button
+                  key={p.key}
+                  role="radio"
+                  aria-checked={draft.preset === p.key}
+                  onClick={() => setDraft({ ...draft, preset: p.key })}
+                  className={cn('flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-[14px]', draft.preset === p.key ? 'bg-primary/10 text-primary' : 'hover:bg-accent')}
+                >
+                  <Check className={cn('size-4', draft.preset === p.key ? 'opacity-100' : 'opacity-0')} aria-hidden />
+                  <span className="flex-1 font-medium">{p.label}</span>
+                  {p.range && <span className="text-[12px] text-muted-foreground">{rangeText(a, z)}</span>}
+                </button>
+              );
+            })}
+          </div>
+          {draft.preset === 'custom' && (
+            <div className="mt-2 grid grid-cols-2 gap-2 border-t px-1 pt-3">
+              <label className="text-[12px] text-muted-foreground">From month
+                <Input type="month" aria-label="From month" className="mt-1" value={draft.from} max={draft.to} onChange={(e) => setDraft({ ...draft, from: e.target.value })} />
+              </label>
+              <label className="text-[12px] text-muted-foreground">To month
+                <Input type="month" aria-label="To month" className="mt-1" value={draft.to} min={draft.from} onChange={(e) => setDraft({ ...draft, to: e.target.value })} />
+              </label>
+              {!ok && <p className="col-span-2 text-[12px] text-destructive">The first month must not be after the last.</p>}
+            </div>
+          )}
+          <div className="mt-3 flex items-center justify-between border-t px-1 pt-2">
+            <span className="text-[12px] text-muted-foreground">{ok ? rangeText(dFrom, dTo) : ''}</span>
+            <Button size="sm" disabled={!ok} onClick={() => { onApply({ preset: draft.preset, from: dFrom, to: dTo }); setOpen(false); }}>Apply</Button>
+          </div>
+        </Pop.Content>
+      </Pop.Portal>
+    </Pop.Root>
+  );
+}
+
 /** The report chooser: a dropdown with a search box, reports grouped. */
 function ReportPicker({ groups, value, onChange }) {
   const [open, setOpen] = useState(false);
@@ -149,47 +212,33 @@ export default function ReportCenter() {
         description="Every payroll report for any run of months, added up: pay, statutory, joiners, exits and overtime. Figures come from each month's saved payroll."
       />
 
-      {/* Report, company and period */}
-      <Card className="flex flex-col gap-3 p-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <ReportPicker groups={groups} value={report} onChange={(k) => set({ report: k })} />
-          <Select className="w-full sm:w-44" aria-label="Company" value={company} onChange={(e) => set({ company: e.target.value })}>
-            <option value="">Both companies</option>
-            {COMPANIES.map((c) => <option key={c.key} value={c.key}>{c.name}</option>)}
-          </Select>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <CalendarRange className="size-4 text-muted-foreground" aria-hidden />
-          <span className="text-[13px] font-medium text-muted-foreground">Period</span>
-          <div className="flex flex-wrap gap-1 rounded-lg bg-muted p-1" role="radiogroup" aria-label="Period">
-            {PRESETS.map((p) => (
-              <button
-                key={p.key}
-                role="radio"
-                aria-checked={preset === p.key}
-                onClick={() => set({ period: p.key, ...(p.key === 'custom' ? { from: customFrom, to: customTo } : { from: '', to: '' }) })}
-                className={cn('rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors', preset === p.key ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
-          {preset === 'custom' && (
-            <div className="flex flex-wrap items-center gap-2">
-              <Input type="month" aria-label="From month" className="w-44" value={customFrom} max={customTo} onChange={(e) => { setCustomFrom(e.target.value); set({ from: e.target.value }); }} />
-              <span className="text-muted-foreground">to</span>
-              <Input type="month" aria-label="To month" className="w-44" value={customTo} min={customFrom} onChange={(e) => { setCustomTo(e.target.value); set({ to: e.target.value }); }} />
-            </div>
-          )}
-        </div>
-        <Coverage from={from} to={to} valid={valid} coverage={rep?.coverage} />
-      </Card>
+      {/* Report, period and company: one compact row */}
+      <div className="flex flex-wrap items-center gap-2">
+        <ReportPicker groups={groups} value={report} onChange={(k) => set({ report: k })} />
+        <PeriodFilter
+          preset={preset}
+          from={from}
+          to={to}
+          onApply={(next) => {
+            if (next.preset === 'custom') {
+              setCustomFrom(next.from);
+              setCustomTo(next.to);
+              set({ period: 'custom', from: next.from, to: next.to });
+            } else set({ period: next.preset, from: '', to: '' });
+          }}
+        />
+        <Select className="w-full sm:w-44" aria-label="Company" value={company} onChange={(e) => set({ company: e.target.value })}>
+          <option value="">Both companies</option>
+          {COMPANIES.map((c) => <option key={c.key} value={c.key}>{c.name}</option>)}
+        </Select>
+      </div>
 
       <div className="flex min-w-0 flex-col gap-3">
           <div className="flex flex-wrap items-end justify-between gap-2">
             <div>
               <h2 className="font-display text-xl font-semibold">{current?.label ?? 'Report'}</h2>
               <p className="text-[13px] text-muted-foreground">{valid ? (from === to ? formatYearMonth(from) : `${formatYearMonth(from)} – ${formatYearMonth(to)}`) : 'Choose a valid period'} · {company ? COMPANIES.find((c) => c.key === company)?.name : 'Both companies'}</p>
+              <div className="mt-1.5"><Coverage from={from} to={to} valid={valid} coverage={rep?.coverage} /></div>
             </div>
           </div>
           <Card>
